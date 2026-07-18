@@ -1,0 +1,28 @@
+[package]
+name = "anl_staking"
+version = "0.1.0"
+edition = "2021"
+description = "ANL Staking Protocol — X1 Network (spec v1.0)"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "anl_staking"
+
+[features]
+default = []
+no-entrypoint = []
+cpi = ["no-entrypoint"]
+# WYŁĄCZNIE build testnetowy — patrz README (nigdy na mainnet).
+test-periods = ["anl-math/test-periods"]
+
+[dependencies]
+anchor-lang = { version = "0.29.0", features = ["init-if-needed"] }
+anchor-spl = "0.29.0"
+anl-math = { path = "../../crates/anl-math" }
+
+[dev-dependencies]
+solana-program-test = "1.18.26"
+solana-sdk = "1.18.26"
+spl-token = { version = "4.0", features = ["no-entrypoint"] }
+spl-token-2022 = { version = "0.9", features = ["no-entrypoint"] }
+tokio = { version = "1", features = ["macros"] }

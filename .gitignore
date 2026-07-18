@@ -1,0 +1,11 @@
+/target
+/core/target
+**/*.rs.bk
+node_modules/
+.anchor/
+test-ledger/
+# NIGDY do repo: klucze i sekrety
+*.json.key
+*-keypair.json
+id.json
+.env

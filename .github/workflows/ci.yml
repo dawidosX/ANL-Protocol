@@ -1,0 +1,26 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: Swatinem/rust-cache@v2
+      - name: anl-math (prod + test-periods)
+        run: |
+          cargo test -p anl-math
+          cargo test -p anl-math --features test-periods
+      - name: core (model referencyjny)
+        run: |
+          cd core
+          cargo test
+          cargo test --features test-periods
+      - name: program — check obu wariantów
+        run: |
+          cargo check -p anl_staking
+          cargo check -p anl_staking --features test-periods
+      - name: testy integracyjne (solana-program-test)
+        run: cargo test -p anl_staking --features test-periods --test integration

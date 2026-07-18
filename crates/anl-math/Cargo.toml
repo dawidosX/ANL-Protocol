@@ -1,0 +1,11 @@
+[package]
+name = "anl-math"
+version = "0.1.0"
+edition = "2021"
+description = "ANL Staking Protocol — deterministic reward math (on-chain + reference model)"
+
+[dependencies]
+
+[features]
+default = []
+test-periods = []

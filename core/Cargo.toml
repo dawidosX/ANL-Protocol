@@ -1,0 +1,10 @@
+[package]
+name = "anl-core"
+version = "0.1.0"
+edition = "2021"
+description = "ANL Staking Protocol - deterministyczny rdzen matematyczny (zero zaleznosci)"
+
+[features]
+test-periods = []
+default = []
+short-periods = []   # WYLACZNIE build testowy: doba = 60 s (10C par.13, D-11)
