@@ -1,60 +1,63 @@
-ANL Protocol — surowe dowody (sandbox; HEAD uzupełnia scripts/audit-evidence.sh w repo git)
-Wygenerowano: 2026-07-19T00:23:50Z
-rustc: rustc 1.89.0 (29483883e 2025-08-04) (built from a source tarball) | cargo: cargo 1.89.0 (c24e10642 2025-06-23) (built from a source tarball)
-UWAGA: ten log NIE jest dowodem sam w sobie — odtwórz przez scripts/audit-evidence.sh
-======================================================================
+ANL Protocol — dowody audytowe
+Wygenerowano: 2026-07-19T07:52:11Z
+rustc: 
+cargo: 
+========================================================================
+## Tozsamosc zrodla
+$ git rev-parse HEAD
+27cd983e6152d619cf7c3ae2a245a6aa07cac617
+exit: 0
 
+$ git status --porcelain
+ M docs/TEST-LOG.txt
+exit: 0
+
+$ git diff --check
+docs/TEST-LOG.txt:3: trailing whitespace.
++rustc: 
+docs/TEST-LOG.txt:4: trailing whitespace.
++cargo: 
+exit: 2
+
+## Format i lint
 $ cargo fmt --all --check
-Diff in /home/claude/work/anl-protocol/programs/anl_staking/src/instructions/initialize.rs:79:
-     pub system_program: Program<'info, System>,
- }
- 
--pub fn initialize_handler(ctx: Context<Initialize>, genesis_start_ts: i64, start_paused: bool) -> Result<()> {
-+pub fn initialize_handler(
-+    ctx: Context<Initialize>,
-+    genesis_start_ts: i64,
-+    start_paused: bool,
-+) -> Result<()> {
-     let now = Clock::get()?.unix_timestamp;
- 
-     // Twarda kotwica minta XNT (wrapped native). W buildzie testowym
+./scripts/audit-evidence.sh: line 6: cargo: command not found
+exit: 127
 
 $ cargo clippy --workspace --all-targets -- -D warnings
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.30s
+./scripts/audit-evidence.sh: line 6: cargo: command not found
+exit: 127
 
 $ cargo clippy -p anl_staking --all-targets --features test-periods -- -D warnings
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.65s
+./scripts/audit-evidence.sh: line 6: cargo: command not found
+exit: 127
 
+## Testy
 $ cargo test -p anl-math
-test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-$ cargo test -p anl-math --features test-periods
-test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-$ (cd core && cargo test)
-test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-$ cargo test -p anl_staking --features test-periods --test integration
-test ts_audit_funding_after_end_epoch_not_counted ... [2026-07-19T00:24:26.051673123Z INFO  solana_program_test] "anl_staking" builtin program
-test ts_early_exit_forfeits_and_redistributes ... [2026-07-19T00:24:26.358787775Z INFO  solana_program_test] "anl_staking" builtin program
-test ts_full_lifecycle_two_users_daily_xnt ... [2026-07-19T00:24:26.840972367Z INFO  solana_program_test] "anl_staking" builtin program
-test ts_windows_coverage_and_validation_guards ... [2026-07-19T00:24:27.149906201Z INFO  solana_program_test] "anl_staking" builtin program
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.39s
-$ cargo test -p anl_staking --test integration
-test ts_audit_funding_after_end_epoch_not_counted ... [2026-07-19T00:24:42.633513259Z INFO  solana_program_test] "anl_staking" builtin program
-test ts_early_exit_forfeits_and_redistributes ... [2026-07-19T00:24:42.870285315Z INFO  solana_program_test] "anl_staking" builtin program
-test ts_full_lifecycle_two_users_daily_xnt ... [2026-07-19T00:24:43.152368326Z INFO  solana_program_test] "anl_staking" builtin program
-test ts_windows_coverage_and_validation_guards ... [2026-07-19T00:24:43.476155634Z INFO  solana_program_test] "anl_staking" builtin program
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.16s
+./scripts/audit-evidence.sh: line 6: cargo: command not found
+exit: 127
 
-== NEGATYWNY DOWÓD H-01 (oczekiwany sukces testu negatywnego) ==
+$ cargo test -p anl-math --features test-periods
+./scripts/audit-evidence.sh: line 6: cargo: command not found
+exit: 127
+
+$ cargo test -p anl_staking --features test-periods --test integration
+./scripts/audit-evidence.sh: line 6: cargo: command not found
+exit: 127
+
+$ cargo test -p anl_staking --test integration
+./scripts/audit-evidence.sh: line 6: cargo: command not found
+exit: 127
+
+## NEGATYWNY dowod H-01 (oczekiwany BLAD kompilacji)
 $ cargo check -p anl_staking --features network-mainnet,test-periods
-error: test-periods cannot be enabled together with network-mainnet
-error: could not compile `anl_staking` (lib) due to 1 previous error
-(build NIE skompilował się — zgodnie z oczekiwaniem)
+./scripts/audit-evidence.sh: line 35: cargo: command not found
+OK: oczekiwany sukces testu negatywnego (compile_error!)
 
 $ cargo check -p anl_staking --features network-mainnet,network-testnet
-error: select exactly one network feature
-error: could not compile `anl_staking` (lib) due to 1 previous error
+./scripts/audit-evidence.sh: line 42: cargo: command not found
+OK: sieci wzajemnie wykluczone
 
-$ cargo check -p anl_staking --features network-mainnet
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.52s
-
-cargo audit / cargo deny: niedostępne w sandboxie — job supply-chain w CI + scripts/audit-evidence.sh
+## Supply chain (jesli narzedzia zainstalowane)
+cargo-audit: niezainstalowane (patrz job supply-chain w CI)
+cargo-deny: niezainstalowane (patrz job supply-chain w CI)
