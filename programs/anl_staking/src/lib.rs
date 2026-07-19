@@ -30,8 +30,8 @@ use state::PoolType;
 // ale jest NIEWDRAŻALNY do czasu ceremonii mainnetowego Program ID.
 declare_id!("CvvG4xQq1w4gYRSidZZ3CzcGcGzaD9LprYjh9XEoMbWC");
 #[cfg(feature = "network-testnet")]
-// Testnet X1 — keypair wygenerowany 19.07.2026, przechowywany poza repo.
-declare_id!("2KQ8XBD99amQbfW5owFLQwGL97Hou8LYg3GYTyuiDXm5");
+// Testnet X1 — keypair z 19.07.2026 (po rotacji higienicznej), poza repo.
+declare_id!("HSCKEu6Q3U96HBzQV6FjbVmhCgeidaBm7uLgC7nG5id7");
 #[cfg(not(any(feature = "network-mainnet", feature = "network-testnet")))]
 // DEV-ONLY: lokalne testy i IDE; nie odpowiada żadnemu wdrożonemu adresowi.
 declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");

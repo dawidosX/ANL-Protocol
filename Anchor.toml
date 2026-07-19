@@ -10,7 +10,7 @@ anl_staking = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
 
 # Testnet X1 (build: scripts/build-testnet.sh; klaster przez provider.cluster)
 [programs.testnet]
-anl_staking = "2KQ8XBD99amQbfW5owFLQwGL97Hou8LYg3GYTyuiDXm5"
+anl_staking = "HSCKEu6Q3U96HBzQV6FjbVmhCgeidaBm7uLgC7nG5id7"
 
 # Mainnet: placeholder bez keypaira — do ceremonii Program ID
 [programs.mainnet]
