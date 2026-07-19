@@ -1,5 +1,8 @@
 # ANL Staking Protocol — Smart Contract (X1 Network)
 
+[![CI](https://github.com/dawidosX/ANL-Protocol/actions/workflows/ci.yml/badge.svg)](https://github.com/dawidosX/ANL-Protocol/actions/workflows/ci.yml)
+[![Licencja: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 Program on-chain w Rust + Anchor 0.29. Implementacja wg **[White Paper v1.0](docs/ANL_White_Paper_PL.pdf)**
 ([English White Paper](docs/ANL_White_Paper_EN.pdf) · [English README](README.md))
 (model: dzienne XNT, okres deklarowany, całość-albo-nic).
@@ -133,3 +136,19 @@ pełne constraints skarbców, twardy test stałych produkcyjnych. **Otwarte: #1*
 
 Testy integracyjne pełnego cyklu na testnecie X1 (Volume 10B), fuzzing 24h+,
 audyt AI, pilotaż 100 000 ANL (start w pauzie), dashboard.
+
+## Bezpieczeństwo
+
+Protokół przeszedł **cztery rundy przeglądu bezpieczeństwa**, a każde
+ustalenie zostało naprawione i niezależnie zweryfikowane — pełna ścieżka
+(ustalenia, naprawy, dowody plik:linia, werdykty i Definition of Done dla
+immutable mainnetu) znajduje się w
+**[docs/SECURITY-AUDITS.pl.md](docs/SECURITY-AUDITS.pl.md)**, a oryginalne
+raporty recenzentów w `docs/audits/`. Status: faza zamkniętego testnetu;
+program **nie jest jeszcze wdrożony** na żadnej publicznej sieci.
+Znalazłeś coś? Zgłoś przez prywatne security advisory na GitHubie,
+nie przez publiczne issue.
+
+## Licencja
+
+Na licencji [Apache License, Version 2.0](LICENSE).
