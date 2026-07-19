@@ -98,7 +98,17 @@ Kluczowe zdanie weryfikacji Groka: *problemem nie jest już logika stakingu, lec
 
 **Werdykty (19.07.2026).** *Weryfikacja GPT:* testnet / zamknięty pilot **gotowy** (przy osobnym Program ID, ściśle limitowanej wartości aktywów i monitoringu); żadne otwarte ustalenie kodowe rundy #3 nie blokuje immutable — immutable mainnet staje się osiągalny po spełnieniu 9-punktowego Definition of Done (§9). *Weryfikacja Groka:* zamknięty testnet **warunkowo gotowy** po naprawie pipeline'u dowodowego; immutable mainnet **niegotowy**, dopóki łańcuch commit→binarka nie jest fail-closed. **Stanowisko zespołu (przyjęte):** wygrywa ostrzejsza interpretacja — V-01…V-05 naprawione tego samego dnia (wyżej), a mainnet pozostaje bramkowany pełnym Definition of Done.
 
-¹ Numery linii za raportami weryfikacyjnymi z 19.07.2026; mogą dryfować z kolejnymi commitami — wiążące są symbole i ścieżki plików.
+¹ Numery linii za raportami weryfikacyjnymi z 19.07.2026, ważne dla audytowanych migawek (`27cd983`…`ddf4b36`); mogą dryfować z kolejnymi commitami — wiążące są commit + ścieżka + symbol (runda #4, DOC-05).
+
+### Runda #4 — re-weryfikacja paczki `audit4` (19.07.2026, GPT + Grok, commit `ddf4b36`)
+
+Obaj recenzenci zweryfikowali źródła niezależnie (archiwum: `docs/audits/audit-4-verification-gpt.md`, `docs/audits/audit-4-verification-grok.pdf`). Zgoda: **V-01…V-05 zamknięte w źródłach**; przepisany `audit-evidence.sh` bez obejść (tee+`pipefail`, subshell `core` i `expect_fail` prześwietlone wprost); triaż supply-chain akceptowalny dla zamkniętego testnetu — Grok dodatkowo potwierdził **z `Cargo.lock`**, że cała ósemka advisories wchodzi przez dev-dependencies (`solana-sdk`, `solana-program-test`) i nie trafia do artefaktu SBF, z zastrzeżeniem, by tej akceptacji nie rozszerzać automatycznie na osobną infrastrukturę (odnotowane: bot dzienny to TypeScript/`@solana/web3.js`, nie linkuje rustowego SDK i nigdy nie składa keypairów z niezależnie dostarczonych połówek). Obaj rekomendują **`declare_id!` per sieć przed deployem testnetowym** — przyjęte (§9).
+
+Perła Groka: audytowana paczka wciąż niosła **przeterminowany `docs/TEST-LOG.txt` z `27cd983`** — log, w którym każda komenda cargo kończyła się `command not found`, a *stary* skrypt dowodowy zaliczył brak kompilatora jako udany test negatywny (M-EVIDENCE-02 w pełnej krasie) — i brak `TEST-LOG.sha256`. Stąd świeży bieg dowodowy jest twardym warunkiem przed testnetem. Sugestie hardeningowe wdrożone tego samego dnia: ponowna kontrola HEAD i czystości drzewa przed publikacją logu, zapis wersji narzędzi i hasha `Cargo.lock`, sprzątanie pliku tymczasowego po sukcesie, `rm -f` starej binarki + `test -s` po buildzie w obu skryptach release.
+
+Ustalenia dokumentacyjne **DOC-01…DOC-05** przyjęte i poprawione w tej rewizji (zawężone sformułowanie R1-07; dowód R1-05 rozdzielony na twardą blokadę i wykluczenie proceduralne; status pipeline'u przeredagowany na „ukończone w źródłach, bieg w toku"; przypis zakotwiczony w commitach). W sprawie **DOC-04** (rzekomo zbyt pozytywna atrybucja wcześniejszego werdyktu GPT): zarchiwizowany raport `docs/audits/audit-3-verification-gpt.md` mówi dosłownie „Testnet / zamknięty pilot: **gotowy**", co ten dokument cytuje wiernie; zastrzeżenie Groka odnotowujemy tu dla przejrzystości.
+
+**Werdykty (runda #4).** *GPT:* zamknięty testnet **gotowy bezwarunkowo** (osobny testnetowy Program ID, monitoring, komunikacja modelu epok). *Grok:* **gotowy warunkowo** — po świeżym biegu dowodowym powiązanym z finalnym HEAD i osobnym testnetowym Program ID; immutable mainnet niegotowy. **Stanowisko zespołu: znów wygrywa ostrzejsza interpretacja** — oba warunki są jawnymi pozycjami checklisty §9.
 
 ---
 
@@ -112,9 +122,9 @@ Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = proces
 | R1-02 | 1 | M | Dzienny funding wymagał klucza authority | ✅ | Rola operatora: `set_operator`; `instructions/fund.rs`, `lib.rs` |
 | R1-03 | 1 | I | Placeholder Program ID | 📋 | `anchor keys sync` przy deployu; osobne ID dla buildów testnet/mainnet |
 | R1-04 | 1 | H | Rozszerzenia Token-2022 minta ANL bez walidacji | ✅ | Bramka-allowlista w `instructions/initialize.rs` (`ForbiddenMintExtension`, `MintHasFreezeAuthority`) |
-| R1-05 | 1 | H | Zabezpieczenia `test-periods` tylko logiem | ✅ | Test `production_constants_guard` (`crates/anl-math/src/lib.rs`) + blokady compile-time H-01 (`lib.rs:11-15`¹) |
+| R1-05 | 1 | H | Zabezpieczenia `test-periods` tylko logiem | ✅ | Twarda blokada compile dla wariantu mainnet: H-01 `compile_error!` (`lib.rs:11-15`¹) + test `production_constants_guard`; buildy bez feature'a sieci wykluczone z deployu **proceduralnie** (release tylko przez `scripts/build-*.sh`; `declare_id!` per sieć w planie — §9) |
 | R1-06 | 1 | M | Brak verifiable build | 📋 | Checklista wdrożeniowa (§9) |
-| R1-07 | 1 | M | Brak kontroli wersji kont | ✅ | `version == ACCOUNT_VERSION` w każdym kontekście instrukcji |
+| R1-07 | 1 | M | Brak kontroli wersji kont | ✅ | `version == ACCOUNT_VERSION` dla wszystkich wersjonowanych kont stanu w audytowanych kontekstach instrukcji (`UserProfile` celowo bez wersji); luka znaleziona później w `FundXnt` zamknięta jako R3-M-01 |
 | R1-08 | 1 | M | Niepełne constraints skarbców | ✅ | Constraints mint + PDA authority + program tokenowy w każdym kontekście |
 | R1-09 | 1 | L | Transparentność polityki pauzy | ✅ | Sekcja governance w whitepaperze; ścieżki wyjścia (`claim`, `unstake_early`, `settle_expired`) działają zawsze |
 | R3-M-01 | 3 | M | `FundXnt` bez constraints wersji pul | ✅ | `instructions/fund.rs:124-140`¹ |
@@ -126,12 +136,14 @@ Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = proces
 | V-03 | 3-wer | P | Niewystarczające kontrole czystego drzewa w skryptach build | ✅ | Bramka `git status --porcelain` w obu; `scripts/build-mainnet.sh`, `scripts/build-testnet.sh` |
 | V-04 | 3-wer | P | Drugi release-guard nie asertuje komunikatu błędu | ✅ | Asertuje `select exactly one network feature`; `.github/workflows/ci.yml` (release-guards) |
 | V-05 | 3-wer | P | README: gołe ścieżki `anchor build`, stara „23", brak polityki release | ✅ | Sekcje build przepisane na politykę skryptów release, „23"→24, feature'y sieci opisane; `README.md`, `README.pl.md` |
+| R4-DOC-01…05 | 4 | P | Ustalenia rzetelności dokumentacji (zbyt szerokie R1-07, rozdział dowodu R1-05, „ukończone" vs „bieg w toku", atrybucja werdyktu, dryf numerów linii) | ✅ | Poprawione w tej rewizji — patrz sekcja rundy #4 |
+| R4-ID | 4 | P | `declare_id!` per sieć (mainnet / testnet / placeholder dev), by build bez feature'a nie mógł trafić na wdrożony adres | ✅ | Wdrożone 19.07.2026: testnet `2KQ8XBD99amQbfW5owFLQwGL97Hou8LYg3GYTyuiDXm5`; placeholder mainnetowy **bez keypaira** (niewdrażalny do ceremonii ID); `programs/anl_staking/src/lib.rs`, `Anchor.toml` |
 
 ---
 
 ## 9. Zadania otwarte
 
-**Pipeline dowodowy i release — ✅ ukończone 19.07.2026** (V-01…V-05; warunek zamkniętego testnetu z obu weryfikacji spełniony): fail-closed `audit-evidence.sh`, bramki czystego drzewa w obu skryptach build, blokujący supply-chain z zatwierdzonym `deny.toml`, asercja komunikatu w drugim release-guardzie, polityka release w README z poprawionymi liczbami testów. Szczegóły w §7 i tabeli wyżej.
+**Pipeline dowodowy i release — ✅ narzędzia ukończone w źródłach, 19.07.2026** (V-01…V-05; potwierdzone rundą #4). **Świeży bieg dowodowy** — `audit-evidence.sh` wykonany na finalnym HEAD, z zacommitowanymi `docs/TEST-LOG.txt` + `docs/TEST-LOG.sha256` — pozostaje pozycją checklisty wdrożeniowej i twardym warunkiem przed testnetem (runda #4, DOC-03): fail-closed `audit-evidence.sh`, bramki czystego drzewa w obu skryptach build, blokujący supply-chain z zatwierdzonym `deny.toml`, asercja komunikatu w drugim release-guardzie, polityka release w README z poprawionymi liczbami testów. Szczegóły w §7 i tabeli wyżej.
 
 **Stos zależności (z pierwszego blokującego biegu supply-chain):**
 1. Upgrade stosu Solana/Anchor tak, by 8 ignorowanych advisories RUSTSEC (§7) wypadło z drzewa; opróżnienie obu list wyjątków. Wymagane przed DoD immutable mainnet; wyjątki wygasają przy przeglądzie kwartalnym (najbliższy: 2026-10-19).
@@ -143,7 +155,7 @@ Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = proces
 3. Aktualizacja bota dziennego (`/opt/anl-bot/`, prywatne środowisko W5) pod nową sygnaturę `fund_xnt(amount, epoch)`, konta checkpointów i checkpointowanie przy settle — obecny bot pochodzi sprzed modelu epok i jest niekompatybilny z kontraktem.
 
 **Checklista wdrożeniowa (przed testnetem):**
-4. Finalny Program ID przez `anchor keys sync` (+ `declare_id!`, `Anchor.toml`, rebuild, ponowna weryfikacja wszystkich PDA); osobne Program ID dla buildu testnetowego (`test-periods` + `network-testnet`) i mainnetowego (`network-mainnet`) (R1-03).
+4. Program ID — **`declare_id!` per sieć wdrożone 19.07.2026**: testnet `2KQ8XBD99amQbfW5owFLQwGL97Hou8LYg3GYTyuiDXm5` (keypair wygenerowany i przechowywany poza repo), placeholder dev-only dla buildów bez feature'a oraz placeholder mainnetowy **bez istniejącego keypaira** (artefakt mainnet kompiluje się, ale jest niewdrażalny do ceremonii Program ID). Na deploy zostaje: kontrola spójności `anchor keys sync` na maszynie buildującej, provider `Anchor.toml` per klaster, ponowna weryfikacja PDA (R1-03 + R4-ID).
 5. Otagowany, czysty commit; pełny bieg CI dokładnie na tym commicie; `docs/TEST-LOG.txt` wygenerowany naprawionym skryptem dowodowym na realnym checkout'cie Gita z zapisanym HEAD.
 6. Porównanie IDL sprzed i po zmianie nazw handlerów przed deployem (discriminatory instrukcji oczekiwane bez zmian; zweryfikować).
 7. Okres obserwacji na testnecie na aktywach bez wartości lub o ściśle ograniczonej ekspozycji; upgrade authority przez cały czas przy multisig — **zero `--final`, zero kasowania kluczy** na tym etapie.
@@ -168,4 +180,6 @@ Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = proces
 | 19.07.2026 | Pierwsze wydanie skonsolidowane (EN+PL); zastępuje dopisywany rundami `AUDIT-RESPONSE.md`; obejmuje rundy #1–#3 i **oba** niezależne raporty weryfikacyjne po rundzie #3 (GPT + Grok), w tym ustalenie M-02 i Definition of Done dla immutable mainnet |
 | 19.07.2026 (później) | V-01…V-05 naprawione (pipeline dowodowy, CI, README); zidentyfikowana i usunięta przyczyna czerwonego lintu w CI (niesformatowany `initialize.rs`); statusy i §9 zaktualizowane |
 | 19.07.2026 (później) | Pierwszy blokujący bieg supply-chain: 8 advisories RUSTSEC w stosie narzędziowym Solany 1.x striażowane; udokumentowane wyjątki w `.cargo/audit.toml` + `deny.toml`; zadanie upgrade'u stosu dodane i wpięte w DoD |
+| 19.07.2026 (później) | Wdrożone `declare_id!` per sieć (przypisane ID testnetowe: `2KQ8XBD99amQbfW5owFLQwGL97Hou8LYg3GYTyuiDXm5`; mainnet: placeholder bez keypaira); wpisy per klaster w `Anchor.toml`; checklista zaktualizowana |
+| 19.07.2026 (później) | Wcielona runda #4 (GPT + Grok): V-01…V-05 potwierdzone jako zamknięte w źródłach; DOC-01…05 poprawione; hardening skryptów wdrożony; `declare_id!` per sieć przyjęte do checklisty; świeży bieg dowodowy przypięty jako twardy warunek przed testnetem |
 | 19.07.2026 (później) | Dodane zestawy testów property-based (anl-math: 10, core: 2 losowe maszyny, w tym własność odporności capu epokowego) — zamknięta rekomendacja powtarzana przez każdą rundę audytu; liczby testów zaktualizowane w dokumentacji |

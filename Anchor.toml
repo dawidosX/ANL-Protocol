@@ -8,6 +8,14 @@ skip-lint = false
 [programs.localnet]
 anl_staking = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
 
+# Testnet X1 (build: scripts/build-testnet.sh; klaster przez provider.cluster)
+[programs.testnet]
+anl_staking = "2KQ8XBD99amQbfW5owFLQwGL97Hou8LYg3GYTyuiDXm5"
+
+# Mainnet: placeholder bez keypaira — do ceremonii Program ID
+[programs.mainnet]
+anl_staking = "CvvG4xQq1w4gYRSidZZ3CzcGcGzaD9LprYjh9XEoMbWC"
+
 [registry]
 url = "https://api.apr.dev"
 

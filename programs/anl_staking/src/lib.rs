@@ -22,7 +22,18 @@ pub mod state;
 use instructions::*;
 use state::PoolType;
 
-// Placeholder — właściwy Program ID wygenerowany przy `anchor keys sync`.
+// Program ID per sieć (runda #4, R4-ID): build bez feature'a sieci ma jawny
+// adres WYŁĄCZNIE deweloperski, a artefakty sieciowe — własne, rozłączne ID
+// (inne PDA, brak możliwości pomyłkowego wdrożenia nie tego wariantu).
+#[cfg(feature = "network-mainnet")]
+// PLACEHOLDER bez istniejącego keypaira — artefakt mainnet kompiluje się,
+// ale jest NIEWDRAŻALNY do czasu ceremonii mainnetowego Program ID.
+declare_id!("CvvG4xQq1w4gYRSidZZ3CzcGcGzaD9LprYjh9XEoMbWC");
+#[cfg(feature = "network-testnet")]
+// Testnet X1 — keypair wygenerowany 19.07.2026, przechowywany poza repo.
+declare_id!("2KQ8XBD99amQbfW5owFLQwGL97Hou8LYg3GYTyuiDXm5");
+#[cfg(not(any(feature = "network-mainnet", feature = "network-testnet")))]
+// DEV-ONLY: lokalne testy i IDE; nie odpowiada żadnemu wdrożonemu adresowi.
 declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 
 #[program]

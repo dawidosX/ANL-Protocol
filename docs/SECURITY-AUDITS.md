@@ -98,7 +98,17 @@ The Grok verification's headline: *the remaining problem is no longer staking lo
 
 **Verdicts (19 Jul 2026).** *GPT verification:* testnet / closed pilot **ready** (with a separate Program ID, strictly limited asset value and monitoring); no open round-#3 code findings block immutability — immutable mainnet becomes reachable once its 9-point Definition of Done (§9) is satisfied. *Grok verification:* closed testnet **conditionally ready** once the evidence pipeline is fixed; immutable mainnet **not ready** until the commit→binary chain is fail-closed. **Team position (adopted):** the stricter reading wins — V-01…V-05 were fixed the same day (see above), and mainnet remains gated on the full Definition of Done.
 
-¹ Line numbers as cited in the 19 Jul 2026 verification reports; they may drift with subsequent commits — symbols and file paths are authoritative.
+¹ Line numbers as cited in the 19 Jul 2026 verification reports, valid for the audited snapshots (`27cd983`…`ddf4b36`); they may drift with subsequent commits — commit + file path + symbol are authoritative (round #4, DOC-05).
+
+### Round #4 — re-verification of the `audit4` package (19 Jul 2026, GPT + Grok, commit `ddf4b36`)
+
+Both reviewers verified the sources independently (archived: `docs/audits/audit-4-verification-gpt.md`, `docs/audits/audit-4-verification-grok.pdf`). Agreement: **V-01…V-05 closed in source**; the rewritten `audit-evidence.sh` has no bypass (tee+`pipefail`, the `core` subshell and `expect_fail` were explicitly examined); the supply-chain triage is acceptable for a closed testnet — Grok additionally confirmed **from `Cargo.lock`** that all 8 advisories enter via dev-dependencies (`solana-sdk`, `solana-program-test`) and are absent from the SBF artifact, with the caveat that this acceptance must not be auto-extended to separate infrastructure (noted: the daily bot is TypeScript/`@solana/web3.js` and does not link the Rust SDK stack; it never constructs keypairs from independently supplied halves). Both recommend **per-network `declare_id!` before the testnet deploy** — adopted (§9).
+
+Grok's key catch: the audited package still carried the **stale `docs/TEST-LOG.txt` from `27cd983`** — a log in which every cargo command ended in `command not found` and the *old* evidence script still counted a missing compiler as a passing negative test (M-EVIDENCE-02 illustrated perfectly) — and no `TEST-LOG.sha256`. Hence the fresh evidence run is a hard pre-testnet condition. Script-hardening suggestions were applied the same day: HEAD + clean-tree re-checked before publishing the log, tool versions and the `Cargo.lock` hash recorded, temp log cleaned up on success, `rm -f` of the previous binary + `test -s` after build in both release scripts.
+
+Documentation findings **DOC-01…DOC-05** accepted and corrected in this revision (R1-07 wording narrowed; R1-05 evidence split into the hard guard vs the procedural exclusion; the pipeline status re-worded as "completed in source, run pending"; footnote anchored to commits). On **DOC-04** (alleged over-positive attribution of GPT's earlier verdict): the archived report `docs/audits/audit-3-verification-gpt.md` states verbatim "Testnet / zamknięty pilot: **gotowy**", which this document quotes accurately; Grok's objection is recorded here for transparency.
+
+**Verdicts (round #4).** *GPT:* closed testnet **ready unconditionally** (separate testnet Program ID, monitoring, epoch-model comms). *Grok:* **conditionally ready** — pending the fresh evidence run bound to the final HEAD and a separate testnet Program ID; immutable mainnet not ready. **Team position: the stricter reading wins again** — both conditions are explicit items of the §9 deployment checklist.
 
 ---
 
@@ -112,9 +122,9 @@ Severity: C = Critical, H = High, M = Medium, L = Low, I = Info, P = process. St
 | R1-02 | 1 | M | Daily funding required the authority key | ✅ | Operator role: `set_operator`; `instructions/fund.rs`, `lib.rs` |
 | R1-03 | 1 | I | Placeholder Program ID | 📋 | `anchor keys sync` at deploy; separate IDs for testnet/mainnet builds |
 | R1-04 | 1 | H | ANL mint Token-2022 extensions unvalidated | ✅ | Allowlist gate in `instructions/initialize.rs` (`ForbiddenMintExtension`, `MintHasFreezeAuthority`) |
-| R1-05 | 1 | H | `test-periods` safeguards log-only | ✅ | `production_constants_guard` test (`crates/anl-math/src/lib.rs`) + H-01 compile-time guards (`lib.rs:11-15`¹) |
+| R1-05 | 1 | H | `test-periods` safeguards log-only | ✅ | Hard compile guard for the mainnet variant: H-01 `compile_error!` (`lib.rs:11-15`¹) + `production_constants_guard` test; builds without a network feature are excluded from deployment **procedurally** (release only via `scripts/build-*.sh`; per-network `declare_id!` planned — see §9) |
 | R1-06 | 1 | M | No verifiable build | 📋 | Deployment checklist (§9) |
-| R1-07 | 1 | M | No account version checks | ✅ | `version == ACCOUNT_VERSION` in every instruction context |
+| R1-07 | 1 | M | No account version checks | ✅ | `version == ACCOUNT_VERSION` for all versioned state accounts in the audited instruction contexts (`UserProfile` is intentionally unversioned); the gap later found in `FundXnt` closed as R3-M-01 |
 | R1-08 | 1 | M | Incomplete vault constraints | ✅ | Mint + PDA authority + token program constraints in every context |
 | R1-09 | 1 | L | Pause policy transparency | ✅ | Whitepaper governance section; exit paths (`claim`, `unstake_early`, `settle_expired`) always work |
 | R3-M-01 | 3 | M | `FundXnt` missing pool version constraints | ✅ | `instructions/fund.rs:124-140`¹ |
@@ -126,12 +136,14 @@ Severity: C = Critical, H = High, M = Medium, L = Low, I = Info, P = process. St
 | V-03 | 3-ver | P | Build scripts' clean-tree checks insufficient | ✅ | `git status --porcelain` gate in both; `scripts/build-mainnet.sh`, `scripts/build-testnet.sh` |
 | V-04 | 3-ver | P | 2nd release-guard doesn't assert the error message | ✅ | Asserts `select exactly one network feature`; `.github/workflows/ci.yml` (release-guards) |
 | V-05 | 3-ver | P | README: plain `anchor build` paths, stale "23", missing release policy | ✅ | Build sections rewritten to release-script policy, "23"→24, network features documented; `README.md`, `README.pl.md` |
+| R4-DOC-01…05 | 4 | P | Documentation-accuracy findings (over-broad R1-07 wording, R1-05 evidence split, pipeline "completed" vs "run pending", verdict attribution, line-number drift) | ✅ | Corrected in this revision — see Round #4 section |
+| R4-ID | 4 | P | Per-network `declare_id!` (mainnet / testnet / dev-only placeholder) so a no-feature build cannot land on a deployed address | ✅ | Implemented 19 Jul 2026: testnet `2KQ8XBD99amQbfW5owFLQwGL97Hou8LYg3GYTyuiDXm5`; mainnet placeholder with **no keypair** (undeployable until the ID ceremony); `programs/anl_staking/src/lib.rs`, `Anchor.toml` |
 
 ---
 
 ## 9. Open items
 
-**Evidence & release pipeline — ✅ completed 19 Jul 2026** (V-01…V-05; the closed-testnet prerequisite from both verifications is met): fail-closed `audit-evidence.sh`, clean-tree gates in both build scripts, blocking supply-chain with a committed `deny.toml`, message assertion in the second release-guard, README release policy with corrected test counts. Details in §7 and the table above.
+**Evidence & release pipeline — ✅ tooling completed in source, 19 Jul 2026** (V-01…V-05; confirmed by round #4). The **fresh evidence run** — `audit-evidence.sh` executed on the final HEAD, with `docs/TEST-LOG.txt` + `docs/TEST-LOG.sha256` committed — remains a deployment-checklist item and a hard pre-testnet condition (round #4, DOC-03): fail-closed `audit-evidence.sh`, clean-tree gates in both build scripts, blocking supply-chain with a committed `deny.toml`, message assertion in the second release-guard, README release policy with corrected test counts. Details in §7 and the table above.
 
 **Dependency stack (from the first blocking supply-chain run):**
 1. Upgrade the Solana/Anchor dependency stack so the 8 ignored RUSTSEC advisories (see §7) drop out of the tree; empty both ignore lists. Required before the immutable-mainnet DoD; ignores expire at the quarterly review (next: 2026-10-19).
@@ -143,7 +155,7 @@ Severity: C = Critical, H = High, M = Medium, L = Low, I = Info, P = process. St
 3. Update the daily bot (`/opt/anl-bot/`, private W5 environment) to the new `fund_xnt(amount, epoch)` signature, checkpoint accounts, and checkpointing at settle — the current bot predates the epoch model and is incompatible with the contract.
 
 **Deployment checklist (before testnet):**
-4. Final Program ID via `anchor keys sync` (+ `declare_id!`, `Anchor.toml`, rebuild, re-verification of all PDAs); separate Program IDs for testnet (`test-periods` + `network-testnet`) and mainnet (`network-mainnet`) builds (R1-03).
+4. Program IDs — **per-network `declare_id!` implemented 19 Jul 2026**: testnet `2KQ8XBD99amQbfW5owFLQwGL97Hou8LYg3GYTyuiDXm5` (keypair generated and held outside the repo), dev-only placeholder for feature-less builds, and a mainnet placeholder **with no existing keypair** (the mainnet artifact compiles but is undeployable until the Program-ID ceremony). Remaining for deploy: `anchor keys sync` consistency check on the build machine, per-cluster `Anchor.toml` provider, PDA re-verification (R1-03 + R4-ID).
 5. Tagged, clean commit; full CI run on that exact commit; `docs/TEST-LOG.txt` regenerated by the fixed evidence script on a real Git checkout with HEAD recorded.
 6. Compare the pre/post-rename IDL before deployment (instruction discriminators expected unchanged; verify).
 7. Testnet observation period with valueless or strictly limited assets; upgrade authority retained under the multisig throughout — **no `--final`, no key deletion** at this stage.
@@ -168,4 +180,6 @@ Severity: C = Critical, H = High, M = Medium, L = Low, I = Info, P = process. St
 | 19 Jul 2026 | First consolidated edition (EN+PL); supersedes the append-only `AUDIT-RESPONSE.md`; incorporates rounds #1–#3 and **both** independent round-#3 verification reports (GPT + Grok), incl. finding M-02 and the immutable-mainnet Definition of Done |
 | 19 Jul 2026 (later) | V-01…V-05 fixed (evidence pipeline, CI, README); root cause of the red CI lint identified and fixed (unformatted `initialize.rs`); statuses and §9 updated |
 | 19 Jul 2026 (later) | First blocking supply-chain run: 8 RUSTSEC advisories in the Solana 1.x tooling stack triaged; documented ignores in `.cargo/audit.toml` + `deny.toml`; stack-upgrade task added and wired into the DoD |
+| 19 Jul 2026 (later) | Per-network `declare_id!` implemented (testnet ID assigned: `2KQ8XBD99amQbfW5owFLQwGL97Hou8LYg3GYTyuiDXm5`; mainnet: keypair-less placeholder); `Anchor.toml` per-cluster entries; checklist updated |
+| 19 Jul 2026 (later) | Round #4 re-verification (GPT + Grok) incorporated: V-01…V-05 confirmed closed in source; DOC-01…05 corrected; script hardening applied; per-network `declare_id!` adopted into the checklist; fresh evidence run pinned as a hard pre-testnet condition |
 | 19 Jul 2026 (later) | Property-based test suites added (anl-math: 10, core: 2 randomized machines incl. the epoch-cap immunity property) — the recommendation repeated by every audit round is closed; test counts updated across docs |
