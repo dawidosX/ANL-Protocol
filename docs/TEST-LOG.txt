@@ -1,0 +1,60 @@
+ANL Protocol — surowe dowody (sandbox; HEAD uzupełnia scripts/audit-evidence.sh w repo git)
+Wygenerowano: 2026-07-19T00:23:50Z
+rustc: rustc 1.89.0 (29483883e 2025-08-04) (built from a source tarball) | cargo: cargo 1.89.0 (c24e10642 2025-06-23) (built from a source tarball)
+UWAGA: ten log NIE jest dowodem sam w sobie — odtwórz przez scripts/audit-evidence.sh
+======================================================================
+
+$ cargo fmt --all --check
+Diff in /home/claude/work/anl-protocol/programs/anl_staking/src/instructions/initialize.rs:79:
+     pub system_program: Program<'info, System>,
+ }
+ 
+-pub fn initialize_handler(ctx: Context<Initialize>, genesis_start_ts: i64, start_paused: bool) -> Result<()> {
++pub fn initialize_handler(
++    ctx: Context<Initialize>,
++    genesis_start_ts: i64,
++    start_paused: bool,
++) -> Result<()> {
+     let now = Clock::get()?.unix_timestamp;
+ 
+     // Twarda kotwica minta XNT (wrapped native). W buildzie testowym
+
+$ cargo clippy --workspace --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.30s
+
+$ cargo clippy -p anl_staking --all-targets --features test-periods -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.65s
+
+$ cargo test -p anl-math
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+$ cargo test -p anl-math --features test-periods
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+$ (cd core && cargo test)
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+$ cargo test -p anl_staking --features test-periods --test integration
+test ts_audit_funding_after_end_epoch_not_counted ... [2026-07-19T00:24:26.051673123Z INFO  solana_program_test] "anl_staking" builtin program
+test ts_early_exit_forfeits_and_redistributes ... [2026-07-19T00:24:26.358787775Z INFO  solana_program_test] "anl_staking" builtin program
+test ts_full_lifecycle_two_users_daily_xnt ... [2026-07-19T00:24:26.840972367Z INFO  solana_program_test] "anl_staking" builtin program
+test ts_windows_coverage_and_validation_guards ... [2026-07-19T00:24:27.149906201Z INFO  solana_program_test] "anl_staking" builtin program
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.39s
+$ cargo test -p anl_staking --test integration
+test ts_audit_funding_after_end_epoch_not_counted ... [2026-07-19T00:24:42.633513259Z INFO  solana_program_test] "anl_staking" builtin program
+test ts_early_exit_forfeits_and_redistributes ... [2026-07-19T00:24:42.870285315Z INFO  solana_program_test] "anl_staking" builtin program
+test ts_full_lifecycle_two_users_daily_xnt ... [2026-07-19T00:24:43.152368326Z INFO  solana_program_test] "anl_staking" builtin program
+test ts_windows_coverage_and_validation_guards ... [2026-07-19T00:24:43.476155634Z INFO  solana_program_test] "anl_staking" builtin program
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.16s
+
+== NEGATYWNY DOWÓD H-01 (oczekiwany sukces testu negatywnego) ==
+$ cargo check -p anl_staking --features network-mainnet,test-periods
+error: test-periods cannot be enabled together with network-mainnet
+error: could not compile `anl_staking` (lib) due to 1 previous error
+(build NIE skompilował się — zgodnie z oczekiwaniem)
+
+$ cargo check -p anl_staking --features network-mainnet,network-testnet
+error: select exactly one network feature
+error: could not compile `anl_staking` (lib) due to 1 previous error
+
+$ cargo check -p anl_staking --features network-mainnet
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.52s
+
+cargo audit / cargo deny: niedostępne w sandboxie — job supply-chain w CI + scripts/audit-evidence.sh

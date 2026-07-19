@@ -38,13 +38,17 @@ pub struct GlobalConfig {
     /// Suma nagród ANL zarezerwowanych dla otwartych pozycji (WP §11:
     /// pokrycie w Reward Vault). Stake rezerwuje, claim/zerwanie zwalnia.
     pub anl_reward_reserved: u64,
+    /// Operator (gorący klucz bota dziennego) — uprawniony WYŁĄCZNIE do
+    /// fund_rewards / fund_xnt. Ustawiany przez authority (set_operator).
+    /// Kompromitacja operatora nie zagraża środkom: może tylko wpłacać.
+    pub operator: Pubkey,
     pub bump: u8,
     pub vault_authority_bump: u8,
-    pub reserved: [u8; 56],
+    pub reserved: [u8; 24],
 }
 
 impl GlobalConfig {
-    pub const LEN: usize = 8 + 1 + 32 * 3 + 1 + 8 + 8 + 1 + 1 + 56;
+    pub const LEN: usize = 8 + 1 + 32 * 3 + 1 + 8 + 8 + 32 + 1 + 1 + 24;
 }
 
 #[account]
@@ -63,12 +67,19 @@ pub struct PoolConfig {
     /// XNT przydzielone puli, gdy total_shares == 0 (D-5).
     pub xnt_undistributed: u64,
     pub position_count: u64,
+    /// Epoka OSTATNIEGO fundingu tej puli (NO_EPOCH = nigdy). Audyt #2:
+    /// indeks zmienia się wyłącznie w fund_xnt, więc snapshot końca każdej
+    /// epoki E równa się indeksowi po ostatnim fundingu o epoce ≤ E.
+    pub last_funded_epoch: u64,
+    /// Epoka PIERWSZEGO fundingu (NO_EPOCH = nigdy) — dowód "zero fundingu
+    /// ≤ end_epoch" bez konta checkpointu.
+    pub first_funded_epoch: u64,
     pub bump: u8,
-    pub reserved: [u8; 64],
+    pub reserved: [u8; 48],
 }
 
 impl PoolConfig {
-    pub const LEN: usize = 8 + 1 + 1 + 1 + 2 + 8 + 8 + 16 + 8 + 8 + 1 + 64;
+    pub const LEN: usize = 8 + 1 + 1 + 1 + 2 + 8 + 8 + 16 + 8 + 8 + 8 + 8 + 1 + 48;
 
     // ----- silnik indeksu XNT — lustro `anl_core::XntPool` (10F §29) -----
 
@@ -105,7 +116,29 @@ impl PoolConfig {
         shares: u64,
         debt_index: u128,
     ) -> std::result::Result<u64, anl_math::MathError> {
-        let pending = self.pending_xnt(shares, debt_index)?;
+        let idx = self.xnt_reward_index;
+        self.settle_position_at(shares, debt_index, idx)
+    }
+
+    /// Settlement względem HISTORYCZNEGO indeksu (checkpoint końca
+    /// end_epoch) — fundamentalna poprawka audytu #1: funding po
+    /// end_epoch nie może zwiększyć wypłaty pozycji.
+    pub fn settle_position_at(
+        &mut self,
+        shares: u64,
+        debt_index: u128,
+        cap_index: u128,
+    ) -> std::result::Result<u64, anl_math::MathError> {
+        let delta = cap_index
+            .checked_sub(debt_index)
+            .ok_or(anl_math::MathError::Overflow)?;
+        let pending_u128 = delta
+            .checked_mul(shares as u128)
+            .ok_or(anl_math::MathError::Overflow)?
+            / anl_math::PRECISION;
+        let pending: u64 = pending_u128
+            .try_into()
+            .map_err(|_| anl_math::MathError::Overflow)?;
         self.total_shares = self
             .total_shares
             .checked_sub(shares)
@@ -156,12 +189,15 @@ pub struct UserPosition {
     /// Snapshot xnt_reward_index z chwili wejścia.
     pub xnt_debt_index: u128,
     pub bump: u8,
-    pub reserved: [u8; 32],
+    /// Epoka XNT zawierająca ostatnią naliczaną sekundę pozycji
+    /// (epoch_of(end_ts - 1)). Settlement używa checkpointu ≤ end_epoch.
+    pub end_epoch: u64,
+    pub reserved: [u8; 24],
 }
 
 impl UserPosition {
     pub const LEN: usize =
-        8 + 1 + 32 + 1 + 1 + 8 + 8 + 8 + 2 + 4 + 8 + 8 + 8 + 8 + 1 + 16 + 1 + 32;
+        8 + 1 + 32 + 1 + 1 + 8 + 8 + 8 + 2 + 4 + 8 + 8 + 8 + 8 + 1 + 16 + 1 + 8 + 24;
 }
 
 #[account]
@@ -174,4 +210,34 @@ pub struct UserProfile {
 
 impl UserProfile {
     pub const LEN: usize = 8 + 32 + 8 + 1 + 7;
+}
+
+/// Snapshot indeksu puli po epoce, w której wystąpił funding.
+/// PDA: [XNT_CKPT_SEED, pool_type, epoch.to_le_bytes()].
+/// `next_funded_epoch` (NO_EPOCH = brak) tworzy łańcuch dowodowy:
+/// checkpoint K jest ostatnim fundingiem ≤ E ⟺ K.epoch ≤ E oraz
+/// (K.next == NO_EPOCH ∨ K.next > E).
+#[account]
+pub struct XntCheckpoint {
+    pub version: u8,
+    pub pool_type: PoolType,
+    pub epoch: u64,
+    /// xnt_reward_index puli po WSZYSTKICH fundingach tej epoki.
+    pub index: u128,
+    pub next_funded_epoch: u64,
+    pub bump: u8,
+    pub reserved: [u8; 13],
+}
+
+impl XntCheckpoint {
+    pub const LEN: usize = 8 + 1 + 1 + 8 + 16 + 8 + 1 + 13;
+}
+
+/// Numer epoki XNT dla chwili `ts` względem genesis (epoka = 1 dzień,
+/// granice zsynchronizowane z oknami Genesis o 02:00 UTC).
+pub fn epoch_of(ts: i64, genesis_start_ts: i64) -> Option<u64> {
+    if ts < genesis_start_ts {
+        return None;
+    }
+    Some(((ts - genesis_start_ts) as u64) / (anl_math::SECONDS_PER_DAY as u64))
 }

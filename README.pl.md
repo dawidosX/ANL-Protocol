@@ -16,7 +16,7 @@ Sieć docelowa: **X1 Network (x1.xyz)** — fork Solany.
 - **XNT dziennie**: `fund_xnt` dzieli wpływ walidatora **65% Genesis / 35% Flexible**
   i podbija indeksy koszyków (`acc-per-share`, PRECISION 1e12). Pusty koszyk →
   część czeka w `xnt_undistributed` i wchodzi przy najbliższym fundingu.
-- **Koniec okresu**: naliczanie OBU strumieni staje na `end_ts`. `settle_expired`
+- **Koniec okresu**: nagroda ANL kończy się dokładnie na `end_ts`; XNT jest rozliczane epokowo i obejmuje pełną `end_epoch` (patrz WP §8.1). `settle_expired`
   (permissionless) zamraża XNT pozycji i zdejmuje shares z koszyka.
 - **`claim`** (po `end_ts`): nagroda ANL + naliczone XNT + principal w **jednej
   transakcji**; konto pozycji zamykane (rent wraca do właściciela).
@@ -28,24 +28,27 @@ Sieć docelowa: **X1 Network (x1.xyz)** — fork Solany.
 
 | Moduł | Zakres | Testy |
 |---|---|---|
-| `crates/anl-math` | okna APY (31/91), nagrody okresowe, indeks XNT, podział 65/35, dust | **23/23** |
+| `crates/anl-math` | okna APY (31/91), nagrody okresowe, indeks XNT, podział 65/35, dust | **24/24** |
 | `core/` | model referencyjny: okres deklarowany, `settle`, `forfeit`, przykłady z WP | **34/34** |
 | `initialize` | GlobalConfig + VaultAuthority + 3 skarbce; ANL=Token-2022, XNT=SPL | TC-001…006 |
 | `create_pool` | dokładnie 2 pule, udziały XNT 65/35 | TC-010…016 |
 | `pause` / `resume` | hamulec awaryjny | TC-100…105 |
 | `stake` | actual received, Immutable APY, okres 7..=3650, rezerwacja nagrody | ✅ integ. |
-| `fund_rewards` / `fund_xnt` | depozyty NETTO; dzienny split 65/35 do indeksów | ✅ integ. |
-| `settle_expired` | permissionless; mrozi XNT, zdejmuje shares po `end_ts` | ✅ integ. |
+| `fund_rewards` / `fund_xnt(amount, epoch)` | depozyty NETTO; split 65/35; checkpoint epoki | ✅ integ. |
+| `settle_expired` | permissionless; XNT z checkpointu ≤ `end_epoch` (audyt #1 ✅) | ✅ integ. |
 | `claim` | ANL+XNT+principal w 1 tx, zwolnienie rezerwacji, close | ✅ integ. |
 | `unstake_early` | principal w całości; przepadek ANL (rezerwacja) i XNT (undistributed) | ✅ integ. |
 
 ## Operacyjnie (bot dzienny) — WAŻNE
 
-Kolejność każdego dnia: **1) `settle_expired` dla pozycji z `end_ts` ≤ teraz,
-2) dopiero potem `fund_xnt`.** Settle przed fundingiem gwarantuje, że pozycja
-po terminie nie uczestniczy w dziennej dystrybucji (WP §8 co do dnia).
-`settle_expired` jest permissionless — awaria bota niczego nie blokuje,
-a `claim` robi settle inline.
+Kolejność zalecana każdego dnia: **1) `settle_expired` dla pozycji z `end_ts` ≤ teraz,
+2) dopiero potem `fund_xnt`.** Ta kolejność MINIMALIZUJE rozwodnienie indeksu przez
+pozycje po terminie, ale **poprawność wypłaty nie zależy od niej**: nawet gdy funding
+wyprzedzi settle, rozliczenie używa historycznego checkpointu ≤ `end_epoch`, więc
+pozycja nigdy nie dostanie XNT z epoki > `end_epoch` (audyt #1/#3). Nierozliczona
+pozycja po terminie wciąż trzyma shares i rozcieńcza bieżący indeks do czasu settle —
+nadwyżka zostaje w skarbcu (inwariant wypłacalności). `settle_expired` jest
+permissionless (awaria bota niczego nie blokuje), a `claim` robi settle inline.
 
 Pauza (`pause`) blokuje `stake`; ścieżki wyjścia (`claim`, `unstake_early`,
 `settle_expired`) działają zawsze — użytkownik nigdy nie jest uwięziony.
@@ -82,10 +85,13 @@ anchor keys sync                # właściwy Program ID
 Toolchain: **Rust ≥ 1.80** (weryfikowane na 1.89). `Cargo.lock` wygenerowany
 na 1.89 — stare piny pod rustc 1.75 zdjęte.
 
+
+> **Semantyka XNT — epoka, nie sekunda.** Strumień XNT rozlicza się w jednostce epoki dziennej: `end_epoch = epoch_of(end_ts − 1)`. Pozycja dostaje XNT za każdą epokę, w której choć sekunda jej okresu jest aktywna (łącznie z całą epoką końca); funding epoki `> end_epoch` nigdy nie zwiększa wypłaty. Nagroda ANL liczy się do dokładnego `end_ts`. To model zamierzony (WP §8.1) — nie rozjazd dok↔kod.
+
 ## Testy integracyjne (solana-program-test)
 
 ```bash
-cargo test -p anl_staking --features test-periods --test integration   # 3/3
+cargo test -p anl_staking --features test-periods --test integration   # 4/4
 ```
 
 In-process, z prawdziwymi CPI do Token-2022 i SPL Token, zegar sterowany sysvarem.
@@ -95,6 +101,16 @@ przepadek do puli koszyka, redystrybucja kolejnym fundingiem, guardy PeriodNotEn
 PeriodAlreadyEnded) · okna Immutable APY + pokrycie nagród + walidacje + pauza
 (stake blokowany, claim działa). Suite używa stałych z anl-math — działa w obu
 wariantach builda.
+
+
+## Bezpieczeństwo — audyt #1 (18.07.2026)
+
+Kontrakt przeszedł wstępny audyt bezpieczeństwa. Status ustaleń i wdrożone poprawki:
+**[docs/AUDIT-RESPONSE.md](docs/AUDIT-RESPONSE.md)**. W skrócie: rola **operatora**
+(gorący klucz wyłącznie do fundingu, `set_operator` z multisig), bramka rozszerzeń
+Token-2022 minta ANL w `initialize`, kontrola `version` we wszystkich instrukcjach,
+pełne constraints skarbców, twardy test stałych produkcyjnych. **Otwarte: #1**
+(koszyki wygaśnięć XNT) — do zamknięcia przed jakimkolwiek wdrożeniem immutable.
 
 ## Faza 3 (następna)
 

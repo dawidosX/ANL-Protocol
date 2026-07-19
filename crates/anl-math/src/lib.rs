@@ -123,7 +123,9 @@ pub fn period_end_ts(start_ts: i64, period_seconds: i64) -> MathResult<i64> {
     if period_seconds < 0 {
         return Err(MathError::NegativeTime);
     }
-    start_ts.checked_add(period_seconds).ok_or(MathError::Overflow)
+    start_ts
+        .checked_add(period_seconds)
+        .ok_or(MathError::Overflow)
 }
 
 #[cfg(test)]
@@ -159,6 +161,21 @@ mod tests {
     fn tc_044_from_day_91_gives_8_percent() {
         assert_eq!(genesis_apy_bps(WINDOW_2_END + 123_456).unwrap(), 800);
         assert_eq!(genesis_apy_bps(i64::MAX).unwrap(), 800);
+    }
+
+    /// STRAŻNIK PRODUKCJI (audyt pkt 5): build bez feature MUSI mieć
+    /// parametry produkcyjne. CI odpala ten test na wariancie domyślnym —
+    /// artefakt release, który go nie przechodzi, nie jest artefaktem
+    /// produkcyjnym. Procedura: osobny Program ID dla buildów test-periods.
+    #[test]
+    #[cfg(not(feature = "test-periods"))]
+    fn production_constants_guard() {
+        assert_eq!(WINDOW_1_END, 31 * SECONDS_PER_DAY);
+        assert_eq!(WINDOW_2_END, 91 * SECONDS_PER_DAY);
+        assert_eq!(MIN_PERIOD_DAYS, 7);
+        assert_eq!(genesis_apy_bps(30 * SECONDS_PER_DAY).unwrap(), 2_000);
+        assert_eq!(genesis_apy_bps(31 * SECONDS_PER_DAY).unwrap(), 1_500);
+        assert_eq!(genesis_apy_bps(91 * SECONDS_PER_DAY).unwrap(), 800);
     }
 
     #[test]
@@ -202,7 +219,10 @@ mod tests {
     #[test]
     fn tc_031_minimum_amounts_floor_to_dust_not_panic() {
         assert_eq!(period_reward(1, 800, SECONDS_PER_YEAR).unwrap(), 0);
-        assert_eq!(period_reward(ONE_ANL, 800, SECONDS_PER_YEAR).unwrap(), ONE_ANL * 8 / 100);
+        assert_eq!(
+            period_reward(ONE_ANL, 800, SECONDS_PER_YEAR).unwrap(),
+            ONE_ANL * 8 / 100
+        );
     }
 
     #[test]
@@ -239,7 +259,10 @@ mod tests {
 
     #[test]
     fn tc_129_zero_shares_division_guard() {
-        assert_eq!(update_xnt_index(1_000, 500, 0), Err(MathError::DivisionByZero));
+        assert_eq!(
+            update_xnt_index(1_000, 500, 0),
+            Err(MathError::DivisionByZero)
+        );
     }
 
     #[test]
@@ -254,7 +277,10 @@ mod tests {
     #[test]
     fn tc_123_rewards_proportional_to_shares() {
         let idx = update_xnt_index(0, 3_000, 3_000).unwrap();
-        assert_eq!(pending_xnt(2_000, idx, 0).unwrap(), pending_xnt(1_000, idx, 0).unwrap() * 2);
+        assert_eq!(
+            pending_xnt(2_000, idx, 0).unwrap(),
+            pending_xnt(1_000, idx, 0).unwrap() * 2
+        );
     }
 
     #[test]
@@ -297,8 +323,14 @@ mod tests {
 
     #[test]
     fn tc_045_047_declared_period_end_timestamps() {
-        assert_eq!(period_end_ts(1_000, 7 * SECONDS_PER_DAY).unwrap(), 1_000 + 7 * 86_400);
-        assert_eq!(period_end_ts(1_000, 60 * SECONDS_PER_DAY).unwrap(), 1_000 + 60 * 86_400);
+        assert_eq!(
+            period_end_ts(1_000, 7 * SECONDS_PER_DAY).unwrap(),
+            1_000 + 7 * 86_400
+        );
+        assert_eq!(
+            period_end_ts(1_000, 60 * SECONDS_PER_DAY).unwrap(),
+            1_000 + 60 * 86_400
+        );
         assert_eq!(period_end_ts(i64::MAX, 1), Err(MathError::Overflow));
     }
 

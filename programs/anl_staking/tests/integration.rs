@@ -10,7 +10,9 @@
 
 use anchor_lang::{AccountDeserialize, InstructionData, ToAccountMetas};
 use anl_staking::state::{PoolConfig, PoolType, PositionStatus, UserPosition};
-use solana_program_test::{processor, BanksClient, BanksClientError, ProgramTest, ProgramTestContext};
+use solana_program_test::{
+    processor, BanksClient, BanksClientError, ProgramTest, ProgramTestContext,
+};
 use solana_sdk::{
     clock::Clock,
     instruction::Instruction,
@@ -30,8 +32,7 @@ fn anchor_entry(
     accounts: &[anchor_lang::prelude::AccountInfo],
     data: &[u8],
 ) -> anchor_lang::solana_program::entrypoint::ProgramResult {
-    let accounts: &[anchor_lang::prelude::AccountInfo] =
-        unsafe { std::mem::transmute(accounts) };
+    let accounts: &[anchor_lang::prelude::AccountInfo] = unsafe { std::mem::transmute(accounts) };
     anl_staking::entry(program_id, accounts, data)
 }
 
@@ -46,7 +47,7 @@ struct Env {
     program_id: Pubkey,
     authority: Keypair,
     anl_mint: Keypair,
-    xnt_mint: Keypair,
+    xnt_mint: Pubkey,
     global_config: Pubkey,
     vault_authority: Pubkey,
     principal_vault: Pubkey,
@@ -55,6 +56,8 @@ struct Env {
     genesis_pool: Pubkey,
     flexible_pool: Pubkey,
     genesis_start_ts: i64,
+    anl_treasury: Pubkey,
+    last_funded_epoch: Option<u64>,
 }
 
 impl Env {
@@ -79,8 +82,35 @@ impl Env {
         // mints: ANL = Token-2022, XNT = legacy SPL (D-14)
         let anl_mint = Keypair::new();
         create_mint(&mut ctx, &anl_mint, &authority, spl_token_2022::id()).await;
-        let xnt_mint = Keypair::new();
-        create_mint(&mut ctx, &xnt_mint, &authority, spl_token::id()).await;
+        // Build produkcyjny wymaga minta XNT DOKŁADNIE pod adresem wrapped
+        // native (audyt #2) — wstrzykujemy konto minta pod tym adresem.
+        // Build test-periods używa zwykłego minta (osobny Program ID).
+        let xnt_mint: Pubkey = if cfg!(feature = "test-periods") {
+            let kp = Keypair::new();
+            create_mint(&mut ctx, &kp, &authority, spl_token::id()).await;
+            kp.pubkey()
+        } else {
+            use solana_sdk::program_pack::Pack;
+            let expected = anl_staking::constants::EXPECTED_XNT_MINT;
+            let mut data = vec![0u8; spl_token::state::Mint::LEN];
+            spl_token::state::Mint {
+                mint_authority: solana_sdk::program_option::COption::Some(authority.pubkey()),
+                supply: 0,
+                decimals: DECIMALS,
+                is_initialized: true,
+                freeze_authority: solana_sdk::program_option::COption::None,
+            }
+            .pack_into_slice(&mut data);
+            let acc = solana_sdk::account::AccountSharedData::from(solana_sdk::account::Account {
+                lamports: 1_000_000_000,
+                data,
+                owner: spl_token::id(),
+                executable: false,
+                rent_epoch: 0,
+            });
+            ctx.set_account(&expected, &acc);
+            expected
+        };
 
         let (global_config, _) = Pubkey::find_program_address(&[b"global_config"], &program_id);
         let (vault_authority, _) = Pubkey::find_program_address(&[b"vault_authority"], &program_id);
@@ -108,7 +138,41 @@ impl Env {
             genesis_pool,
             flexible_pool,
             genesis_start_ts,
+            anl_treasury: Pubkey::default(),
+            last_funded_epoch: None,
         };
+
+        // Audyt #2: fixed supply — cała podaż ANL do skarbca testowego,
+        // potem mint authority -> None, dopiero wtedy initialize.
+        let treasury = create_token_account(
+            &mut env.ctx,
+            &env.authority.pubkey(),
+            &env.anl_mint.pubkey(),
+            spl_token_2022::id(),
+        )
+        .await;
+        mint_to(
+            &mut env.ctx,
+            &env.anl_mint.pubkey(),
+            &treasury,
+            &env.authority,
+            100_000_000 * ONE_ANL,
+            spl_token_2022::id(),
+        )
+        .await;
+        env.anl_treasury = treasury;
+        {
+            let ix = spl_token_2022::instruction::set_authority(
+                &spl_token_2022::id(),
+                &env.anl_mint.pubkey(),
+                None,
+                spl_token_2022::instruction::AuthorityType::MintTokens,
+                &env.authority.pubkey(),
+                &[],
+            )
+            .unwrap();
+            env.send(&[ix], &[]).await.unwrap();
+        }
 
         // initialize + dwie pule
         let ix = Instruction {
@@ -118,7 +182,7 @@ impl Env {
                 global_config: env.global_config,
                 vault_authority: env.vault_authority,
                 anl_mint: env.anl_mint.pubkey(),
-                xnt_mint: env.xnt_mint.pubkey(),
+                xnt_mint: env.xnt_mint,
                 principal_vault: env.principal_vault,
                 reward_vault: env.reward_vault,
                 xnt_vault: env.xnt_vault,
@@ -166,12 +230,8 @@ impl Env {
         let bh = self.ctx.banks_client.get_latest_blockhash().await.unwrap();
         let mut signers: Vec<&Keypair> = vec![&self.authority];
         signers.extend_from_slice(extra);
-        let tx = Transaction::new_signed_with_payer(
-            ixs,
-            Some(&self.authority.pubkey()),
-            &signers,
-            bh,
-        );
+        let tx =
+            Transaction::new_signed_with_payer(ixs, Some(&self.authority.pubkey()), &signers, bh);
         self.ctx.banks_client.process_transaction(tx).await
     }
 
@@ -185,6 +245,7 @@ impl Env {
         self.ctx.set_sysvar(&c);
     }
 
+    #[allow(dead_code)]
     async fn now(&mut self) -> i64 {
         clock(&mut self.ctx.banks_client).await.unix_timestamp
     }
@@ -204,20 +265,40 @@ impl Env {
         let xnt_acc = create_token_account(
             &mut self.ctx,
             &user.pubkey(),
-            &self.xnt_mint.pubkey(),
+            &self.xnt_mint,
             spl_token::id(),
         )
         .await;
-        mint_to(
-            &mut self.ctx,
-            &self.anl_mint.pubkey(),
-            &anl_acc,
-            &self.authority,
-            amount,
-            spl_token_2022::id(),
-        )
-        .await;
+        self.transfer_anl(anl_acc, amount).await;
         (user, anl_acc, xnt_acc)
+    }
+
+    async fn transfer_anl(&mut self, to: Pubkey, amount: u64) {
+        let ix = spl_token_2022::instruction::transfer_checked(
+            &spl_token_2022::id(),
+            &self.anl_treasury,
+            &self.anl_mint.pubkey(),
+            &to,
+            &self.authority.pubkey(),
+            &[],
+            amount,
+            DECIMALS,
+        )
+        .unwrap();
+        self.send(&[ix], &[]).await.unwrap();
+    }
+
+    fn ckpt_pda(&self, pool_type: PoolType, epoch: u64) -> Pubkey {
+        Pubkey::find_program_address(
+            &[b"xnt_ckpt", &[pool_type as u8], &epoch.to_le_bytes()],
+            &self.program_id,
+        )
+        .0
+    }
+
+    async fn current_epoch(&mut self) -> u64 {
+        let now = clock(&mut self.ctx.banks_client).await.unix_timestamp;
+        ((now - self.genesis_start_ts) as u64) / 86_400
     }
 
     async fn fund_rewards(&mut self, amount: u64) {
@@ -228,20 +309,13 @@ impl Env {
             spl_token_2022::id(),
         )
         .await;
-        mint_to(
-            &mut self.ctx,
-            &self.anl_mint.pubkey(),
-            &src,
-            &self.authority,
-            amount,
-            spl_token_2022::id(),
-        )
-        .await;
+        self.transfer_anl(src, amount).await;
         let ix = Instruction {
             program_id: self.program_id,
             accounts: anl_staking::accounts::FundRewards {
                 funder: self.authority.pubkey(),
                 global_config: self.global_config,
+                vault_authority: self.vault_authority,
                 anl_mint: self.anl_mint.pubkey(),
                 funder_anl: src,
                 reward_vault: self.reward_vault,
@@ -254,38 +328,66 @@ impl Env {
     }
 
     async fn fund_xnt(&mut self, amount: u64) -> Result<(), BanksClientError> {
+        let epoch = self.current_epoch().await;
+        let (g_prev, f_prev) = match self.last_funded_epoch {
+            Some(last) if last != epoch => (
+                Some(self.ckpt_pda(PoolType::Genesis, last)),
+                Some(self.ckpt_pda(PoolType::Flexible, last)),
+            ),
+            _ => (None, None),
+        };
         let src = create_token_account(
             &mut self.ctx,
             &self.authority.pubkey(),
-            &self.xnt_mint.pubkey(),
+            &self.xnt_mint,
             spl_token::id(),
         )
         .await;
-        mint_to(
-            &mut self.ctx,
-            &self.xnt_mint.pubkey(),
-            &src,
-            &self.authority,
-            amount,
-            spl_token::id(),
-        )
-        .await;
+        if cfg!(feature = "test-periods") {
+            mint_to(
+                &mut self.ctx,
+                &self.xnt_mint,
+                &src,
+                &self.authority,
+                amount,
+                spl_token::id(),
+            )
+            .await;
+        } else {
+            // mint natywny: zasilenie przez wrap (transfer + sync_native) —
+            // identycznie jak bot produkcyjny po wypłacie z vote konta
+            let ixs = [
+                solana_sdk::system_instruction::transfer(&self.authority.pubkey(), &src, amount),
+                spl_token::instruction::sync_native(&spl_token::id(), &src).unwrap(),
+            ];
+            self.send(&ixs, &[]).await.unwrap();
+        }
         let ix = Instruction {
             program_id: self.program_id,
             accounts: anl_staking::accounts::FundXnt {
                 funder: self.authority.pubkey(),
                 global_config: self.global_config,
-                xnt_mint: self.xnt_mint.pubkey(),
+                vault_authority: self.vault_authority,
+                xnt_mint: self.xnt_mint,
                 funder_xnt: src,
                 xnt_vault: self.xnt_vault,
                 genesis_pool: self.genesis_pool,
                 flexible_pool: self.flexible_pool,
                 xnt_token_program: spl_token::id(),
+                genesis_ckpt: self.ckpt_pda(PoolType::Genesis, epoch),
+                flexible_ckpt: self.ckpt_pda(PoolType::Flexible, epoch),
+                genesis_prev_ckpt: g_prev,
+                flexible_prev_ckpt: f_prev,
+                system_program: solana_sdk::system_program::id(),
             }
             .to_account_metas(None),
-            data: anl_staking::instruction::FundXnt { amount }.data(),
+            data: anl_staking::instruction::FundXnt { amount, epoch }.data(),
         };
-        self.send(&[ix], &[]).await
+        let r = self.send(&[ix], &[]).await;
+        if r.is_ok() {
+            self.last_funded_epoch = Some(epoch);
+        }
+        r
     }
 
     // -------------------- instrukcje pozycji --------------------
@@ -323,6 +425,7 @@ impl Env {
                 owner: user.pubkey(),
                 global_config: self.global_config,
                 pool_config: pool,
+                vault_authority: self.vault_authority,
                 anl_mint: self.anl_mint.pubkey(),
                 owner_anl: user_anl,
                 principal_vault: self.principal_vault,
@@ -346,6 +449,7 @@ impl Env {
         &mut self,
         position: Pubkey,
         pool_type: PoolType,
+        ckpt_epoch: Option<u64>,
     ) -> Result<(), BanksClientError> {
         let pool = if pool_type == PoolType::Genesis {
             self.genesis_pool
@@ -358,6 +462,7 @@ impl Env {
                 cranker: self.authority.pubkey(),
                 pool_config: pool,
                 user_position: position,
+                xnt_checkpoint: ckpt_epoch.map(|e| self.ckpt_pda(pool_type, e)),
             }
             .to_account_metas(None),
             data: anl_staking::instruction::SettleExpired {}.data(),
@@ -372,6 +477,7 @@ impl Env {
         user_xnt: Pubkey,
         position: Pubkey,
         pool_type: PoolType,
+        ckpt_epoch: Option<u64>,
     ) -> Result<(), BanksClientError> {
         let pool = if pool_type == PoolType::Genesis {
             self.genesis_pool
@@ -387,7 +493,7 @@ impl Env {
                 user_position: position,
                 vault_authority: self.vault_authority,
                 anl_mint: self.anl_mint.pubkey(),
-                xnt_mint: self.xnt_mint.pubkey(),
+                xnt_mint: self.xnt_mint,
                 principal_vault: self.principal_vault,
                 reward_vault: self.reward_vault,
                 xnt_vault: self.xnt_vault,
@@ -395,6 +501,7 @@ impl Env {
                 owner_xnt: user_xnt,
                 anl_token_program: spl_token_2022::id(),
                 xnt_token_program: spl_token::id(),
+                xnt_checkpoint: ckpt_epoch.map(|e| self.ckpt_pda(pool_type, e)),
             }
             .to_account_metas(None),
             data: anl_staking::instruction::Claim {}.data(),
@@ -479,7 +586,11 @@ async fn clock(banks: &mut BanksClient) -> Clock {
 async fn airdrop(ctx: &mut ProgramTestContext, to: &Pubkey, lamports: u64) {
     let bh = ctx.banks_client.get_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
-        &[system_instruction::transfer(&ctx.payer.pubkey(), to, lamports)],
+        &[system_instruction::transfer(
+            &ctx.payer.pubkey(),
+            to,
+            lamports,
+        )],
         Some(&ctx.payer.pubkey()),
         &[&ctx.payer],
         bh,
@@ -626,10 +737,16 @@ async fn ts_full_lifecycle_two_users_daily_xnt() {
     let p = env.position(pos_a).await;
     assert_eq!(p.apy_bps, 2_000, "okno 1 = 20%");
     assert_eq!(p.declared_days, days);
-    assert_eq!(p.amount, 200 * ONE_ANL, "actual received == amount (mint bez fee)");
-    let expected_reward =
-        anl_math::period_reward(200 * ONE_ANL, 2_000, period).unwrap();
-    assert_eq!(p.anl_reward, expected_reward, "Immutable APY: nagroda znana z gory");
+    assert_eq!(
+        p.amount,
+        200 * ONE_ANL,
+        "actual received == amount (mint bez fee)"
+    );
+    let expected_reward = anl_math::period_reward(200 * ONE_ANL, 2_000, period).unwrap();
+    assert_eq!(
+        p.anl_reward, expected_reward,
+        "Immutable APY: nagroda znana z gory"
+    );
 
     // TS-04: dzienny funding — pusty koszyk Flexible czeka w undistributed
     env.fund_xnt(1_000_000).await.unwrap();
@@ -644,14 +761,20 @@ async fn ts_full_lifecycle_two_users_daily_xnt() {
 
     // koniec okresu — TS-06: settle mrozi naliczanie
     env.advance(period).await;
-    env.settle(pos_a, PoolType::Genesis).await.unwrap();
-    env.settle(pos_b, PoolType::Genesis).await.unwrap();
+    env.settle(pos_a, PoolType::Genesis, Some(1)).await.unwrap();
+    env.settle(pos_b, PoolType::Genesis, Some(1)).await.unwrap();
     let pa = env.position(pos_a).await;
     let pb = env.position(pos_b).await;
     // 2 dni × 650 000 XNT dla koszyka Genesis, proporcja 2:1 (floor)
-    assert_eq!(pa.xnt_accrued + pb.xnt_accrued <= 1_300_000, true);
-    assert!(pa.xnt_accrued >= 866_665 && pa.xnt_accrued <= 866_667, "A ~ 2/3");
-    assert!(pb.xnt_accrued >= 433_332 && pb.xnt_accrued <= 433_334, "B ~ 1/3");
+    assert!(pa.xnt_accrued + pb.xnt_accrued <= 1_300_000);
+    assert!(
+        pa.xnt_accrued >= 866_665 && pa.xnt_accrued <= 866_667,
+        "A ~ 2/3"
+    );
+    assert!(
+        pb.xnt_accrued >= 433_332 && pb.xnt_accrued <= 433_334,
+        "B ~ 1/3"
+    );
     assert!(pa.settled && pb.settled);
 
     // funding PO settle nie dolicza nic pozycjom po terminie (WP §8)
@@ -662,7 +785,7 @@ async fn ts_full_lifecycle_two_users_daily_xnt() {
     // TS-07: claim — ANL + XNT + principal jedną transakcją, konto zamknięte
     let anl_before = env.token_balance(alice_anl).await;
     let xnt_before = env.token_balance(alice_xnt).await;
-    env.claim(&alice, alice_anl, alice_xnt, pos_a, PoolType::Genesis)
+    env.claim(&alice, alice_anl, alice_xnt, pos_a, PoolType::Genesis, None)
         .await
         .unwrap();
     assert_eq!(
@@ -670,14 +793,23 @@ async fn ts_full_lifecycle_two_users_daily_xnt() {
         200 * ONE_ANL + expected_reward,
         "principal + nagroda ANL"
     );
-    assert_eq!(env.token_balance(alice_xnt).await - xnt_before, frozen_a, "XNT razem z ANL");
+    assert_eq!(
+        env.token_balance(alice_xnt).await - xnt_before,
+        frozen_a,
+        "XNT razem z ANL"
+    );
     assert!(
-        env.ctx.banks_client.get_account(pos_a).await.unwrap().is_none(),
+        env.ctx
+            .banks_client
+            .get_account(pos_a)
+            .await
+            .unwrap()
+            .is_none(),
         "konto pozycji zamknięte, rent wrócił"
     );
 
     // rezerwacja zwolniona proporcjonalnie (globalne saldo księgowe)
-    env.claim(&bob, bob_anl, bob_xnt, pos_b, PoolType::Genesis)
+    env.claim(&bob, bob_anl, bob_xnt, pos_b, PoolType::Genesis, None)
         .await
         .unwrap();
     let gen = env.pool(env.genesis_pool).await;
@@ -696,7 +828,14 @@ async fn ts_early_exit_forfeits_and_redistributes() {
     let (alice, alice_anl, alice_xnt) = env.user_with_anl(100 * ONE_ANL).await;
     let (bob, bob_anl, bob_xnt) = env.user_with_anl(100 * ONE_ANL).await;
     let pos_a = env
-        .stake(&alice, alice_anl, PoolType::Flexible, 100 * ONE_ANL, days, 0)
+        .stake(
+            &alice,
+            alice_anl,
+            PoolType::Flexible,
+            100 * ONE_ANL,
+            days,
+            0,
+        )
         .await
         .unwrap();
     let pos_b = env
@@ -711,7 +850,14 @@ async fn ts_early_exit_forfeits_and_redistributes() {
     // TS-08: claim przed końcem okresu — odrzucony
     env.advance(DAY).await;
     let err = env
-        .claim(&alice, alice_anl, alice_xnt, pos_a, PoolType::Flexible)
+        .claim(
+            &alice,
+            alice_anl,
+            alice_xnt,
+            pos_a,
+            PoolType::Flexible,
+            None,
+        )
         .await;
     assert!(err.is_err(), "PeriodNotEnded");
 
@@ -726,18 +872,32 @@ async fn ts_early_exit_forfeits_and_redistributes() {
         100 * ONE_ANL,
         "principal wraca w 100%"
     );
-    assert_eq!(env.token_balance(alice_xnt).await, xnt_before, "zero XNT przy zerwaniu");
+    assert_eq!(
+        env.token_balance(alice_xnt).await,
+        xnt_before,
+        "zero XNT przy zerwaniu"
+    );
     let flex = env.pool(env.flexible_pool).await;
-    assert_eq!(flex.xnt_undistributed, 175_000, "przepadek wraca do puli koszyka");
+    assert_eq!(
+        flex.xnt_undistributed, 175_000,
+        "przepadek wraca do puli koszyka"
+    );
     assert!(
-        env.ctx.banks_client.get_account(pos_a).await.unwrap().is_none(),
+        env.ctx
+            .banks_client
+            .get_account(pos_a)
+            .await
+            .unwrap()
+            .is_none(),
         "konto zamknięte"
     );
 
     // kolejny funding: przepadek + nowa transza w całości dla B
     env.fund_xnt(1_000_000).await.unwrap();
     env.advance((days as i64) * DAY).await;
-    env.settle(pos_b, PoolType::Flexible).await.unwrap();
+    env.settle(pos_b, PoolType::Flexible, Some(1))
+        .await
+        .unwrap();
     let pb = env.position(pos_b).await;
     // B: 175 000 (dzień 1) + 350 000 (dzień 2) + 175 000 (przepadek A) = 700 000
     assert_eq!(pb.xnt_accrued, 700_000);
@@ -747,7 +907,7 @@ async fn ts_early_exit_forfeits_and_redistributes() {
         .unstake_early(&bob, bob_anl, pos_b, PoolType::Flexible)
         .await;
     assert!(err.is_err(), "PeriodAlreadyEnded");
-    env.claim(&bob, bob_anl, bob_xnt, pos_b, PoolType::Flexible)
+    env.claim(&bob, bob_anl, bob_xnt, pos_b, PoolType::Flexible, None)
         .await
         .unwrap();
 }
@@ -770,7 +930,14 @@ async fn ts_windows_coverage_and_validation_guards() {
 
     // TS-14: walidacje okresu i kwoty
     let err = env
-        .stake(&carol, carol_anl, PoolType::Genesis, 100 * ONE_ANL, days - 1, 0)
+        .stake(
+            &carol,
+            carol_anl,
+            PoolType::Genesis,
+            100 * ONE_ANL,
+            days - 1,
+            0,
+        )
         .await;
     assert!(err.is_err(), "InvalidPeriod - ponizej minimum");
     let err = env
@@ -791,9 +958,14 @@ async fn ts_windows_coverage_and_validation_guards() {
         .await
         .unwrap();
     assert_eq!(env.position(pos_w2).await.apy_bps, 1_500, "okno 2");
-    assert_eq!(env.position(pos_w1).await.apy_bps, 2_000, "pozycja z okna 1 trzyma 20%");
+    assert_eq!(
+        env.position(pos_w1).await.apy_bps,
+        2_000,
+        "pozycja z okna 1 trzyma 20%"
+    );
 
-    env.advance(anl_math::WINDOW_2_END - anl_math::WINDOW_1_END).await; // okno 3
+    env.advance(anl_math::WINDOW_2_END - anl_math::WINDOW_1_END)
+        .await; // okno 3
     let pos_w3 = env
         .stake(&carol, carol_anl, PoolType::Genesis, 100 * ONE_ANL, days, 2)
         .await
@@ -802,7 +974,14 @@ async fn ts_windows_coverage_and_validation_guards() {
 
     // Flexible w oknie 3 nadal 8% (i nie mniej)
     let pos_f = env
-        .stake(&carol, carol_anl, PoolType::Flexible, 100 * ONE_ANL, days, 3)
+        .stake(
+            &carol,
+            carol_anl,
+            PoolType::Flexible,
+            100 * ONE_ANL,
+            days,
+            3,
+        )
         .await
         .unwrap();
     assert_eq!(env.position(pos_f).await.apy_bps, 800);
@@ -819,27 +998,126 @@ async fn ts_windows_coverage_and_validation_guards() {
     };
     env.send(&[ix], &[]).await.unwrap();
     let err = env
-        .stake(&carol, carol_anl, PoolType::Flexible, 100 * ONE_ANL, days, 4)
+        .stake(
+            &carol,
+            carol_anl,
+            PoolType::Flexible,
+            100 * ONE_ANL,
+            days,
+            4,
+        )
         .await;
     assert!(err.is_err(), "Paused blokuje stake");
 
     env.advance((days as i64) * DAY + 1).await;
-    env.settle(pos_w1, PoolType::Genesis).await.unwrap();
+    env.settle(pos_w1, PoolType::Genesis, None).await.unwrap();
     let (_, _, carol_xnt2) = {
         // konto XNT dla claim
         let xnt = create_token_account(
             &mut env.ctx,
             &carol.pubkey(),
-            &env.xnt_mint.pubkey(),
+            &env.xnt_mint,
             spl_token::id(),
         )
         .await;
         ((), (), xnt)
     };
-    env.claim(&carol, carol_anl, carol_xnt2, pos_w1, PoolType::Genesis)
-        .await
-        .expect("claim działa mimo pauzy - user nigdy nie jest uwięziony");
+    env.claim(
+        &carol,
+        carol_anl,
+        carol_xnt2,
+        pos_w1,
+        PoolType::Genesis,
+        None,
+    )
+    .await
+    .expect("claim działa mimo pauzy - user nigdy nie jest uwięziony");
 
     let status = env.position(pos_w2).await.status;
     assert_eq!(status, PositionStatus::Active);
+}
+
+// ============================================================ TS-AUDIT: exploit #1 zamknięty
+
+/// Obowiązkowy test audytu #2: funding wykonany PO epoce końca pozycji
+/// nie może zwiększyć jej wypłaty XNT — niezależnie od tego, czy settle
+/// nastąpił przed fundingiem, po nim, czy dopiero inline przy claim.
+#[tokio::test]
+async fn ts_audit_funding_after_end_epoch_not_counted() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+    let period = days as i64 * DAY;
+    let (alice, alice_anl, alice_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let (bob, bob_anl, bob_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos_a = env
+        .stake(
+            &alice,
+            alice_anl,
+            PoolType::Flexible,
+            100 * ONE_ANL,
+            days,
+            0,
+        )
+        .await
+        .unwrap();
+    let pos_b = env
+        .stake(&bob, bob_anl, PoolType::Flexible, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+    assert_eq!(env.position(pos_a).await.end_epoch, days as u64 - 1);
+
+    // epoka 0: koszyk Flexible 350 000 -> po 175 000 na pozycję
+    env.fund_xnt(1_000_000).await.unwrap();
+
+    // koniec okresu mija; bot NIE robi settle (scenariusz awarii z audytu)
+    env.advance(period + 1).await;
+    assert_eq!(env.current_epoch().await, days as u64);
+
+    // funding w epoce PO końcu pozycji (dokładnie exploit z raportu)
+    env.fund_xnt(1_000_000).await.unwrap();
+
+    // ATAK: claim z podstawionym checkpointem późniejszej epoki -> odrzucony
+    let err = env
+        .claim(
+            &alice,
+            alice_anl,
+            alice_xnt,
+            pos_a,
+            PoolType::Flexible,
+            Some(days as u64),
+        )
+        .await;
+    assert!(err.is_err(), "checkpoint > end_epoch musi zostać odrzucony");
+
+    // claim bez wcześniejszego settle (inline), checkpoint końca epoki 0:
+    // dokładnie 175 000 XNT — ani jednostki z późniejszego fundingu
+    let xnt_before = env.token_balance(alice_xnt).await;
+    env.claim(
+        &alice,
+        alice_anl,
+        alice_xnt,
+        pos_a,
+        PoolType::Flexible,
+        Some(0),
+    )
+    .await
+    .unwrap();
+    assert_eq!(env.token_balance(alice_xnt).await - xnt_before, 175_000);
+
+    // równoważność ścieżek: settle-przed-claim daje IDENTYCZNY wynik
+    env.settle(pos_b, PoolType::Flexible, Some(0))
+        .await
+        .unwrap();
+    assert_eq!(env.position(pos_b).await.xnt_accrued, 175_000);
+    let xnt_before = env.token_balance(bob_xnt).await;
+    env.claim(&bob, bob_anl, bob_xnt, pos_b, PoolType::Flexible, None)
+        .await
+        .unwrap();
+    assert_eq!(env.token_balance(bob_xnt).await - xnt_before, 175_000);
+
+    // inwariant wypłacalności: wypłaty + saldo vaulta == suma fundingów
+    let vault = env.token_balance(env.xnt_vault).await;
+    assert_eq!(vault, 2_000_000 - 350_000, "reszta pozostaje w skarbcu");
 }

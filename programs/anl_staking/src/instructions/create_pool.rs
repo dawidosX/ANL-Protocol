@@ -12,7 +12,8 @@ pub struct CreatePool<'info> {
     #[account(mut, constraint = authority.key() == global_config.authority @ AnlError::InvalidAuthority)]
     pub authority: Signer<'info>,
 
-    #[account(seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump)]
+    #[account(seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
+        constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
     pub global_config: Account<'info, GlobalConfig>,
 
     #[account(
@@ -27,7 +28,7 @@ pub struct CreatePool<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<CreatePool>, pool_type: PoolType) -> Result<()> {
+pub fn create_pool_handler(ctx: Context<CreatePool>, pool_type: PoolType) -> Result<()> {
     let pool = &mut ctx.accounts.pool_config;
     pool.version = ACCOUNT_VERSION;
     pool.pool_type = pool_type;
@@ -42,7 +43,9 @@ pub fn handler(ctx: Context<CreatePool>, pool_type: PoolType) -> Result<()> {
     pool.xnt_undistributed = 0;
     pool.position_count = 0;
     pool.bump = ctx.bumps.pool_config;
-    pool.reserved = [0; 64];
+    pool.last_funded_epoch = NO_EPOCH;
+    pool.first_funded_epoch = NO_EPOCH;
+    pool.reserved = [0; 48];
 
     emit!(PoolCreated {
         pool_type: pool_type as u8,

@@ -16,7 +16,7 @@ Target network: **X1 Network (x1.xyz)** — a Solana fork.
 - **Daily XNT**: `fund_xnt` splits validator revenue **65% Genesis / 35% Flexible**
   and advances basket indices (`acc-per-share`, PRECISION 1e12). Empty basket →
   the share waits in `xnt_undistributed` and enters at the next funding.
-- **Period end**: accrual of BOTH streams stops at `end_ts`. `settle_expired`
+- **Period end**: the ANL reward stops at the exact `end_ts`; XNT uses daily epoch granularity and includes the full `end_epoch` (see WP §8.1). `settle_expired`
   (permissionless) freezes the position's XNT and removes its shares from the basket.
 - **`claim`** (after `end_ts`): ANL reward + accrued XNT + principal in **one
   transaction**; the position account is closed (rent returns to the owner).
@@ -28,24 +28,25 @@ Target network: **X1 Network (x1.xyz)** — a Solana fork.
 
 | Module | Scope | Tests |
 |---|---|---|
-| `crates/anl-math` | APY windows (31/91), period rewards, XNT index, 65/35 split, dust | **23/23** |
+| `crates/anl-math` | APY windows (31/91), period rewards, XNT index, 65/35 split, dust | **24/24** |
 | `core/` | reference model: declared periods, `settle`, `forfeit`, WP examples | **34/34** |
 | `initialize` | GlobalConfig + VaultAuthority + 3 vaults; ANL=Token-2022, XNT=SPL | TC-001…006 |
 | `create_pool` | exactly 2 pools, 65/35 XNT shares | TC-010…016 |
 | `pause` / `resume` | emergency brake | TC-100…105 |
 | `stake` | actual received, Immutable APY, 7..=3650-day period, reward reservation | ✅ integ. |
-| `fund_rewards` / `fund_xnt` | NET deposits; daily 65/35 split into indices | ✅ integ. |
-| `settle_expired` | permissionless; freezes XNT, removes shares after `end_ts` | ✅ integ. |
+| `fund_rewards` / `fund_xnt(amount, epoch)` | NET deposits; 65/35 split; epoch checkpoint | ✅ integ. |
+| `settle_expired` | permissionless; XNT from checkpoint ≤ `end_epoch` (audit #1 ✅) | ✅ integ. |
 | `claim` | ANL+XNT+principal in 1 tx, reservation release, account close | ✅ integ. |
 | `unstake_early` | full principal back; ANL (reservation) and XNT (undistributed) forfeited | ✅ integ. |
 
 ## Operations (daily bot) — IMPORTANT
 
-Order every day: **1) `settle_expired` for positions with `end_ts` ≤ now,
-2) only then `fund_xnt`.** Settling before funding guarantees a matured position
-takes no part in that day's distribution (WP §8, to the day).
-`settle_expired` is permissionless — a bot outage blocks nothing,
-and `claim` performs an inline settle.
+After audit #1 the `end_epoch` boundary is enforced by the CONTRACT (epoch
+checkpoints) — funding of a later epoch can never increase a position's
+payout, regardless of operation ordering. The daily bot still runs
+1) `settle_expired`, 2) `fund_xnt` (minimises index dilution from unsettled
+matured positions). `fund_xnt` takes `epoch == epoch_of(now)` plus checkpoint
+accounts (current + previous on the first funding of a new epoch).
 
 Pausing (`pause`) blocks `stake`; the exit paths (`claim`, `unstake_early`,
 `settle_expired`) always work — a user is never trapped.
@@ -82,10 +83,13 @@ anchor keys sync                # proper Program ID
 Toolchain: **Rust ≥ 1.80** (verified on 1.89). `Cargo.lock` generated
 on 1.89 — the old rustc 1.75 pins have been removed.
 
+
+> **XNT semantics — epoch, not second.** The XNT stream settles in daily epoch units: `end_epoch = epoch_of(end_ts − 1)`. A position earns XNT for every epoch in which any second of its period is active (including the full end epoch); funding of an epoch `> end_epoch` never increases the payout. The ANL reward accrues to the exact `end_ts`. This is the intended model (WP §8.1) — not a doc↔code mismatch.
+
 ## Integration tests (solana-program-test)
 
 ```bash
-cargo test -p anl_staking --features test-periods --test integration   # 3/3
+cargo test -p anl_staking --features test-periods --test integration   # 4/4
 ```
 
 In-process, with real CPIs into Token-2022 and SPL Token, clock driven via the sysvar.
@@ -95,6 +99,16 @@ forfeiture into the basket pool, redistribution at the next funding, PeriodNotEn
 PeriodAlreadyEnded guards) · Immutable-APY windows + reward coverage + validations +
 pause (stake blocked, claim works). The suite reads constants from anl-math — it runs
 identically in both build variants.
+
+
+## Security — audit #1 (18 Jul 2026)
+
+The contract went through a preliminary security audit. Findings status and fixes:
+**[docs/AUDIT-RESPONSE.md](docs/AUDIT-RESPONSE.md)**. In short: an **operator** role
+(funding-only hot key, `set_operator` from the multisig), a Token-2022 mint-extension
+gate in `initialize`, `version` checks in every instruction, full vault constraints,
+and a hard production-constants guard test. **Open: #1** (XNT expiry buckets) — must
+be closed before any immutable deployment.
 
 ## Phase 3 (next)
 

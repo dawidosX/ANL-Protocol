@@ -9,6 +9,8 @@ crate-type = ["cdylib", "lib"]
 name = "anl_staking"
 
 [features]
+network-mainnet = []
+network-testnet = []
 default = []
 no-entrypoint = []
 cpi = ["no-entrypoint"]

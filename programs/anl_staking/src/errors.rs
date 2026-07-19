@@ -64,6 +64,24 @@ pub enum AnlError {
     RewardCoverageExceeded,
     #[msg("Position already settled")]
     AlreadySettled,
+    #[msg("ANL mint has a forbidden Token-2022 extension")]
+    ForbiddenMintExtension,
+    #[msg("ANL mint must not have a freeze authority")]
+    MintHasFreezeAuthority,
+    #[msg("ANL mint must not have a mint authority (fixed supply required)")]
+    MintHasMintAuthority,
+    #[msg("XNT mint does not match the expected wrapped-native mint")]
+    InvalidXntMint,
+    #[msg("Funding epoch does not match the current clock epoch")]
+    EpochMismatch,
+    #[msg("Timestamp precedes protocol genesis")]
+    BeforeGenesis,
+    #[msg("Previous-epoch checkpoint account is required")]
+    CheckpointRequired,
+    #[msg("Checkpoint account does not match the expected PDA/epoch")]
+    CheckpointMismatch,
+    #[msg("Operator pubkey is invalid or unchanged")]
+    InvalidOperator,
 }
 
 impl From<anl_math::MathError> for AnlError {

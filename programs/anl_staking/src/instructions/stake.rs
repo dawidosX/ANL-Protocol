@@ -19,15 +19,21 @@ pub struct Stake<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
-    #[account(mut, seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump)]
+    #[account(mut, seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
+        constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
     pub global_config: Account<'info, GlobalConfig>,
 
     #[account(
         mut,
         seeds = [POOL_SEED, &[pool_config.pool_type as u8]],
-        bump = pool_config.bump
+        bump = pool_config.bump,
+        constraint = pool_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
     )]
     pub pool_config: Account<'info, PoolConfig>,
+
+    /// CHECK: PDA-authority skarbcow (seeds + bump) - do constraints vaultow.
+    #[account(seeds = [VAULT_AUTHORITY_SEED], bump = global_config.vault_authority_bump)]
+    pub vault_authority: UncheckedAccount<'info>,
 
     #[account(address = global_config.anl_mint @ AnlError::InvalidMint)]
     pub anl_mint: InterfaceAccount<'info, Mint>,
@@ -40,11 +46,15 @@ pub struct Stake<'info> {
     )]
     pub owner_anl: InterfaceAccount<'info, TokenAccount>,
 
-    #[account(mut, seeds = [PRINCIPAL_VAULT_SEED], bump)]
+    #[account(mut, seeds = [PRINCIPAL_VAULT_SEED], bump,
+        token::mint = anl_mint, token::authority = vault_authority,
+        token::token_program = anl_token_program)]
     pub principal_vault: InterfaceAccount<'info, TokenAccount>,
 
     /// Pokrycie nagrody sprawdzane względem salda tego skarbca (WP §11).
-    #[account(seeds = [REWARD_VAULT_SEED], bump)]
+    #[account(seeds = [REWARD_VAULT_SEED], bump,
+        token::mint = anl_mint, token::authority = vault_authority,
+        token::token_program = anl_token_program)]
     pub reward_vault: InterfaceAccount<'info, TokenAccount>,
 
     #[account(
@@ -73,7 +83,7 @@ pub struct Stake<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Result<()> {
+pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Result<()> {
     let cfg = &ctx.accounts.global_config;
     let pool = &ctx.accounts.pool_config;
     require!(!cfg.paused, AnlError::Paused);
@@ -182,7 +192,9 @@ pub fn handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Result<(
     pos.settled = false;
     pos.xnt_debt_index = pool.xnt_reward_index; // TC-121/124: zero historii
     pos.bump = ctx.bumps.user_position;
-    pos.reserved = [0; 32];
+    pos.end_epoch = epoch_of(pos.end_ts.saturating_sub(1), cfg.genesis_start_ts)
+        .ok_or(AnlError::BeforeGenesis)?;
+    pos.reserved = [0; 24];
 
     emit!(PositionOpened {
         owner: pos.owner,

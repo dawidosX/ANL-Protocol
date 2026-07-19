@@ -18,3 +18,16 @@ pub const MAX_PERIOD_DAYS: u32 = anl_math::MAX_PERIOD_DAYS as u32;
 
 pub const XNT_SHARE_GENESIS_BPS: u16 = 6_500;
 pub const XNT_SHARE_FLEXIBLE_BPS: u16 = 3_500;
+
+/// Checkpointy epok XNT (audyt #1/#2): snapshot indeksu puli po każdej
+/// epoce, w której nastąpił funding. Seeds: [SEED, pool_type, epoch_le].
+pub const XNT_CKPT_SEED: &[u8] = b"xnt_ckpt";
+/// Sentinel "brak epoki" (pool nigdy nie fundowany / checkpoint ostatni).
+pub const NO_EPOCH: u64 = u64::MAX;
+/// Oczekiwany mint XNT (wrapped native X1) — twarda kotwica produkcyjna.
+/// W buildzie test-periods kontrola wyłączona (testy używają mintów lokalnych).
+pub const EXPECTED_XNT_MINT: anchor_lang::prelude::Pubkey =
+    anchor_lang::prelude::Pubkey::new_from_array([
+        6, 155, 136, 87, 254, 171, 129, 132, 251, 104, 127, 99, 70, 24, 192, 53, 218, 196, 57, 220,
+        26, 235, 59, 85, 152, 160, 240, 0, 0, 0, 0, 1,
+    ]); // So11111111111111111111111111111111111111112

@@ -9,4 +9,3 @@ test-ledger/
 *-keypair.json
 id.json
 .env
-.DS_Store

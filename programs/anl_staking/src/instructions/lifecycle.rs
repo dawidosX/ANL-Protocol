@@ -31,12 +31,14 @@ pub struct SettleExpired<'info> {
         mut,
         seeds = [POOL_SEED, &[pool_config.pool_type as u8]],
         bump = pool_config.bump,
-        constraint = pool_config.pool_type == user_position.pool_type @ AnlError::InvalidVault
+        constraint = pool_config.pool_type == user_position.pool_type @ AnlError::InvalidVault,
+        constraint = pool_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
     )]
     pub pool_config: Account<'info, PoolConfig>,
 
     #[account(
         mut,
+        constraint = user_position.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion,
         seeds = [
             USER_POSITION_SEED,
             user_position.owner.as_ref(),
@@ -45,11 +47,63 @@ pub struct SettleExpired<'info> {
         bump = user_position.bump
     )]
     pub user_position: Account<'info, UserPosition>,
+
+    /// CHECK: checkpoint ostatniej epoki fundingu ≤ end_epoch pozycji;
+    /// PDA + łańcuch (next) weryfikowane w handlerze. None dozwolone tylko,
+    /// gdy pula nie miała fundingu ≤ end_epoch.
+    pub xnt_checkpoint: Option<UncheckedAccount<'info>>,
+}
+
+/// Indeks-granica dla settlementu pozycji: snapshot ostatniej epoki
+/// fundingu ≤ end_epoch (audyt #2). Gdy pula nie miała fundingu ≤ end_epoch,
+/// pending = 0 (indeks = debt pozycji) i checkpoint nie jest wymagany.
+fn settlement_cap_index(
+    pool: &PoolConfig,
+    pos: &UserPosition,
+    ckpt: Option<&UncheckedAccount>,
+    program_id: &Pubkey,
+) -> Result<u128> {
+    if pool.last_funded_epoch == NO_EPOCH || pool.first_funded_epoch > pos.end_epoch {
+        return Ok(pos.xnt_debt_index);
+    }
+    let ai = ckpt.ok_or(AnlError::CheckpointRequired)?;
+    let info = ai.to_account_info();
+    require_keys_eq!(*info.owner, *program_id, AnlError::CheckpointMismatch);
+    let ck = XntCheckpoint::try_deserialize(&mut &info.data.borrow()[..])?;
+    require!(
+        ck.version == ACCOUNT_VERSION && ck.pool_type == pos.pool_type,
+        AnlError::CheckpointMismatch
+    );
+    require!(ck.epoch <= pos.end_epoch, AnlError::CheckpointMismatch);
+    // dowód "ostatni ≤ end_epoch": brak następcy albo następca > end_epoch
+    require!(
+        ck.next_funded_epoch == NO_EPOCH || ck.next_funded_epoch > pos.end_epoch,
+        AnlError::CheckpointMismatch
+    );
+    let (pda, _) = Pubkey::find_program_address(
+        &[
+            XNT_CKPT_SEED,
+            &[pos.pool_type as u8],
+            &ck.epoch.to_le_bytes(),
+        ],
+        program_id,
+    );
+    require_keys_eq!(ai.key(), pda, AnlError::CheckpointMismatch);
+    Ok(ck.index)
 }
 
 pub fn settle_expired(ctx: Context<SettleExpired>) -> Result<()> {
+    let cap = settlement_cap_index(
+        &ctx.accounts.pool_config,
+        &ctx.accounts.user_position,
+        ctx.accounts.xnt_checkpoint.as_ref(),
+        ctx.program_id,
+    )?;
     let pos = &mut ctx.accounts.user_position;
-    require!(pos.status == PositionStatus::Active, AnlError::PositionClosed);
+    require!(
+        pos.status == PositionStatus::Active,
+        AnlError::PositionClosed
+    );
     require!(!pos.settled, AnlError::AlreadySettled);
     let now = Clock::get()?.unix_timestamp;
     require!(now >= pos.end_ts, AnlError::PeriodNotEnded);
@@ -57,7 +111,7 @@ pub fn settle_expired(ctx: Context<SettleExpired>) -> Result<()> {
     let frozen = ctx
         .accounts
         .pool_config
-        .settle_position(pos.shares, pos.xnt_debt_index)
+        .settle_position_at(pos.shares, pos.xnt_debt_index, cap)
         .map_err(AnlError::from)?;
     pos.xnt_accrued = frozen;
     pos.settled = true;
@@ -86,20 +140,23 @@ pub struct Claim<'info> {
     #[account(mut, constraint = owner.key() == user_position.owner @ AnlError::PositionOwnerMismatch)]
     pub owner: Signer<'info>,
 
-    #[account(mut, seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump)]
+    #[account(mut, seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
+        constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
     pub global_config: Account<'info, GlobalConfig>,
 
     #[account(
         mut,
         seeds = [POOL_SEED, &[pool_config.pool_type as u8]],
         bump = pool_config.bump,
-        constraint = pool_config.pool_type == user_position.pool_type @ AnlError::InvalidVault
+        constraint = pool_config.pool_type == user_position.pool_type @ AnlError::InvalidVault,
+        constraint = pool_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
     )]
     pub pool_config: Account<'info, PoolConfig>,
 
     #[account(
         mut,
         close = owner,
+        constraint = user_position.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion,
         seeds = [
             USER_POSITION_SEED,
             owner.key().as_ref(),
@@ -119,13 +176,19 @@ pub struct Claim<'info> {
     #[account(address = global_config.xnt_mint @ AnlError::InvalidMint)]
     pub xnt_mint: InterfaceAccount<'info, Mint>,
 
-    #[account(mut, seeds = [PRINCIPAL_VAULT_SEED], bump)]
+    #[account(mut, seeds = [PRINCIPAL_VAULT_SEED], bump,
+        token::mint = anl_mint, token::authority = vault_authority,
+        token::token_program = anl_token_program)]
     pub principal_vault: InterfaceAccount<'info, TokenAccount>,
 
-    #[account(mut, seeds = [REWARD_VAULT_SEED], bump)]
+    #[account(mut, seeds = [REWARD_VAULT_SEED], bump,
+        token::mint = anl_mint, token::authority = vault_authority,
+        token::token_program = anl_token_program)]
     pub reward_vault: InterfaceAccount<'info, TokenAccount>,
 
-    #[account(mut, seeds = [XNT_VAULT_SEED], bump)]
+    #[account(mut, seeds = [XNT_VAULT_SEED], bump,
+        token::mint = xnt_mint, token::authority = vault_authority,
+        token::token_program = xnt_token_program)]
     pub xnt_vault: InterfaceAccount<'info, TokenAccount>,
 
     #[account(
@@ -146,6 +209,9 @@ pub struct Claim<'info> {
 
     pub anl_token_program: Program<'info, Token2022>,
     pub xnt_token_program: Program<'info, Token>,
+
+    /// CHECK: jak w SettleExpired — checkpoint końca end_epoch pozycji.
+    pub xnt_checkpoint: Option<UncheckedAccount<'info>>,
 }
 
 pub fn claim(ctx: Context<Claim>) -> Result<()> {
@@ -161,7 +227,15 @@ pub fn claim(ctx: Context<Claim>) -> Result<()> {
     );
 
     // Inline-settle, jeśli bot nie zdążył (WP §8: shares schodzą z koszyka).
+    // Audyt #2: XNT liczone WYŁĄCZNIE do checkpointu końca end_epoch —
+    // funding po epoce końca pozycji nigdy nie zwiększa jej wypłaty.
     if !ctx.accounts.user_position.settled {
+        let cap = settlement_cap_index(
+            &ctx.accounts.pool_config,
+            &ctx.accounts.user_position,
+            ctx.accounts.xnt_checkpoint.as_ref(),
+            ctx.program_id,
+        )?;
         let (shares, debt) = (
             ctx.accounts.user_position.shares,
             ctx.accounts.user_position.xnt_debt_index,
@@ -169,7 +243,7 @@ pub fn claim(ctx: Context<Claim>) -> Result<()> {
         let frozen = ctx
             .accounts
             .pool_config
-            .settle_position(shares, debt)
+            .settle_position_at(shares, debt, cap)
             .map_err(AnlError::from)?;
         let pos = &mut ctx.accounts.user_position;
         pos.xnt_accrued = frozen;
@@ -288,20 +362,23 @@ pub struct UnstakeEarly<'info> {
     #[account(mut, constraint = owner.key() == user_position.owner @ AnlError::PositionOwnerMismatch)]
     pub owner: Signer<'info>,
 
-    #[account(mut, seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump)]
+    #[account(mut, seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
+        constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
     pub global_config: Account<'info, GlobalConfig>,
 
     #[account(
         mut,
         seeds = [POOL_SEED, &[pool_config.pool_type as u8]],
         bump = pool_config.bump,
-        constraint = pool_config.pool_type == user_position.pool_type @ AnlError::InvalidVault
+        constraint = pool_config.pool_type == user_position.pool_type @ AnlError::InvalidVault,
+        constraint = pool_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
     )]
     pub pool_config: Account<'info, PoolConfig>,
 
     #[account(
         mut,
         close = owner,
+        constraint = user_position.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion,
         seeds = [
             USER_POSITION_SEED,
             owner.key().as_ref(),
@@ -318,7 +395,9 @@ pub struct UnstakeEarly<'info> {
     #[account(address = global_config.anl_mint @ AnlError::InvalidMint)]
     pub anl_mint: InterfaceAccount<'info, Mint>,
 
-    #[account(mut, seeds = [PRINCIPAL_VAULT_SEED], bump)]
+    #[account(mut, seeds = [PRINCIPAL_VAULT_SEED], bump,
+        token::mint = anl_mint, token::authority = vault_authority,
+        token::token_program = anl_token_program)]
     pub principal_vault: InterfaceAccount<'info, TokenAccount>,
 
     #[account(
