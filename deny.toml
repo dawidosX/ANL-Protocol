@@ -7,10 +7,15 @@ version = 2
 # Podatnosci (vulnerability) blokuja CI — to jest domyslne i pozadane.
 # Yanki jako ostrzezenie: czesta sytuacja w drzewie zaleznosci Solany.
 yanked = "warn"
-# KAZDY wpis ignore wymaga komentarza. Lista MUSI byc zgodna z .cargo/audit.toml.
-# Uzasadnienie zbiorcze i data przegladu (2026-10-19): patrz .cargo/audit.toml
-# oraz docs/SECURITY-AUDITS.md §7. Cel: pusta lista po upgrade stosu Solana/Anchor.
+# KAZDY wpis ignore wymaga komentarza. Podzial rol: .cargo/audit.toml zawiera
+# 8 PODATNOSCI (vulnerability); ponizej te same 8 + 16 wpisow informacyjnych
+# (unmaintained/unsound), bo cargo-deny w konfiguracji v2 traktuje je jako
+# BLEDY, a nie ostrzezenia. Wyjatki wylacznie po ID — nowe advisories kazdego
+# typu nadal blokuja CI. Uzasadnienie zbiorcze i data przegladu (2026-10-19):
+# patrz .cargo/audit.toml i docs/SECURITY-AUDITS.md §7. Cel: pusta lista po
+# upgrade stosu Solana/Anchor.
 ignore = [
+  # --- podatnosci (identycznie jak .cargo/audit.toml) ---
   "RUSTSEC-2022-0093", # ed25519-dalek 1.0.1 — signing oracle; SDK/testy, poza artefaktem SBF
   "RUSTSEC-2024-0344", # curve25519-dalek 3.2.1 — timing; operacje sekretne poza programem
   "RUSTSEC-2025-0009", # ring 0.16.20 — AES panic; TLS klienta RPC
@@ -19,6 +24,24 @@ ignore = [
   "RUSTSEC-2026-0098", # rustls-webpki 0.101.7 — walidacja certow; TLS klienta
   "RUSTSEC-2026-0099", # rustls-webpki 0.101.7 — jw.
   "RUSTSEC-2026-0104", # rustls-webpki 0.101.7 — jw.
+  # --- unmaintained (stos narzedziowy Solana 1.x; znika po upgrade stosu) ---
+  "RUSTSEC-2021-0139", # ansi_term 0.12.1
+  "RUSTSEC-2024-0370", # proc-macro-error 1.0.4
+  "RUSTSEC-2024-0375", # atty 0.2.14
+  "RUSTSEC-2024-0388", # derivative 2.2.0
+  "RUSTSEC-2024-0436", # paste 1.0.15
+  "RUSTSEC-2025-0010", # ring 0.16.20
+  "RUSTSEC-2025-0119", # number_prefix 0.4.0
+  "RUSTSEC-2025-0134", # rustls-pemfile 1.0.4
+  "RUSTSEC-2025-0141", # bincode 1.3.3
+  "RUSTSEC-2025-0161", # libsecp256k1 0.6.0
+  # --- unsound (zaleznosci przechodnie; jw.) ---
+  "RUSTSEC-2021-0145", # atty 0.2.14
+  "RUSTSEC-2023-0033", # borsh 0.9.3
+  "RUSTSEC-2023-0042", # ouroboros 0.15.6
+  "RUSTSEC-2026-0097", # rand 0.7.3
+  "RUSTSEC-2026-0186", # memmap2 0.5.10
+  "RUSTSEC-2026-0191", # solana_rbpf 0.8.3
 ]
 
 [bans]
