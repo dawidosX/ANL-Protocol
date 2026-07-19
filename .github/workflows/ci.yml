@@ -12,6 +12,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: fmt
         run: cargo fmt --all --check
+      - name: fmt (core — poza workspace)
+        run: cd core && cargo fmt --check
       - name: clippy (prod) — zero warningow
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: clippy (test-periods) — zero warningow

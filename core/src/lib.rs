@@ -311,9 +311,15 @@ mod tests {
 
     #[test]
     fn tc_050_period_bounds_enforced_for_both_programs() {
-        assert_eq!(declared_end_ts(0, MIN_PERIOD_DAYS - 1), Err(CoreError::InvalidPeriod));
+        assert_eq!(
+            declared_end_ts(0, MIN_PERIOD_DAYS - 1),
+            Err(CoreError::InvalidPeriod)
+        );
         assert_eq!(declared_end_ts(0, 0), Err(CoreError::InvalidPeriod));
-        assert_eq!(declared_end_ts(0, MAX_PERIOD_DAYS + 1), Err(CoreError::InvalidPeriod));
+        assert_eq!(
+            declared_end_ts(0, MAX_PERIOD_DAYS + 1),
+            Err(CoreError::InvalidPeriod)
+        );
         assert!(declared_end_ts(0, MIN_PERIOD_DAYS).is_ok());
         assert!(declared_end_ts(0, MAX_PERIOD_DAYS).is_ok());
     }
@@ -400,10 +406,7 @@ mod tests {
 
     #[test]
     fn negative_period_rejected() {
-        assert_eq!(
-            period_reward(ANL, 800, -1),
-            Err(CoreError::TimeBeforeStart)
-        );
+        assert_eq!(period_reward(ANL, 800, -1), Err(CoreError::TimeBeforeStart));
     }
 
     // ---------------- podział XNT 65/35 (10B §11) ----------------
@@ -413,7 +416,7 @@ mod tests {
         for delta in [0u64, 1, 3, 100, 12_345, u64::MAX] {
             let (g, f) = split_xnt(delta);
             assert_eq!(g as u128 + f as u128, delta as u128); // zero dust
-            // Genesis dostaje ⌊65%⌋
+                                                              // Genesis dostaje ⌊65%⌋
             assert_eq!(g as u128, (delta as u128) * 6500 / 10_000);
         }
     }
@@ -525,7 +528,10 @@ mod tests {
     fn wp_s7_settle_freezes_accrual_at_period_end() {
         // pozycja A kończy okres → settle zdejmuje shares; kolejne fundingi
         // idą wyłącznie do pozostałych pozycji (WP §8: „pozycja aktywna").
-        let mut p = XntPool { total_shares: 200, ..Default::default() };
+        let mut p = XntPool {
+            total_shares: 200,
+            ..Default::default()
+        };
         let debt_a = p.debt_snapshot();
         let debt_b = p.debt_snapshot();
         p.fund(1_000).unwrap(); // dzień 1: A i B po 500
@@ -542,7 +548,10 @@ mod tests {
     fn wp_s7_early_exit_forfeits_xnt_back_to_pool() {
         // zerwanie: naliczone XNT wracają do puli dystrybucji i trafiają
         // do pozostałych pozycji przy najbliższym fundingu (WP §7).
-        let mut p = XntPool { total_shares: 200, ..Default::default() };
+        let mut p = XntPool {
+            total_shares: 200,
+            ..Default::default()
+        };
         let debt_a = p.debt_snapshot();
         let debt_b = p.debt_snapshot();
         p.fund(1_000).unwrap(); // A i B po 500
@@ -565,10 +574,7 @@ mod tests {
     #[test]
     fn tc_243_debt_ahead_of_index_is_error_not_underflow() {
         let p = XntPool::default();
-        assert_eq!(
-            p.pending(10, PRECISION),
-            Err(CoreError::DebtAheadOfIndex)
-        );
+        assert_eq!(p.pending(10, PRECISION), Err(CoreError::DebtAheadOfIndex));
     }
 
     #[test]
