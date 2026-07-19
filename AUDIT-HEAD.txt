@@ -1,0 +1,13 @@
+ddf4b36 supply-chain: ignore 16 informational advisories in deny.toml (cargo-deny v2 treats unmaintained/unsound as errors)
+8ec7297 supply-chain: documented RUSTSEC ignores (Solana 1.x tooling stack) in audit.toml+deny.toml; stack-upgrade task wired into DoD
+a6d2ac6 fix: rustfmt initialize.rs (red CI); evidence pipeline V-01..V-05 fail-closed; docs statuses
+f53126d docs: consolidated Security Audit History (EN+PL) incl. both round-3 verifications; supersede AUDIT-RESPONSE
+f042200 Audit evidence: full run bound to HEAD
+27cd983 Audit #3: M-01/L-01/H-01 fixes, fmt+clippy clean, CI guards, evidence tooling
+cf7692b WP: validator card graphic, live metrics, 15K self-stake confirmed on-chain
+e4df2b4 Add English White Paper PDF
+d6bb984 Add English White Paper, remove .DS_Store from tracking
+3acf8ed English White Paper + English README as default (PL preserved)
+c0a6b93 English White Paper + English README as default (PL preserved)
+c808e05 ANL Staking Protocol v1.0 — Faza 1+2, testy 60+, whitepaper
+ddf4b36607180faff8dbe48c3133e27a6b32d036
