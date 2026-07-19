@@ -28,7 +28,7 @@ Sieć docelowa: **X1 Network (x1.xyz)** — fork Solany.
 
 | Moduł | Zakres | Testy |
 |---|---|---|
-| `crates/anl-math` | okna APY (31/91), nagrody okresowe, indeks XNT, podział 65/35, dust | **24/24** |
+| `crates/anl-math` | okna APY (31/91), nagrody okresowe, indeks XNT, podział 65/35, dust | **34/34** |
 | `core/` | model referencyjny: okres deklarowany, `settle`, `forfeit`, przykłady z WP | **34/34** |
 | `initialize` | GlobalConfig + VaultAuthority + 3 skarbce; ANL=Token-2022, XNT=SPL | TC-001…006 |
 | `create_pool` | dokładnie 2 pule, udziały XNT 65/35 | TC-010…016 |
@@ -85,8 +85,8 @@ ostrzegawczy `msg!` w każdym buildzie testowym.
 ## Budowanie
 
 ```bash
-cargo test -p anl-math          # matematyka (24)
-cd core && cargo test           # model referencyjny (34)
+cargo test -p anl-math          # matematyka (34: 24 jednostkowe + 10 property)
+cd core && cargo test           # model referencyjny (36: 34 jednostkowe + 2 property)
 scripts/build-testnet.sh        # artefakt release TESTNET + manifest
 scripts/build-mainnet.sh        # artefakt release MAINNET + manifest
 anchor keys sync                # właściwy Program ID (faza deployu)

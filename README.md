@@ -28,7 +28,7 @@ Target network: **X1 Network (x1.xyz)** — a Solana fork.
 
 | Module | Scope | Tests |
 |---|---|---|
-| `crates/anl-math` | APY windows (31/91), period rewards, XNT index, 65/35 split, dust | **24/24** |
+| `crates/anl-math` | APY windows (31/91), period rewards, XNT index, 65/35 split, dust; +10 property-based (proptest) | **34/34** |
 | `core/` | reference model: declared periods, `settle`, `forfeit`, WP examples | **34/34** |
 | `initialize` | GlobalConfig + VaultAuthority + 3 vaults; ANL=Token-2022, XNT=SPL | TC-001…006 |
 | `create_pool` | exactly 2 pools, 65/35 XNT shares | TC-010…016 |
@@ -82,8 +82,8 @@ bypasses these scripts is prohibited. Additionally, the feature is not in
 ## Building
 
 ```bash
-cargo test -p anl-math          # math (24)
-cd core && cargo test           # reference model (34)
+cargo test -p anl-math          # math (34: 24 unit + 10 property)
+cd core && cargo test           # reference model (36: 34 unit + 2 property)
 scripts/build-testnet.sh        # TESTNET release artifact + manifest
 scripts/build-mainnet.sh        # MAINNET release artifact + manifest
 anchor keys sync                # proper Program ID (deploy phase)

@@ -6,6 +6,9 @@ description = "ANL Staking Protocol — deterministic reward math (on-chain + re
 
 [dependencies]
 
+[dev-dependencies]
+proptest = { version = "=1.5.0", default-features = false, features = ["std"] }
+
 [features]
 default = []
 test-periods = []
