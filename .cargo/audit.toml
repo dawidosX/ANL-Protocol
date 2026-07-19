@@ -1,0 +1,22 @@
+# Polityka wyjatkow cargo-audit (para do deny.toml — listy MUSZA byc zgodne).
+# KAZDY wpis: crate, powod, sciezka naprawy. Przeglad co kwartal; najblizszy:
+# 2026-10-19. Cel: PUSTA lista po migracji stosu Solana/Anchor (zadanie
+# otwarte przed immutable mainnet — patrz docs/SECURITY-AUDITS.md §9).
+#
+# Wspolne uzasadnienie (19.07.2026): wszystkie ponizsze advisories dotycza
+# stosu kliencko-testowego Solana 1.x (sieciowka RPC/QUIC/TLS oraz operacje
+# kluczem prywatnym w SDK). Artefakt on-chain (SBF) nie wykonuje operacji
+# kluczem prywatnym ani polaczen TLS/QUIC; powierzchnia ryzyka to narzedzia
+# deweloperskie i testy, nie wdrozony program.
+
+[advisories]
+ignore = [
+  "RUSTSEC-2022-0093", # ed25519-dalek 1.0.1 — signing oracle; podpisy tylko w SDK/testach
+  "RUSTSEC-2024-0344", # curve25519-dalek 3.2.1 — timing Scalar::sub; operacje sekretne poza programem
+  "RUSTSEC-2025-0009", # ring 0.16.20 — AES overflow/panic; TLS klienta RPC
+  "RUSTSEC-2026-0037", # quinn-proto 0.10.6 — DoS QUIC (high); klient sieciowy Solany
+  "RUSTSEC-2026-0185", # quinn-proto 0.10.6 — memory exhaustion; jw.
+  "RUSTSEC-2026-0098", # rustls-webpki 0.101.7 — walidacja certow; TLS klienta RPC
+  "RUSTSEC-2026-0099", # rustls-webpki 0.101.7 — jw.
+  "RUSTSEC-2026-0104", # rustls-webpki 0.101.7 — jw.
+]

@@ -7,8 +7,19 @@ version = 2
 # Podatnosci (vulnerability) blokuja CI — to jest domyslne i pozadane.
 # Yanki jako ostrzezenie: czesta sytuacja w drzewie zaleznosci Solany.
 yanked = "warn"
-# KAZDY wpis ignore wymaga komentarza: RUSTSEC-ID, powod, data przegladu.
-ignore = []
+# KAZDY wpis ignore wymaga komentarza. Lista MUSI byc zgodna z .cargo/audit.toml.
+# Uzasadnienie zbiorcze i data przegladu (2026-10-19): patrz .cargo/audit.toml
+# oraz docs/SECURITY-AUDITS.md §7. Cel: pusta lista po upgrade stosu Solana/Anchor.
+ignore = [
+  "RUSTSEC-2022-0093", # ed25519-dalek 1.0.1 — signing oracle; SDK/testy, poza artefaktem SBF
+  "RUSTSEC-2024-0344", # curve25519-dalek 3.2.1 — timing; operacje sekretne poza programem
+  "RUSTSEC-2025-0009", # ring 0.16.20 — AES panic; TLS klienta RPC
+  "RUSTSEC-2026-0037", # quinn-proto 0.10.6 — DoS QUIC (high); klient sieciowy
+  "RUSTSEC-2026-0185", # quinn-proto 0.10.6 — memory exhaustion; jw.
+  "RUSTSEC-2026-0098", # rustls-webpki 0.101.7 — walidacja certow; TLS klienta
+  "RUSTSEC-2026-0099", # rustls-webpki 0.101.7 — jw.
+  "RUSTSEC-2026-0104", # rustls-webpki 0.101.7 — jw.
+]
 
 [bans]
 # Drzewo Solany/Anchora ma historycznie wiele duplikatow wersji — ostrzegamy,

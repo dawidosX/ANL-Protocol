@@ -94,6 +94,8 @@ Kluczowe zdanie weryfikacji Groka: *problemem nie jest już logika stakingu, lec
 
 **Naprawy pipeline'u dowodowego (19.07.2026, odpowiedź tego samego dnia):** `scripts/audit-evidence.sh` przepisany na fail-closed (`set -euo pipefail`, bramka czystego drzewa przez `git status --porcelain` przed czymkolwiek, log do pliku tymczasowego poza repo, buildy negatywne asertują kod wyjścia **i** dokładny komunikat `compile_error!`, stopka wiąże bieg z `git rev-parse HEAD`, `docs/TEST-LOG.sha256` zapisuje hash logu, niezerowy kod wyjścia po dowolnym błędzie); bramki czystego drzewa (`git status --porcelain`) w obu `scripts/build-*.sh`; `|| true` usunięte z joba supply-chain w CI i zatwierdzony `deny.toml` w repo; drugi release-guard asertuje komunikat `select exactly one network feature`; README (EN+PL) przepisane na politykę skryptów release z poprawką „23" → 24.
 
+**Pierwszy uczciwy bieg supply-chain (19.07.2026):** po zdjęciu `|| true` `cargo audit` przeskanował 606 zależności z locka i zgłosił **8 podatności + 16 ostrzeżeń informacyjnych** — wszystkie w stosie kliencko-testowym Solany 1.x, żadna nie pochodzi z tego kodu: `ed25519-dalek 1.0.1` (RUSTSEC-2022-0093), `curve25519-dalek 3.2.1` (RUSTSEC-2024-0344), `ring 0.16.20` (RUSTSEC-2025-0009), `rustls-webpki 0.101.7` (RUSTSEC-2026-0098/0099/0104), `quinn-proto 0.10.6` (RUSTSEC-2026-0037, high 8,7; RUSTSEC-2026-0185). Triaż: te crate'y to warstwa sieciowa klienta RPC/QUIC/TLS i operacje sekretne SDK; artefakt on-chain (SBF) nie wykonuje operacji kluczem prywatnym ani połączeń TLS/QUIC, więc ekspozycja dotyczy narzędzi deweloperskich i testów, nie wdrożonego programu. Środek przejściowy: **udokumentowane wyjątki z kwartalnym przeglądem** (identyczne listy w `.cargo/audit.toml` i `deny.toml`, najbliższy przegląd 2026-10-19); joby pozostają blokujące dla wszystkiego nowego. Naprawa docelowa — upgrade stosu Solana/Anchor — śledzona w §9 i bramkuje DoD mainnetu (cel: puste listy wyjątków).
+
 **Werdykty (19.07.2026).** *Weryfikacja GPT:* testnet / zamknięty pilot **gotowy** (przy osobnym Program ID, ściśle limitowanej wartości aktywów i monitoringu); żadne otwarte ustalenie kodowe rundy #3 nie blokuje immutable — immutable mainnet staje się osiągalny po spełnieniu 9-punktowego Definition of Done (§9). *Weryfikacja Groka:* zamknięty testnet **warunkowo gotowy** po naprawie pipeline'u dowodowego; immutable mainnet **niegotowy**, dopóki łańcuch commit→binarka nie jest fail-closed. **Stanowisko zespołu (przyjęte):** wygrywa ostrzejsza interpretacja — V-01…V-05 naprawione tego samego dnia (wyżej), a mainnet pozostaje bramkowany pełnym Definition of Done.
 
 ¹ Numery linii za raportami weryfikacyjnymi z 19.07.2026; mogą dryfować z kolejnymi commitami — wiążące są symbole i ścieżki plików.
@@ -131,17 +133,20 @@ Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = proces
 
 **Pipeline dowodowy i release — ✅ ukończone 19.07.2026** (V-01…V-05; warunek zamkniętego testnetu z obu weryfikacji spełniony): fail-closed `audit-evidence.sh`, bramki czystego drzewa w obu skryptach build, blokujący supply-chain z zatwierdzonym `deny.toml`, asercja komunikatu w drugim release-guardzie, polityka release w README z poprawionymi liczbami testów. Szczegóły w §7 i tabeli wyżej.
 
+**Stos zależności (z pierwszego blokującego biegu supply-chain):**
+1. Upgrade stosu Solana/Anchor tak, by 8 ignorowanych advisories RUSTSEC (§7) wypadło z drzewa; opróżnienie obu list wyjątków. Wymagane przed DoD immutable mainnet; wyjątki wygasają przy przeglądzie kwartalnym (najbliższy: 2026-10-19).
+
 **Testy (rekomendacja wszystkich trzech rund audytu):**
-1. Testy property-based / fuzz inwariantów księgowości XNT (monotoniczność indeksu, zachowanie sumy przez fund/settle/claim/forfeit, spójność checkpointów), różnicowo względem modelu referencyjnego `core/`.
+2. Testy property-based / fuzz inwariantów księgowości XNT (monotoniczność indeksu, zachowanie sumy przez fund/settle/claim/forfeit, spójność checkpointów), różnicowo względem modelu referencyjnego `core/`.
 
 **Operacje:**
-2. Aktualizacja bota dziennego (`/opt/anl-bot/`, prywatne środowisko W5) pod nową sygnaturę `fund_xnt(amount, epoch)`, konta checkpointów i checkpointowanie przy settle — obecny bot pochodzi sprzed modelu epok i jest niekompatybilny z kontraktem.
+3. Aktualizacja bota dziennego (`/opt/anl-bot/`, prywatne środowisko W5) pod nową sygnaturę `fund_xnt(amount, epoch)`, konta checkpointów i checkpointowanie przy settle — obecny bot pochodzi sprzed modelu epok i jest niekompatybilny z kontraktem.
 
 **Checklista wdrożeniowa (przed testnetem):**
-3. Finalny Program ID przez `anchor keys sync` (+ `declare_id!`, `Anchor.toml`, rebuild, ponowna weryfikacja wszystkich PDA); osobne Program ID dla buildu testnetowego (`test-periods` + `network-testnet`) i mainnetowego (`network-mainnet`) (R1-03).
-4. Otagowany, czysty commit; pełny bieg CI dokładnie na tym commicie; `docs/TEST-LOG.txt` wygenerowany naprawionym skryptem dowodowym na realnym checkout'cie Gita z zapisanym HEAD.
-5. Porównanie IDL sprzed i po zmianie nazw handlerów przed deployem (discriminatory instrukcji oczekiwane bez zmian; zweryfikować).
-6. Okres obserwacji na testnecie na aktywach bez wartości lub o ściśle ograniczonej ekspozycji; upgrade authority przez cały czas przy multisig — **zero `--final`, zero kasowania kluczy** na tym etapie.
+4. Finalny Program ID przez `anchor keys sync` (+ `declare_id!`, `Anchor.toml`, rebuild, ponowna weryfikacja wszystkich PDA); osobne Program ID dla buildu testnetowego (`test-periods` + `network-testnet`) i mainnetowego (`network-mainnet`) (R1-03).
+5. Otagowany, czysty commit; pełny bieg CI dokładnie na tym commicie; `docs/TEST-LOG.txt` wygenerowany naprawionym skryptem dowodowym na realnym checkout'cie Gita z zapisanym HEAD.
+6. Porównanie IDL sprzed i po zmianie nazw handlerów przed deployem (discriminatory instrukcji oczekiwane bez zmian; zweryfikować).
+7. Okres obserwacji na testnecie na aktywach bez wartości lub o ściśle ograniczonej ekspozycji; upgrade authority przez cały czas przy multisig — **zero `--final`, zero kasowania kluczy** na tym etapie.
 
 **Definition of Done — immutable mainnet** (za weryfikacją GPT z 19.07.2026, przyjęte przez zespół; każdy punkt musi być zielony, po kolei):
 1. Finalny Program ID (`anchor keys sync` + `declare_id!` + `Anchor.toml` + rebuild + weryfikacja wszystkich PDA).
@@ -150,7 +155,7 @@ Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = proces
 4. Wszystkie testy zielone na toolchainie 1.89: anl-math 24, core 34, integracja 4 — w obu wariantach.
 5. Negatywne buildy strażników (`network-mainnet`+`test-periods` oraz `network-mainnet`+`network-testnet`) nadal się nie kompilują.
 6. `cargo clippy --workspace --all-targets -- -D warnings` czysty w obu wariantach.
-7. `cargo audit` i `cargo deny check` bez ustaleń critical/high — jako **blokujące** joby CI (V-01).
+7. `cargo audit` i `cargo deny check` bez ustaleń critical/high — jako **blokujące** joby CI (V-01) i z **pustymi listami wyjątków** (upgrade stosu z §9 ukończony).
 8. Manifest release ze `scripts/build-mainnet.sh` (HEAD + features + sha256 binarki + wersja rustc) dołączony do release notes.
 9. Upgrade authority pozostaje aktywna, dopóki punkty 1–8 nie są w całości zielone; `--final` jest **ostatnim** krokiem tej listy i nigdy nie jest wykonywany wcześniej (zasada floty: zero `--final` w obecnej fazie — decyzję o finalizacji podejmuje jawnie, na końcu, posiadacz authority).
 
@@ -162,3 +167,4 @@ Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = proces
 |------|--------|
 | 19.07.2026 | Pierwsze wydanie skonsolidowane (EN+PL); zastępuje dopisywany rundami `AUDIT-RESPONSE.md`; obejmuje rundy #1–#3 i **oba** niezależne raporty weryfikacyjne po rundzie #3 (GPT + Grok), w tym ustalenie M-02 i Definition of Done dla immutable mainnet |
 | 19.07.2026 (później) | V-01…V-05 naprawione (pipeline dowodowy, CI, README); zidentyfikowana i usunięta przyczyna czerwonego lintu w CI (niesformatowany `initialize.rs`); statusy i §9 zaktualizowane |
+| 19.07.2026 (później) | Pierwszy blokujący bieg supply-chain: 8 advisories RUSTSEC w stosie narzędziowym Solany 1.x striażowane; udokumentowane wyjątki w `.cargo/audit.toml` + `deny.toml`; zadanie upgrade'u stosu dodane i wpięte w DoD |
