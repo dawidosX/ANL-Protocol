@@ -1,0 +1,27 @@
+# Zatwierdzona polityka supply-chain ANL Protocol (V-01 / M-EVIDENCE-01).
+# Ten plik jest CZESCIA polityki bezpieczenstwa: zmiany wylacznie przez PR
+# z uzasadnieniem. CI uruchamia: cargo deny check advisories bans sources.
+
+[advisories]
+version = 2
+# Podatnosci (vulnerability) blokuja CI — to jest domyslne i pozadane.
+# Yanki jako ostrzezenie: czesta sytuacja w drzewie zaleznosci Solany.
+yanked = "warn"
+# KAZDY wpis ignore wymaga komentarza: RUSTSEC-ID, powod, data przegladu.
+ignore = []
+
+[bans]
+# Drzewo Solany/Anchora ma historycznie wiele duplikatow wersji — ostrzegamy,
+# nie blokujemy. Zaostrzenie do "deny" rozwazyc przed immutable mainnet.
+multiple-versions = "warn"
+# Wildcardy ("*") jako ostrzezenie: nasze manifesty ich nie maja, ale nie
+# chcemy czerwonego CI przez cudzy manifest w drzewie zaleznosci.
+wildcards = "warn"
+
+[sources]
+# Wylacznie oficjalny rejestr crates.io; kazde inne zrodlo (git, obce
+# rejestry) musi byc swiadomie dopisane tutaj przez PR.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

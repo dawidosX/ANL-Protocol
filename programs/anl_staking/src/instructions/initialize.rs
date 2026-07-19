@@ -79,7 +79,11 @@ pub struct Initialize<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn initialize_handler(ctx: Context<Initialize>, genesis_start_ts: i64, start_paused: bool) -> Result<()> {
+pub fn initialize_handler(
+    ctx: Context<Initialize>,
+    genesis_start_ts: i64,
+    start_paused: bool,
+) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
 
     // Twarda kotwica minta XNT (wrapped native). W buildzie testowym

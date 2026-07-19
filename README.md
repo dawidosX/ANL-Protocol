@@ -64,21 +64,37 @@ For the testing phase (X1 testnet), time parameters are shortened at **compile t
 
 ```bash
 cargo test -p anl-math --features test-periods
-anchor build -- --features test-periods     # TESTNET artifact
+scripts/build-testnet.sh        # the ONLY path to a TESTNET artifact
 ```
 
-**Never deploy a `test-periods` build to mainnet.** Safeguards:
-the feature is not in `default`, and `initialize` logs a warning `msg!`
-in every test build — visible in the logs of the first transaction.
+**Never deploy a `test-periods` build to mainnet.** This is enforced in
+compile time, not by procedure: the crate defines the network features
+`network-mainnet` / `network-testnet`, and `compile_error!` rejects both
+`network-mainnet`+`test-periods` and any build selecting two networks at
+once. CI's release-guards job proves both negative cases on every push.
+Release artifacts are produced **exclusively** by `scripts/build-mainnet.sh`
+and `scripts/build-testnet.sh` — both refuse a dirty tree
+(`git status --porcelain`) and emit a manifest (HEAD, features, sha256 of
+the binary, rustc version). Deploying a locally built artifact that
+bypasses these scripts is prohibited. Additionally, the feature is not in
+`default`, and `initialize` logs a warning `msg!` in every test build.
 
 ## Building
 
 ```bash
-cargo test -p anl-math          # math (23)
+cargo test -p anl-math          # math (24)
 cd core && cargo test           # reference model (34)
-anchor build                    # SBF artifact
-anchor keys sync                # proper Program ID
+scripts/build-testnet.sh        # TESTNET release artifact + manifest
+scripts/build-mainnet.sh        # MAINNET release artifact + manifest
+anchor keys sync                # proper Program ID (deploy phase)
 ```
+
+**Release policy:** deployable artifacts come **only** from the two
+`scripts/build-*.sh` scripts (clean-tree gate + manifest). A plain
+`anchor build` is fine for local development, but its output must never
+be deployed. The full evidence run (fmt, clippy `-D warnings`, all test
+suites, negative feature-guard builds, audit/deny) is
+`scripts/audit-evidence.sh` — fail-closed, bound to `git rev-parse HEAD`.
 
 Toolchain: **Rust ≥ 1.80** (verified on 1.89). `Cargo.lock` generated
 on 1.89 — the old rustc 1.75 pins have been removed.

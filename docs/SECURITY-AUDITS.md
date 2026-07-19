@@ -83,16 +83,18 @@ All four findings were fixed and re-verified by **two independent reviewers**, e
 * **M-02 — fixed.** Both READMEs now state the rule unambiguously: the ANL stream stops exactly at `end_ts`, while XNT settles by full epochs up to `end_epoch = epoch_of(end_ts − 1)` (blockquote in both languages); the old "both streams stop at `end_ts`" phrasing is gone, and the summary-table test counts are synchronized (24/24 anl-math, 4/4 integration). Evidence: `README.md:19-20,87`, `README.pl.md:19-20,89`.¹ One residue found by the Grok verification: the build-section comment still reads `# math (23)` (`README.md:74-80`¹) — tracked under V-05.
 * **No regressions found** in the checkpoint model, the instruction surface (handler renames were internal-only; `#[program]` function names unchanged, so instruction discriminators are unaffected — final IDL comparison still recommended before deploy), or the `epoch_of → Option<u64>` change.
 
-The Grok verification's headline: *the remaining problem is no longer staking logic but the evidence chain from a clean commit to the deployed binary.* New **process findings** from that verification (all open, tracked in §9):
+The Grok verification's headline: *the remaining problem is no longer staking logic but the evidence chain from a clean commit to the deployed binary.* New **process findings** from that verification (all fixed the same day — see the fix list below and §8):
 
 * **M-EVIDENCE-01** — the CI supply-chain job runs `cargo audit || true` and `cargo deny … || true`, so a vulnerability or banned dependency does not turn CI red (`.github/workflows/ci.yml:71-83`¹).
 * **M-EVIDENCE-02** — `scripts/audit-evidence.sh` is not fail-closed: `set -uo pipefail` (no `-e`), no clean-tree gate, it overwrites the tracked `docs/TEST-LOG.txt` before checking `git status`, and prints `GOTOWE` (with exit 0) even after failed steps.
 * `scripts/build-mainnet.sh` checks cleanliness with `git diff --quiet` (misses staged and untracked changes); `scripts/build-testnet.sh` does not check cleanliness at all. Correct gate: `test -z "$(git status --porcelain)"`.
 * The second release-guard (mainnet+testnet together) asserts only a non-zero exit, not the specific message `select exactly one network feature`.
 * README (both languages) still documents plain `anchor build` paths that bypass the release scripts, still carries the stale test count "23" (actual: 24), and does not yet describe the network features / release-script policy.
-* The `docs/TEST-LOG.txt` attached to the audited package began with a real `cargo fmt --check` diff, so that particular log does not prove a clean fmt run (the current tree is fmt-clean; the log mechanism, not the code, is at fault).
+* The `docs/TEST-LOG.txt` attached to the audited package began with a real `cargo fmt --check` diff — and the diff was genuine: `instructions/initialize.rs` had been left unformatted, which also turned the CI lint job red from commit `27cd983` until the file was formatted on 19 Jul 2026. The old evidence script masked exactly this class of failure (M-EVIDENCE-02 in action).
 
-**Verdicts (19 Jul 2026).** *GPT verification:* testnet / closed pilot **ready** (with a separate Program ID, strictly limited asset value and monitoring); no open round-#3 code findings block immutability — immutable mainnet becomes reachable once its 9-point Definition of Done (§9) is satisfied. *Grok verification:* closed testnet **conditionally ready** once the evidence pipeline is fixed; immutable mainnet **not ready** until the commit→binary chain is fail-closed. **Team position (adopted):** the stricter reading wins — V-01…V-05 get fixed before the testnet deploy, and mainnet is gated on the full Definition of Done.
+**Evidence-pipeline fixes (19 Jul 2026, same-day response):** `scripts/audit-evidence.sh` rewritten fail-closed (`set -euo pipefail`, clean-tree gate via `git status --porcelain` before anything runs, log written to a temp file outside the repo, negative builds assert exit code **and** exact `compile_error!` message, footer binds the run to `git rev-parse HEAD`, `docs/TEST-LOG.sha256` records the log hash, non-zero exit on any failure); clean-tree gates (`git status --porcelain`) added to both `scripts/build-*.sh`; `|| true` removed from the supply-chain CI job and an approved `deny.toml` committed to the repo; the second release-guard now asserts the message `select exactly one network feature`; README (EN+PL) rewritten to the release-script policy with the stale "23" corrected to 24.
+
+**Verdicts (19 Jul 2026).** *GPT verification:* testnet / closed pilot **ready** (with a separate Program ID, strictly limited asset value and monitoring); no open round-#3 code findings block immutability — immutable mainnet becomes reachable once its 9-point Definition of Done (§9) is satisfied. *Grok verification:* closed testnet **conditionally ready** once the evidence pipeline is fixed; immutable mainnet **not ready** until the commit→binary chain is fail-closed. **Team position (adopted):** the stricter reading wins — V-01…V-05 were fixed the same day (see above), and mainnet remains gated on the full Definition of Done.
 
 ¹ Line numbers as cited in the 19 Jul 2026 verification reports; they may drift with subsequent commits — symbols and file paths are authoritative.
 
@@ -117,34 +119,29 @@ Severity: C = Critical, H = High, M = Medium, L = Low, I = Info, P = process. St
 | R3-M-02 | 3 | M | Docs out of sync: `end_ts`/`end_epoch` semantics, stale test counts | ✅ | `README.md:19-20,87`, `README.pl.md:19-20,89`¹; residual `# math (23)` comment → V-05 |
 | R3-L-01 | 3 | L | Checkpoint reads without owner check | ✅ | `instructions/lifecycle.rs:69-72`, `instructions/fund.rs:196-208`¹ |
 | R3-H-01 | 3 | H | No compile-time mainnet×test-periods exclusion | ✅ | `lib.rs:11-15`, `Cargo.toml:11-18`¹; CI release-guards `.github/workflows/ci.yml:46-59`¹ |
-| V-01 | 3-ver | P/M | Supply-chain CI non-blocking (`\|\| true`) | 🟡 | `.github/workflows/ci.yml:71-83`¹ |
-| V-02 | 3-ver | P/M | `audit-evidence.sh` not fail-closed | 🟡 | `scripts/audit-evidence.sh` |
-| V-03 | 3-ver | P | Build scripts' clean-tree checks insufficient | 🟡 | `scripts/build-mainnet.sh`, `scripts/build-testnet.sh` |
-| V-04 | 3-ver | P | 2nd release-guard doesn't assert the error message | 🟡 | `.github/workflows/ci.yml:60-65`¹ |
-| V-05 | 3-ver | P | README: plain `anchor build` paths, stale "23", missing release policy | 🟡 | `README.md`, `README.pl.md` |
+| V-01 | 3-ver | P/M | Supply-chain CI non-blocking (`\|\| true`) | ✅ | `\|\| true` removed, approved `deny.toml` committed; `.github/workflows/ci.yml` (supply-chain job), `deny.toml` |
+| V-02 | 3-ver | P/M | `audit-evidence.sh` not fail-closed | ✅ | Rewritten fail-closed: `set -euo`, clean-tree gate, temp log, HEAD + `TEST-LOG.sha256`; `scripts/audit-evidence.sh` |
+| V-03 | 3-ver | P | Build scripts' clean-tree checks insufficient | ✅ | `git status --porcelain` gate in both; `scripts/build-mainnet.sh`, `scripts/build-testnet.sh` |
+| V-04 | 3-ver | P | 2nd release-guard doesn't assert the error message | ✅ | Asserts `select exactly one network feature`; `.github/workflows/ci.yml` (release-guards) |
+| V-05 | 3-ver | P | README: plain `anchor build` paths, stale "23", missing release policy | ✅ | Build sections rewritten to release-script policy, "23"→24, network features documented; `README.md`, `README.pl.md` |
 
 ---
 
 ## 9. Open items
 
-**Evidence & release pipeline (from the 19 Jul verification — prerequisite for closed testnet):**
-1. Rework `scripts/audit-evidence.sh`: `set -euo pipefail`, refuse a dirty tree (`test -z "$(git status --porcelain)"`), write the log to a temp file outside the repo, record HEAD + status + hashes of the log/archive/binary at the end, non-zero exit on any failure (V-02).
-2. Clean-tree gates via `git status --porcelain` in both `build-mainnet.sh` and `build-testnet.sh` (V-03).
-3. Remove `|| true` from the supply-chain CI job; commit an approved `deny.toml` to the repo (V-01).
-4. Harden the second release-guard to assert `select exactly one network feature` (V-04).
-5. README (EN+PL): remove plain `anchor build` instructions in favour of the release scripts, fix "23" → "24", document the network-feature policy (V-05).
+**Evidence & release pipeline — ✅ completed 19 Jul 2026** (V-01…V-05; the closed-testnet prerequisite from both verifications is met): fail-closed `audit-evidence.sh`, clean-tree gates in both build scripts, blocking supply-chain with a committed `deny.toml`, message assertion in the second release-guard, README release policy with corrected test counts. Details in §7 and the table above.
 
 **Testing (recommended by all three audit rounds):**
-6. Property-based / fuzz tests of the XNT accounting invariants (index monotonicity, conservation across fund/settle/claim/forfeit, checkpoint consistency), differential against the `core/` reference model.
+1. Property-based / fuzz tests of the XNT accounting invariants (index monotonicity, conservation across fund/settle/claim/forfeit, checkpoint consistency), differential against the `core/` reference model.
 
 **Operations:**
-7. Update the daily bot (`/opt/anl-bot/`, private W5 environment) to the new `fund_xnt(amount, epoch)` signature, checkpoint accounts, and checkpointing at settle — the current bot predates the epoch model and is incompatible with the contract.
+2. Update the daily bot (`/opt/anl-bot/`, private W5 environment) to the new `fund_xnt(amount, epoch)` signature, checkpoint accounts, and checkpointing at settle — the current bot predates the epoch model and is incompatible with the contract.
 
 **Deployment checklist (before testnet):**
-8. Final Program ID via `anchor keys sync` (+ `declare_id!`, `Anchor.toml`, rebuild, re-verification of all PDAs); separate Program IDs for testnet (`test-periods` + `network-testnet`) and mainnet (`network-mainnet`) builds (R1-03).
-9. Tagged, clean commit; full CI run on that exact commit; `docs/TEST-LOG.txt` regenerated by the fixed evidence script on a real Git checkout with HEAD recorded.
-10. Compare the pre/post-rename IDL before deployment (instruction discriminators expected unchanged; verify).
-11. Testnet observation period with valueless or strictly limited assets; upgrade authority retained under the multisig throughout — **no `--final`, no key deletion** at this stage.
+3. Final Program ID via `anchor keys sync` (+ `declare_id!`, `Anchor.toml`, rebuild, re-verification of all PDAs); separate Program IDs for testnet (`test-periods` + `network-testnet`) and mainnet (`network-mainnet`) builds (R1-03).
+4. Tagged, clean commit; full CI run on that exact commit; `docs/TEST-LOG.txt` regenerated by the fixed evidence script on a real Git checkout with HEAD recorded.
+5. Compare the pre/post-rename IDL before deployment (instruction discriminators expected unchanged; verify).
+6. Testnet observation period with valueless or strictly limited assets; upgrade authority retained under the multisig throughout — **no `--final`, no key deletion** at this stage.
 
 **Definition of Done — immutable mainnet** (per the GPT verification of 19 Jul 2026, adopted by the team; every point must be green, in order):
 1. Final Program ID (`anchor keys sync` + `declare_id!` + `Anchor.toml` + rebuild + verification of all PDAs).
@@ -164,3 +161,4 @@ Severity: C = Critical, H = High, M = Medium, L = Low, I = Info, P = process. St
 | Date | Change |
 |------|--------|
 | 19 Jul 2026 | First consolidated edition (EN+PL); supersedes the append-only `AUDIT-RESPONSE.md`; incorporates rounds #1–#3 and **both** independent round-#3 verification reports (GPT + Grok), incl. finding M-02 and the immutable-mainnet Definition of Done |
+| 19 Jul 2026 (later) | V-01…V-05 fixed (evidence pipeline, CI, README); root cause of the red CI lint identified and fixed (unformatted `initialize.rs`); statuses and §9 updated |

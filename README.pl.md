@@ -66,21 +66,38 @@ Do fazy testów (testnet X1) parametry czasowe są skracane w **compile-time**:
 
 ```bash
 cargo test -p anl-math --features test-periods
-anchor build -- --features test-periods     # artefakt TESTNETOWY
+scripts/build-testnet.sh        # JEDYNA droga do artefaktu TESTNETOWEGO
 ```
 
-**Nigdy nie wdrażać buildu `test-periods` na mainnet.** Zabezpieczenia:
-feature nie jest w `default`, a `initialize` loguje ostrzegawczy `msg!`
-w każdym buildzie testowym — widoczny w logach pierwszej transakcji.
+**Nigdy nie wdrażać buildu `test-periods` na mainnet.** Egzekwuje to
+compile-time, nie procedura: crate definiuje feature'y sieci
+`network-mainnet` / `network-testnet`, a `compile_error!` odrzuca zarówno
+`network-mainnet`+`test-periods`, jak i build z dwiema sieciami naraz.
+Job release-guards w CI dowodzi obu przypadków negatywnych przy każdym
+pushu. Artefakty release powstają **wyłącznie** przez
+`scripts/build-mainnet.sh` i `scripts/build-testnet.sh` — oba odmawiają
+pracy na brudnym drzewie (`git status --porcelain`) i zapisują manifest
+(HEAD, features, sha256 binarki, wersja rustc). Deploy artefaktu
+zbudowanego lokalnie z pominięciem tych skryptów jest zabroniony.
+Dodatkowo feature nie jest w `default`, a `initialize` loguje
+ostrzegawczy `msg!` w każdym buildzie testowym.
 
 ## Budowanie
 
 ```bash
-cargo test -p anl-math          # matematyka (23)
+cargo test -p anl-math          # matematyka (24)
 cd core && cargo test           # model referencyjny (34)
-anchor build                    # artefakt SBF
-anchor keys sync                # właściwy Program ID
+scripts/build-testnet.sh        # artefakt release TESTNET + manifest
+scripts/build-mainnet.sh        # artefakt release MAINNET + manifest
+anchor keys sync                # właściwy Program ID (faza deployu)
 ```
+
+**Polityka release:** artefakty do wdrożenia pochodzą **wyłącznie** z dwóch
+skryptów `scripts/build-*.sh` (bramka czystego drzewa + manifest). Zwykły
+`anchor build` jest w porządku do lokalnego developmentu, ale jego wynik
+nigdy nie trafia na sieć. Pełny bieg dowodowy (fmt, clippy `-D warnings`,
+wszystkie zestawy testów, negatywne buildy strażników, audit/deny) to
+`scripts/audit-evidence.sh` — fail-closed, powiązany z `git rev-parse HEAD`.
 
 Toolchain: **Rust ≥ 1.80** (weryfikowane na 1.89). `Cargo.lock` wygenerowany
 na 1.89 — stare piny pod rustc 1.75 zdjęte.

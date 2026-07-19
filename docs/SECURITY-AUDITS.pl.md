@@ -83,16 +83,18 @@ Wszystkie cztery ustalenia naprawione i ponownie zweryfikowane przez **dwóch ni
 * **M-02 — naprawione.** Oba README formułują teraz regułę jednoznacznie: strumień ANL kończy się dokładnie na `end_ts`, a XNT rozlicza się pełnymi epokami do `end_epoch = epoch_of(end_ts − 1)` (blockquote w obu językach); stare sformułowanie „oba strumienie stają na `end_ts`" zniknęło, a liczby testów w tabeli podsumowującej są zsynchronizowane (24/24 anl-math, 4/4 integracja). Dowód: `README.md:19-20,87`, `README.pl.md:19-20,89`.¹ Jedna pozostałość znaleziona przez weryfikację Groka: komentarz w sekcji build wciąż brzmi `# math (23)` (`README.md:74-80`¹) — śledzone pod V-05.
 * **Brak regresji** w modelu checkpointów, powierzchni instrukcji (zmiany nazw handlerów były wyłącznie wewnętrzne; nazwy funkcji w `#[program]` bez zmian, więc discriminatory instrukcji nietknięte — porównanie finalnego IDL przed deployem nadal zalecane) ani w zmianie `epoch_of → Option<u64>`.
 
-Kluczowe zdanie weryfikacji Groka: *problemem nie jest już logika stakingu, lecz łańcuch dowodowy od czystego commita do wdrożonej binarki.* Nowe **ustalenia procesowe** z tej weryfikacji (wszystkie otwarte, śledzone w §9):
+Kluczowe zdanie weryfikacji Groka: *problemem nie jest już logika stakingu, lecz łańcuch dowodowy od czystego commita do wdrożonej binarki.* Nowe **ustalenia procesowe** z tej weryfikacji (wszystkie naprawione tego samego dnia — lista napraw niżej i w §8):
 
 * **M-EVIDENCE-01** — job supply-chain w CI uruchamia `cargo audit || true` i `cargo deny … || true`, więc podatność ani zabroniona zależność nie zapalają czerwonego CI (`.github/workflows/ci.yml:71-83`¹).
 * **M-EVIDENCE-02** — `scripts/audit-evidence.sh` nie jest fail-closed: `set -uo pipefail` (bez `-e`), brak bramki czystego drzewa, nadpisuje śledzony `docs/TEST-LOG.txt` przed sprawdzeniem `git status` i wypisuje `GOTOWE` (kod 0) nawet po nieudanych krokach.
 * `scripts/build-mainnet.sh` sprawdza czystość przez `git diff --quiet` (nie łapie zmian staged i plików untracked); `scripts/build-testnet.sh` nie sprawdza czystości wcale. Poprawna bramka: `test -z "$(git status --porcelain)"`.
 * Drugi release-guard (mainnet+testnet naraz) asertuje tylko niezerowy kod wyjścia, bez konkretnego komunikatu `select exactly one network feature`.
 * README (oba języki) nadal dokumentuje gołe ścieżki `anchor build` omijające skrypty release, nosi nieaktualną liczbę testów „23" (faktycznie: 24) i nie opisuje jeszcze polityki feature'ów sieci / skryptów release.
-* `docs/TEST-LOG.txt` załączony do audytowanej paczki zaczynał się od realnego diffu `cargo fmt --check`, więc ten konkretny log nie dowodzi czystego fmt (bieżące drzewo jest fmt-czyste; wadliwy jest mechanizm logu, nie kod).
+* `docs/TEST-LOG.txt` załączony do audytowanej paczki zaczynał się od realnego diffu `cargo fmt --check` — i ten diff był prawdziwy: `instructions/initialize.rs` pozostał niesformatowany, co wywalało też job lint w CI od commita `27cd983` aż do sformatowania pliku 19.07.2026. Stary skrypt dowodowy maskował dokładnie tę klasę awarii (M-EVIDENCE-02 w praktyce).
 
-**Werdykty (19.07.2026).** *Weryfikacja GPT:* testnet / zamknięty pilot **gotowy** (przy osobnym Program ID, ściśle limitowanej wartości aktywów i monitoringu); żadne otwarte ustalenie kodowe rundy #3 nie blokuje immutable — immutable mainnet staje się osiągalny po spełnieniu 9-punktowego Definition of Done (§9). *Weryfikacja Groka:* zamknięty testnet **warunkowo gotowy** po naprawie pipeline'u dowodowego; immutable mainnet **niegotowy**, dopóki łańcuch commit→binarka nie jest fail-closed. **Stanowisko zespołu (przyjęte):** wygrywa ostrzejsza interpretacja — V-01…V-05 naprawiamy przed deployem testnetowym, a mainnet jest bramkowany pełnym Definition of Done.
+**Naprawy pipeline'u dowodowego (19.07.2026, odpowiedź tego samego dnia):** `scripts/audit-evidence.sh` przepisany na fail-closed (`set -euo pipefail`, bramka czystego drzewa przez `git status --porcelain` przed czymkolwiek, log do pliku tymczasowego poza repo, buildy negatywne asertują kod wyjścia **i** dokładny komunikat `compile_error!`, stopka wiąże bieg z `git rev-parse HEAD`, `docs/TEST-LOG.sha256` zapisuje hash logu, niezerowy kod wyjścia po dowolnym błędzie); bramki czystego drzewa (`git status --porcelain`) w obu `scripts/build-*.sh`; `|| true` usunięte z joba supply-chain w CI i zatwierdzony `deny.toml` w repo; drugi release-guard asertuje komunikat `select exactly one network feature`; README (EN+PL) przepisane na politykę skryptów release z poprawką „23" → 24.
+
+**Werdykty (19.07.2026).** *Weryfikacja GPT:* testnet / zamknięty pilot **gotowy** (przy osobnym Program ID, ściśle limitowanej wartości aktywów i monitoringu); żadne otwarte ustalenie kodowe rundy #3 nie blokuje immutable — immutable mainnet staje się osiągalny po spełnieniu 9-punktowego Definition of Done (§9). *Weryfikacja Groka:* zamknięty testnet **warunkowo gotowy** po naprawie pipeline'u dowodowego; immutable mainnet **niegotowy**, dopóki łańcuch commit→binarka nie jest fail-closed. **Stanowisko zespołu (przyjęte):** wygrywa ostrzejsza interpretacja — V-01…V-05 naprawione tego samego dnia (wyżej), a mainnet pozostaje bramkowany pełnym Definition of Done.
 
 ¹ Numery linii za raportami weryfikacyjnymi z 19.07.2026; mogą dryfować z kolejnymi commitami — wiążące są symbole i ścieżki plików.
 
@@ -117,34 +119,29 @@ Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = proces
 | R3-M-02 | 3 | M | Dokumentacja rozjechana: semantyka `end_ts`/`end_epoch`, stare liczby testów | ✅ | `README.md:19-20,87`, `README.pl.md:19-20,89`¹; pozostałość `# math (23)` → V-05 |
 | R3-L-01 | 3 | L | Odczyt checkpointów bez kontroli właściciela | ✅ | `instructions/lifecycle.rs:69-72`, `instructions/fund.rs:196-208`¹ |
 | R3-H-01 | 3 | H | Brak wykluczenia mainnet×test-periods w compile-time | ✅ | `lib.rs:11-15`, `Cargo.toml:11-18`¹; release-guards CI `.github/workflows/ci.yml:46-59`¹ |
-| V-01 | 3-wer | P/M | Supply-chain CI nieblokujący (`\|\| true`) | 🟡 | `.github/workflows/ci.yml:71-83`¹ |
-| V-02 | 3-wer | P/M | `audit-evidence.sh` nie fail-closed | 🟡 | `scripts/audit-evidence.sh` |
-| V-03 | 3-wer | P | Niewystarczające kontrole czystego drzewa w skryptach build | 🟡 | `scripts/build-mainnet.sh`, `scripts/build-testnet.sh` |
-| V-04 | 3-wer | P | Drugi release-guard nie asertuje komunikatu błędu | 🟡 | `.github/workflows/ci.yml:60-65`¹ |
-| V-05 | 3-wer | P | README: gołe ścieżki `anchor build`, stara „23", brak polityki release | 🟡 | `README.md`, `README.pl.md` |
+| V-01 | 3-wer | P/M | Supply-chain CI nieblokujący (`\|\| true`) | ✅ | `\|\| true` usunięte, zatwierdzony `deny.toml` w repo; `.github/workflows/ci.yml` (job supply-chain), `deny.toml` |
+| V-02 | 3-wer | P/M | `audit-evidence.sh` nie fail-closed | ✅ | Przepisany fail-closed: `set -euo`, bramka czystego drzewa, log tymczasowy, HEAD + `TEST-LOG.sha256`; `scripts/audit-evidence.sh` |
+| V-03 | 3-wer | P | Niewystarczające kontrole czystego drzewa w skryptach build | ✅ | Bramka `git status --porcelain` w obu; `scripts/build-mainnet.sh`, `scripts/build-testnet.sh` |
+| V-04 | 3-wer | P | Drugi release-guard nie asertuje komunikatu błędu | ✅ | Asertuje `select exactly one network feature`; `.github/workflows/ci.yml` (release-guards) |
+| V-05 | 3-wer | P | README: gołe ścieżki `anchor build`, stara „23", brak polityki release | ✅ | Sekcje build przepisane na politykę skryptów release, „23"→24, feature'y sieci opisane; `README.md`, `README.pl.md` |
 
 ---
 
 ## 9. Zadania otwarte
 
-**Pipeline dowodowy i release (z weryfikacji 19.07 — warunek zamkniętego testnetu):**
-1. Przebudowa `scripts/audit-evidence.sh`: `set -euo pipefail`, odmowa przy brudnym drzewie (`test -z "$(git status --porcelain)"`), log do pliku tymczasowego poza repo, na końcu zapis HEAD + status + hashy logu/archiwum/binarki, niezerowy kod wyjścia po dowolnym błędzie (V-02).
-2. Bramki czystego drzewa przez `git status --porcelain` w `build-mainnet.sh` i `build-testnet.sh` (V-03).
-3. Usunięcie `|| true` z joba supply-chain w CI; zatwierdzony `deny.toml` w repo (V-01).
-4. Wzmocnienie drugiego release-guarda o asercję komunikatu `select exactly one network feature` (V-04).
-5. README (EN+PL): usunięcie gołych instrukcji `anchor build` na rzecz skryptów release, poprawa „23" → „24", opis polityki feature'ów sieci (V-05).
+**Pipeline dowodowy i release — ✅ ukończone 19.07.2026** (V-01…V-05; warunek zamkniętego testnetu z obu weryfikacji spełniony): fail-closed `audit-evidence.sh`, bramki czystego drzewa w obu skryptach build, blokujący supply-chain z zatwierdzonym `deny.toml`, asercja komunikatu w drugim release-guardzie, polityka release w README z poprawionymi liczbami testów. Szczegóły w §7 i tabeli wyżej.
 
 **Testy (rekomendacja wszystkich trzech rund audytu):**
-6. Testy property-based / fuzz inwariantów księgowości XNT (monotoniczność indeksu, zachowanie sumy przez fund/settle/claim/forfeit, spójność checkpointów), różnicowo względem modelu referencyjnego `core/`.
+1. Testy property-based / fuzz inwariantów księgowości XNT (monotoniczność indeksu, zachowanie sumy przez fund/settle/claim/forfeit, spójność checkpointów), różnicowo względem modelu referencyjnego `core/`.
 
 **Operacje:**
-7. Aktualizacja bota dziennego (`/opt/anl-bot/`, prywatne środowisko W5) pod nową sygnaturę `fund_xnt(amount, epoch)`, konta checkpointów i checkpointowanie przy settle — obecny bot pochodzi sprzed modelu epok i jest niekompatybilny z kontraktem.
+2. Aktualizacja bota dziennego (`/opt/anl-bot/`, prywatne środowisko W5) pod nową sygnaturę `fund_xnt(amount, epoch)`, konta checkpointów i checkpointowanie przy settle — obecny bot pochodzi sprzed modelu epok i jest niekompatybilny z kontraktem.
 
 **Checklista wdrożeniowa (przed testnetem):**
-8. Finalny Program ID przez `anchor keys sync` (+ `declare_id!`, `Anchor.toml`, rebuild, ponowna weryfikacja wszystkich PDA); osobne Program ID dla buildu testnetowego (`test-periods` + `network-testnet`) i mainnetowego (`network-mainnet`) (R1-03).
-9. Otagowany, czysty commit; pełny bieg CI dokładnie na tym commicie; `docs/TEST-LOG.txt` wygenerowany naprawionym skryptem dowodowym na realnym checkout'cie Gita z zapisanym HEAD.
-10. Porównanie IDL sprzed i po zmianie nazw handlerów przed deployem (discriminatory instrukcji oczekiwane bez zmian; zweryfikować).
-11. Okres obserwacji na testnecie na aktywach bez wartości lub o ściśle ograniczonej ekspozycji; upgrade authority przez cały czas przy multisig — **zero `--final`, zero kasowania kluczy** na tym etapie.
+3. Finalny Program ID przez `anchor keys sync` (+ `declare_id!`, `Anchor.toml`, rebuild, ponowna weryfikacja wszystkich PDA); osobne Program ID dla buildu testnetowego (`test-periods` + `network-testnet`) i mainnetowego (`network-mainnet`) (R1-03).
+4. Otagowany, czysty commit; pełny bieg CI dokładnie na tym commicie; `docs/TEST-LOG.txt` wygenerowany naprawionym skryptem dowodowym na realnym checkout'cie Gita z zapisanym HEAD.
+5. Porównanie IDL sprzed i po zmianie nazw handlerów przed deployem (discriminatory instrukcji oczekiwane bez zmian; zweryfikować).
+6. Okres obserwacji na testnecie na aktywach bez wartości lub o ściśle ograniczonej ekspozycji; upgrade authority przez cały czas przy multisig — **zero `--final`, zero kasowania kluczy** na tym etapie.
 
 **Definition of Done — immutable mainnet** (za weryfikacją GPT z 19.07.2026, przyjęte przez zespół; każdy punkt musi być zielony, po kolei):
 1. Finalny Program ID (`anchor keys sync` + `declare_id!` + `Anchor.toml` + rebuild + weryfikacja wszystkich PDA).
@@ -164,3 +161,4 @@ Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = proces
 | Data | Zmiana |
 |------|--------|
 | 19.07.2026 | Pierwsze wydanie skonsolidowane (EN+PL); zastępuje dopisywany rundami `AUDIT-RESPONSE.md`; obejmuje rundy #1–#3 i **oba** niezależne raporty weryfikacyjne po rundzie #3 (GPT + Grok), w tym ustalenie M-02 i Definition of Done dla immutable mainnet |
+| 19.07.2026 (później) | V-01…V-05 naprawione (pipeline dowodowy, CI, README); zidentyfikowana i usunięta przyczyna czerwonego lintu w CI (niesformatowany `initialize.rs`); statusy i §9 zaktualizowane |
