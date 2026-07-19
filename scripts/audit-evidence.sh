@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Dowody dla audytu — FAIL-CLOSED (V-02 / M-EVIDENCE-02).
+# Dowody dla audytu — FAIL-CLOSED (V-02 / M-EVIDENCE-02; hardening z rundy #4).
 # Uruchamiaj W REPO GIT, na CZYSTYM drzewie. Kazdy nieudany krok przerywa
 # caly bieg z niezerowym kodem wyjscia. Wynik: docs/TEST-LOG.txt powiazany
 # z HEAD + docs/TEST-LOG.sha256 (hash logu). Jedyna zmiana drzewa po biegu
 # to te dwa pliki — do zacommitowania jako dowod.
 set -euo pipefail
+export CARGO_TERM_COLOR=never
+export RUST_BACKTRACE=1
 cd "$(git rev-parse --show-toplevel)"
 
 # --- Bramka 1: czyste drzewo PRZED czymkolwiek (git status, nie git diff) ---
@@ -23,6 +25,10 @@ run() {
   echo "\$ $*" | tee -a "$LOG"
   "$@" 2>&1 | tee -a "$LOG"   # set -e + pipefail: blad polecenia przerywa bieg
   echo | tee -a "$LOG"
+}
+ver() { # wersja narzedzia, jesli zainstalowane (dowod srodowiska)
+  command -v "$1" >/dev/null && { printf '%s: ' "$1"; "$@" 2>&1 | head -1; } \
+    || echo "$1: niezainstalowane"
 }
 
 # Test negatywny: wymagany NIEZEROWY kod wyjscia ORAZ konkretny komunikat.
@@ -48,13 +54,19 @@ expect_fail() {
   echo "ANL Protocol — dowody audytowe (fail-closed)"
   echo "Wygenerowano: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   echo "HEAD:  $HEAD"
-  echo "rustc: $(rustc --version)"
-  echo "cargo: $(cargo --version)"
+  echo "sha256(Cargo.lock): $(sha256sum Cargo.lock | cut -d' ' -f1)"
+  ver rustc --version
+  ver cargo --version
+  ver anchor --version
+  ver solana --version
+  ver cargo-audit --version
+  ver cargo-deny --version
   echo "========================================================================"
 } | tee -a "$LOG"
 
 echo "## Format i lint" | tee -a "$LOG"
 run cargo fmt --all --check
+( cd core && run cargo fmt --check )
 run cargo clippy --workspace --all-targets -- -D warnings
 run cargo clippy -p anl_staking --all-targets --features test-periods -- -D warnings
 
@@ -81,20 +93,30 @@ else echo "cargo-audit: niezainstalowane lokalnie — WIAZACY wynik daje job sup
 if command -v cargo-deny >/dev/null; then run cargo deny check advisories bans sources
 else echo "cargo-deny: niezainstalowane lokalnie — WIAZACY wynik daje job supply-chain w CI" | tee -a "$LOG"; fi
 
-# --- Stopka: powiazanie z HEAD + stan drzewa PO biegu ---
+# --- Bramka 2 (runda #4): HEAD niezmieniony i drzewo NADAL czyste przed publikacja ---
+if [ "$(git rev-parse HEAD)" != "$HEAD" ]; then
+  echo "BLAD: HEAD zmienil sie w trakcie biegu ($HEAD -> $(git rev-parse HEAD))." >&2
+  exit 1
+fi
+if [ -n "$(git status --porcelain)" ]; then
+  echo "BLAD: drzewo przestalo byc czyste w trakcie biegu:" >&2
+  git status --porcelain >&2
+  exit 1
+fi
+
 {
   echo "========================================================================"
   echo "## Podsumowanie biegu"
-  echo "HEAD: $HEAD"
-  echo "git status --porcelain po biegu (oczekiwane: puste):"
-  git status --porcelain
+  echo "HEAD: $HEAD (zweryfikowany ponownie przed publikacja)"
+  echo "Drzewo czyste przed publikacja logu: TAK"
   echo "WSZYSTKIE KROKI PRZESZLY."
 } | tee -a "$LOG"
 
-# --- Publikacja dowodu do repo + hash logu ---
+# --- Publikacja dowodu do repo + hash logu; sprzatanie pliku tymczasowego ---
 mkdir -p docs
 cp "$LOG" docs/TEST-LOG.txt
 sha256sum docs/TEST-LOG.txt | tee docs/TEST-LOG.sha256
+rm -f "$LOG"
 echo
 echo "SUKCES. Dowod: docs/TEST-LOG.txt (+ docs/TEST-LOG.sha256), HEAD=$HEAD"
 echo "Zacommituj oba pliki, aby dowod byl powiazany z historia:"

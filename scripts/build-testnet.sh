@@ -9,8 +9,10 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 FEATURES="network-testnet,test-periods"
-anchor build -- --features "$FEATURES"
 BIN=target/deploy/anl_staking.so
+rm -f "$BIN"   # runda #4: zero ryzyka starego artefaktu
+anchor build -- --features "$FEATURES"
+test -s "$BIN" || { echo "BLAD: brak binarki po buildzie." >&2; exit 1; }
 {
   echo "release: testnet"
   echo "date: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
