@@ -32,6 +32,16 @@ Pierwszy zewnętrzny przegląd kompletnej implementacji Fazy 1+2 (wszystkie inst
 | 8 | Niepełne constraints kont skarbców | Średnie | Uznane; naprawione |
 | 9 | Polityka pauzy niekomunikowana użytkownikom wprost | Niskie | Uznane; sekcja governance w whitepaperze |
 
+### 2a. Równoległy przegląd niezależny — Claude Fable 5, 18.07.2026
+
+Tego samego wieczoru drugi recenzent niezależnie przeanalizował tę samą migawkę (archiwum: `docs/audits/2026-07-18_audyt-bezpieczenstwa_claude-fable5.md` + towarzysząca analiza ogólna). Werdykt: **brak znanych ścieżek utraty środków** — inwarianty wypłacalności spójne, ścieżki wyjścia bezwarunkowe, arytmetyka zdyscyplinowana — a ryzyko skoncentrowane w **warstwie zaufania i operacji**. Pięć ustaleń średnich (siedem niskich/hardeningowych pomijamy tutaj), śledzone jako **R1b-M1…M5** w §8:
+
+* **R1b-M1** — `initialize` można front-runować po deployu programu (przejęcie roli authority) → pozycja procedury wdrożeniowej (§9).
+* **R1b-M2** — jednokluczowe `authority` bez ścieżki rotacji i timelocka (raport rundy #1 podniósł to niezależnie) → pozycja przed mainnetem (§9).
+* **R1b-M3** — zaufanie do rozszerzeń mintów ANL/XNT → **naprawione** jako R1-04 (bramka-allowlista rozszerzeń).
+* **R1b-M4** — ekonomiczny griefing rezerwacji nagród: whale może zastakować duży principal na maksymalny okres w Oknie 1, zarezerwować ~2× principalu pojemności Reward Vault (spychając innych w `RewardCoverageExceeded`), po czym wyjść w pełni zwrotnym `unstake_early` za darmo — powtarzalnie → otwarta pozycja projektowa/ekonomiczna (§9).
+* **R1b-M5** — brak ścieżek administracji drugiej fazy życia (wypłata nadwyżki nagród, korekta `genesis_start_ts`, udokumentowane decyzje o niezmienności) → otwarte decyzje projektowe przed mainnetem (§9).
+
 ## 3. Naprawy po rundzie #1 (18.07.2026)
 
 * **Rola operatora (ust. 2):** `set_operator(new_operator)` wywoływane przez `authority` (multisig/Ledger); `fund_rewards`/`fund_xnt` przyjmują authority **lub** operatora. Operator to gorący klucz wyłącznie do wpłat — jego kompromitacja nie zagraża środkom użytkowników. (`instructions/fund.rs`, `state`)
@@ -114,7 +124,7 @@ Ustalenia dokumentacyjne **DOC-01…DOC-05** przyjęte i poprawione w tej rewizj
 
 ## 8. Zbiorcza tabela ustaleń
 
-Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = procesowe. Status: ✅ naprawione i zweryfikowane, 🟡 otwarte (śledzone w §9), 📋 checklista wdrożeniowa.
+Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = procesowe. Runda `1p` = równoległy przegląd z 18.07 (§2a). Status: ✅ naprawione i zweryfikowane, 🟡 otwarte (śledzone w §9), 📋 checklista wdrożeniowa.
 
 | ID | Runda | Waga | Ustalenie | Status | Dowód / miejsce naprawy |
 |----|-------|------|-----------|--------|--------------------------|
@@ -127,6 +137,11 @@ Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = proces
 | R1-07 | 1 | M | Brak kontroli wersji kont | ✅ | `version == ACCOUNT_VERSION` dla wszystkich wersjonowanych kont stanu w audytowanych kontekstach instrukcji (`UserProfile` celowo bez wersji); luka znaleziona później w `FundXnt` zamknięta jako R3-M-01 |
 | R1-08 | 1 | M | Niepełne constraints skarbców | ✅ | Constraints mint + PDA authority + program tokenowy w każdym kontekście |
 | R1-09 | 1 | L | Transparentność polityki pauzy | ✅ | Sekcja governance w whitepaperze; ścieżki wyjścia (`claim`, `unstake_early`, `settle_expired`) działają zawsze |
+| R1b-M1 | 1p | M | Front-run `initialize` po deployu (przejęcie authority) | 📋 | Procedura deployu: deploy → `initialize` → `create_pool` w jednej atomowej sesji (§9 pkt 8) |
+| R1b-M2 | 1p | M | Jednokluczowe authority bez rotacji/timelocka | 🟡 | Przed mainnetem: dwuetapowe `transfer_authority` + realny multisig (§9 pkt 9) |
+| R1b-M3 | 1p | M | Zaufanie do rozszerzeń mintów ANL/XNT | ✅ | Naprawione jako R1-04 (bramka-allowlista w `initialize`) |
+| R1b-M4 | 1p | M | Griefing rezerwacji nagród przez w pełni zwrotny `unstake_early` | 🟡 | Pozycja ekonomiczno-projektowa; monitoring na zamkniętym testnecie, decyzja o mitygacji przed mainnetem (§9 pkt 10) |
+| R1b-M5 | 1p | M | Brak ścieżek administracji/odzysku drugiej fazy | 🟡 | Decyzje projektowe przed mainnetem (§9 pkt 11) |
 | R3-M-01 | 3 | M | `FundXnt` bez constraints wersji pul | ✅ | `instructions/fund.rs:124-140`¹ |
 | R3-M-02 | 3 | M | Dokumentacja rozjechana: semantyka `end_ts`/`end_epoch`, stare liczby testów | ✅ | `README.md:19-20,87`, `README.pl.md:19-20,89`¹; pozostałość `# math (23)` → V-05 |
 | R3-L-01 | 3 | L | Odczyt checkpointów bez kontroli właściciela | ✅ | `instructions/lifecycle.rs:69-72`, `instructions/fund.rs:196-208`¹ |
@@ -159,6 +174,12 @@ Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = proces
 5. Otagowany, czysty commit; pełny bieg CI dokładnie na tym commicie; `docs/TEST-LOG.txt` wygenerowany naprawionym skryptem dowodowym na realnym checkout'cie Gita z zapisanym HEAD.
 6. Porównanie IDL sprzed i po zmianie nazw handlerów przed deployem (discriminatory instrukcji oczekiwane bez zmian; zweryfikować).
 7. Okres obserwacji na testnecie na aktywach bez wartości lub o ściśle ograniczonej ekspozycji; upgrade authority przez cały czas przy multisig — **zero `--final`, zero kasowania kluczy** na tym etapie.
+8. `initialize` i `create_pool` wykonane **atomowo w sesji deployu** (bezpośrednio po `solana program deploy`), by roli authority nie dało się front-runować (R1b-M1).
+
+**Warstwa zaufania i ekonomii — przed mainnetem (z równoległego przeglądu 18.07):**
+9. Dwuetapowe `transfer_authority` (propose/accept) i realny multisig (np. Squads) trzymający `authority`, plus runbook utraty klucza (R1b-M2; podniesione niezależnie przez raport rundy #1).
+10. Decyzja o mitygacji griefingu rezerwacji nagród (R1b-M4) — opcje: limity rezerwacji per pozycja/portfel albo przepadek rezerwacji przy wczesnym zerwaniu; udokumentowana akceptacja z monitoringiem dopuszczalna na zamknięty testnet, decyzja wymagana przed mainnetem.
+11. Ścieżki administracji drugiej fazy: wypłata nadwyżki nagród, ograniczone okno korekty `genesis_start_ts`, jawnie udokumentowane decyzje o niezmienności (R1b-M5).
 
 **Definition of Done — immutable mainnet** (za weryfikacją GPT z 19.07.2026, przyjęte przez zespół; każdy punkt musi być zielony, po kolei):
 1. Finalny Program ID (`anchor keys sync` + `declare_id!` + `Anchor.toml` + rebuild + weryfikacja wszystkich PDA).
@@ -181,6 +202,7 @@ Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = proces
 | 19.07.2026 (później) | V-01…V-05 naprawione (pipeline dowodowy, CI, README); zidentyfikowana i usunięta przyczyna czerwonego lintu w CI (niesformatowany `initialize.rs`); statusy i §9 zaktualizowane |
 | 19.07.2026 (później) | Pierwszy blokujący bieg supply-chain: 8 advisories RUSTSEC w stosie narzędziowym Solany 1.x striażowane; udokumentowane wyjątki w `.cargo/audit.toml` + `deny.toml`; zadanie upgrade'u stosu dodane i wpięte w DoD |
 | 19.07.2026 (później) | Testnetowy Program ID **zrotowany przed jakimkolwiek deployem** (procedura higieny klucza po ekspozycji frazy seed przy generowaniu; spalony klucz nigdy nie dotknął sieci) — aktualne ID: `HSCKEu6Q3U96HBzQV6FjbVmhCgeidaBm7uLgC7nG5id7` |
+| 19.07.2026 (później) | Odzyskane z osieroconej gałęzi `audyty` oryginalne raporty z 18.07 i zarchiwizowane w `docs/audits/`; równoległy przegląd Claude Fable 5 zintegrowany jako R1b-M1…M5 (M-3 naprawione przez R1-04; M-1 → procedura deployu; M-2/M-4/M-5 otwarte pozycje zaufania/ekonomii przed mainnetem) |
 | 19.07.2026 (później) | Wdrożone `declare_id!` per sieć (przypisane ID testnetowe: `HSCKEu6Q3U96HBzQV6FjbVmhCgeidaBm7uLgC7nG5id7`; mainnet: placeholder bez keypaira); wpisy per klaster w `Anchor.toml`; checklista zaktualizowana |
 | 19.07.2026 (później) | Wcielona runda #4 (GPT + Grok): V-01…V-05 potwierdzone jako zamknięte w źródłach; DOC-01…05 poprawione; hardening skryptów wdrożony; `declare_id!` per sieć przyjęte do checklisty; świeży bieg dowodowy przypięty jako twardy warunek przed testnetem |
 | 19.07.2026 (później) | Dodane zestawy testów property-based (anl-math: 10, core: 2 losowe maszyny, w tym własność odporności capu epokowego) — zamknięta rekomendacja powtarzana przez każdą rundę audytu; liczby testów zaktualizowane w dokumentacji |
