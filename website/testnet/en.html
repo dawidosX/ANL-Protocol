@@ -336,6 +336,14 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
 .dappscope .cp{background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:3px 8px;font-size:13px;cursor:pointer}
 .dappscope .cp:hover{color:var(--amber);border-color:var(--amber)}
 .dappscope footer{color:var(--mut);font-size:12px;margin-top:26px;line-height:1.8}
+.dappscope .dpmodal{position:fixed;inset:0;background:rgba(6,8,14,.72);display:none;align-items:center;justify-content:center;z-index:9998}
+.dappscope .dpmodal.open{display:flex}
+.dappscope .dpmbox{background:#1B2330;border:1px solid #3A3B46;border-radius:16px;padding:22px;min-width:300px;max-width:92vw}
+.dappscope .dpmbox h4{color:#EDEFF5;font-size:16px;margin-bottom:14px}
+.dappscope .dpwbtn{display:flex;align-items:center;gap:12px;width:100%;background:#232B3D;border:1px solid #3A3B46;color:#EDEFF5;border-radius:12px;padding:12px 14px;font-size:15px;cursor:pointer;margin-bottom:10px;text-align:left}
+.dappscope .dpwbtn:hover{border-color:#FFB11A}
+.dappscope .dpwbtn img{width:26px;height:26px;border-radius:6px}
+.dappscope .dpwcancel{background:transparent;border:0;color:#8A8FA4;font-size:13px;cursor:pointer;margin-top:2px}
 .dappscope{padding:40px 16px;display:block}
 .dappscope .dpwrap{max-width:980px;margin:0 auto}
 
@@ -447,6 +455,11 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
       <tbody id="positions"><tr><td colspan="8" class="mut" data-dp="connectFirst">…</td></tr></tbody>
     </table></div>
   </div>
+  <div class="dpmodal" id="dpModal"><div class="dpmbox">
+    <h4 data-dp="chooseWallet">Wybierz portfel</h4>
+    <div id="dpWalletList"></div>
+    <button class="dpwcancel" id="dpCancel" data-dp="cancel">Anuluj</button>
+  </div></div>
 </div></section>
 
 
@@ -1188,23 +1201,76 @@ const log=(m,cls)=>{const d=$("status");d.innerHTML+=`<div class="${cls||''}">${
 const fmt=(n)=>Number(n).toLocaleString("pl-PL");
 const fmtAnl=(base)=>fmt(Number(base/DEC)) ;
 
-function getProvider(){
-  return (window.phantom && window.phantom.solana) || window.backpack || window.solana || null;
+let walletAdapter=null;
+const foundWallets = [];
+function addWallet(w){
+  const key=(w.name||"").toLowerCase();
+  if(!key || foundWallets.some(x=>x.name.toLowerCase()===key)) return;
+  foundWallets.push(w);
 }
-
-async function connect(){
-  provider = getProvider();
-  if(!provider){ alert(T("noWallet")); return; }
+(function(){
+  const api={register:(...ws)=>{ws.forEach(w=>{
+    if(w && w.features && w.features["standard:connect"] && w.features["solana:signTransaction"])
+      addWallet({kind:"std", name:w.name, icon:w.icon, w});
+  }); return ()=>{};}};
+  try{ window.addEventListener("wallet-standard:register-wallet",(ev)=>{try{ev.detail(api);}catch(_){}}); }catch(_){}
+  try{ window.dispatchEvent(new CustomEvent("wallet-standard:app-ready",{detail:api})); }catch(_){}
+})();
+function legacyScan(){
+  if(window.phantom && window.phantom.solana) addWallet({kind:"leg", name:"Phantom", icon:null, p:window.phantom.solana});
+  if(window.backpack) addWallet({kind:"leg", name:"Backpack", icon:null, p:window.backpack});
+  if(window.solflare) addWallet({kind:"leg", name:"Solflare", icon:null, p:window.solflare});
+  if(window.solana && !(window.phantom&&window.solana===window.phantom.solana))
+    addWallet({kind:"leg", name:(window.solana.isX1Wallet?"X1 Wallet":(window.solana.isBackpack?"Backpack":"Solana Wallet")), icon:null, p:window.solana});
+}
+function openPicker(){
+  legacyScan();
+  if(foundWallets.length===0){ alert(T("noWallet")); return; }
+  const list=$("dpWalletList"); list.innerHTML="";
+  foundWallets.forEach((w)=>{
+    const b=document.createElement("button"); b.className="dpwbtn";
+    b.innerHTML=(w.icon?'<img src="'+w.icon+'" alt="">':"👛 ")+'<span>'+w.name+'</span>';
+    b.onclick=()=>{ $("dpModal").classList.remove("open"); pick(w); };
+    list.appendChild(b);
+  });
+  $("dpModal").classList.add("open");
+}
+async function pick(w){
   try{
-    const res = await provider.connect();
-    pubkey = res.publicKey || provider.publicKey;
-    $("wallet").textContent = pubkey.toBase58().slice(0,4)+"…"+pubkey.toBase58().slice(-4);
-    $("btnConnect").dataset.dp="connectedBtn"; $("btnConnect").textContent = T("connectedBtn");
-    $("btnStake").disabled = false; $("btnRefresh").disabled = false;
+    if(w.kind==="std"){
+      const res = await w.w.features["standard:connect"].connect();
+      const acc = res.accounts[0];
+      pubkey = new PublicKey(acc.address);
+      walletAdapter = {kind:"std", w:w.w, account:acc};
+    }else{
+      const res = await w.p.connect();
+      pubkey = (res && res.publicKey) || w.p.publicKey;
+      walletAdapter = {kind:"leg", p:w.p};
+    }
+    $("wallet").textContent = pubkey.toBase58().slice(0,4)+"…"+pubkey.toBase58().slice(-4)+" · "+w.name;
+    $("btnConnect").dataset.dp="connectedBtn"; dpApply();
+    $("btnStake").disabled=false; $("btnRefresh").disabled=false;
     log(T("connected")+pubkey.toBase58(), "ok");
     await refresh();
   }catch(e){ log(T("rejected")+(e.message||e), "err"); }
 }
+async function signAndSendViaX1(tx){
+  let raw;
+  if(walletAdapter.kind==="leg"){
+    const signed = await walletAdapter.p.signTransaction(tx);
+    raw = signed.serialize();
+  }else{
+    const bytes = tx.serialize({requireAllSignatures:false, verifySignatures:false});
+    const f = walletAdapter.w.features["solana:signTransaction"];
+    let res;
+    try{ [res] = await f.signTransaction({transaction:bytes, account:walletAdapter.account}); }
+    catch(_){ [res] = await f.signTransaction({transaction:bytes, account:walletAdapter.account,
+      chain:(walletAdapter.account.chains&&walletAdapter.account.chains[0])||"solana:mainnet"}); }
+    raw = res.signedTransaction;
+  }
+  return await conn.sendRawTransaction(raw, {skipPreflight:false});
+}
+async function connect(){ openPicker(); }
 
 function ownerAta(owner){
   return PublicKey.findProgramAddressSync(
@@ -1301,8 +1367,8 @@ async function stake(){
     tx.feePayer = pubkey;
     const bh = await conn.getLatestBlockhash("confirmed");
     tx.recentBlockhash = bh.blockhash;
-    const {signature} = await provider.signAndSendTransaction(tx);
     log(T("sending"));
+    const signature = await signAndSendViaX1(tx);
     await conn.confirmTransaction({signature, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight}, "confirmed");
     log(`✅ STAKE OK — ${T("posWord")} #${index}. ${T("sig")}${signature}`, "ok");
     await refresh();
@@ -1313,6 +1379,7 @@ async function stake(){
 }
 
 $("btnConnect").onclick = connect;
+$("dpCancel").onclick=()=>$("dpModal").classList.remove("open");
 $("btnStake").onclick = stake;
 $("btnRefresh").onclick = refresh;
 
@@ -1323,17 +1390,16 @@ document.querySelectorAll('.dpcp').forEach(b=>{
 });
 
 
-// ---- i18n aplikacji: slownik + sprzezenie z przelacznikiem strony ----
-const DPD = {connect:{pl:'Połącz portfel',en:'Connect wallet'},connectedBtn:{pl:'Połączono',en:'Connected'},wallet:{pl:'Portfel',en:'Wallet'},balAnlL:{pl:'Saldo ANL',en:'ANL balance'},balXntL:{pl:'Saldo XNT <small>(gas)</small>',en:'XNT balance <small>(gas)</small>'},newStake:{pl:'Nowy stake',en:'New stake'},amountL:{pl:'Kwota ANL',en:'ANL amount'},poolL:{pl:'Pula',en:'Pool'},poolG:{pl:'Genesis (okna do 20% APY)',en:'Genesis (windows up to 20% APY)'},periodL:{pl:'Okres (dni, testnet min. 1)',en:'Period (days, testnet min. 1)'},stakeBtn:{pl:'Zastakuj',en:'Stake'},apyNote:{pl:'APY przypisuje kontrakt w chwili otwarcia — pozycja pokaże je niżej.',en:'APY is assigned by the contract at opening — your position shows it below.'},yourPos:{pl:'Twoje pozycje',en:'Your positions'},refresh:{pl:'Odśwież',en:'Refresh'},thead:{pl:'<tr><th>#</th><th>Pula</th><th>Kwota</th><th>APY</th><th>Okres</th><th>Koniec</th><th>Nagroda ANL</th><th>Status</th></tr>',en:'<tr><th>#</th><th>Pool</th><th>Amount</th><th>APY</th><th>Period</th><th>Ends</th><th>ANL reward</th><th>Status</th></tr>'},connectFirst:{pl:'Połącz portfel, aby zobaczyć pozycje.',en:'Connect a wallet to see your positions.'},addrTitle:{pl:'Adresy kontraktów (testnet)',en:'Contract addresses (testnet)'},addrHint:{pl:'Kliknij ⧉, aby skopiować i zweryfikować w explorerze.',en:'Click ⧉ to copy and verify in the explorer.'}};
+const DPD = {connect:{pl:'Połącz portfel',en:'Connect wallet'},connectedBtn:{pl:'Połączono',en:'Connected'},wallet:{pl:'Portfel',en:'Wallet'},balAnlL:{pl:'Saldo ANL',en:'ANL balance'},balXntL:{pl:'Saldo XNT <small>(gas)</small>',en:'XNT balance <small>(gas)</small>'},newStake:{pl:'Nowy stake',en:'New stake'},amountL:{pl:'Kwota ANL',en:'ANL amount'},poolL:{pl:'Pula',en:'Pool'},poolG:{pl:'Genesis (okna do 20% APY)',en:'Genesis (windows up to 20% APY)'},periodL:{pl:'Okres (dni, testnet min. 1)',en:'Period (days, testnet min. 1)'},stakeBtn:{pl:'Zastakuj',en:'Stake'},apyNote:{pl:'APY przypisuje kontrakt w chwili otwarcia — pozycja pokaże je niżej.',en:'APY is assigned by the contract at opening — your position shows it below.'},yourPos:{pl:'Twoje pozycje',en:'Your positions'},refresh:{pl:'Odśwież',en:'Refresh'},thead:{pl:'<tr><th>#</th><th>Pula</th><th>Kwota</th><th>APY</th><th>Okres</th><th>Koniec</th><th>Nagroda ANL</th><th>Status</th></tr>',en:'<tr><th>#</th><th>Pool</th><th>Amount</th><th>APY</th><th>Period</th><th>Ends</th><th>ANL reward</th><th>Status</th></tr>'},connectFirst:{pl:'Połącz portfel, aby zobaczyć pozycje.',en:'Connect a wallet to see your positions.'},chooseWallet:{pl:'Wybierz portfel',en:'Choose a wallet'},cancel:{pl:'Anuluj',en:'Cancel'},addrTitle:{pl:'Adresy kontraktów (testnet)',en:'Contract addresses (testnet)'},addrHint:{pl:'Kliknij ⧉, aby skopiować i zweryfikować w explorerze.',en:'Click ⧉ to copy and verify in the explorer.'}};
 const DPT = {
- pl:{noWallet:"Nie wykryto portfela. Zainstaluj Phantom lub Backpack i odśwież stronę.",
+ pl:{noWallet:"Nie wykryto portfela. Zainstaluj Phantom, Backpack lub X1 Wallet i odśwież stronę.",
      rejected:"Odmowa połączenia: ", connected:"Połączono: ",
      noPos:"Brak pozycji — zastakuj pierwszą powyżej.", noPos2:"Brak pozycji.",
      closed:"Zamknięta", matured:"Dojrzała ✅", active:"Aktywna · ~", days:"dni",
      valid:"Podaj kwotę (min 1 ANL) i okres (min 1 dzień).",
      sending:"Wysłano, czekam na potwierdzenie…", posWord:"pozycja", sig:"Sygnatura: ",
      dayW:"dzień", winW:"okna testnetu 3/9 dni"},
- en:{noWallet:"No wallet detected. Install Phantom or Backpack and refresh the page.",
+ en:{noWallet:"No wallet detected. Install Phantom, Backpack or X1 Wallet and refresh the page.",
      rejected:"Connection rejected: ", connected:"Connected: ",
      noPos:"No positions yet — open your first one above.", noPos2:"No positions.",
      closed:"Closed", matured:"Matured ✅", active:"Active · ~", days:"days",
