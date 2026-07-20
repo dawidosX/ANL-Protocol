@@ -304,12 +304,12 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
 .dappscope{--amber:#FFB11A;--purple:#7A3BFF;--blue:#4FC3FF;--green:#30D158;--red:#f85149;
 --bg:#12151d;--card:#1B2330;--card2:#232B3D;--line:#3A3B46;--mut:#8A8FA4;--fg:#EDEFF5}
 .dappscope *{box-sizing:border-box;margin:0;padding:0}
-.dappscope .dpwrap{max-width:880px;margin:0 auto}
+.dappscope .dpwrap{max-width:1180px;margin:0 auto;padding:0 24px}
 .dappscope header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:22px}
 .dappscope h1{font-size:22px;color:var(--amber)}
 .dappscope .badge{background:var(--purple);color:#fff;font-size:12px;font-weight:700;padding:3px 10px;border-radius:20px;letter-spacing:.5px}
 .dappscope .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px}
-.dappscope .row{display:flex;gap:14px;flex-wrap:wrap}
+.dappscope .row{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px}
 .dappscope .row>.card{flex:1;min-width:200px;margin-bottom:0}
 .dappscope .lbl{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px}
 .dappscope .val{font-size:22px;font-weight:700}
@@ -330,6 +330,11 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
 .dappscope .pill{padding:2px 9px;border-radius:20px;font-size:12px;font-weight:600}
 .dappscope .pG{background:rgba(255,177,26,.15);color:var(--amber)} .pF{background:rgba(79,195,255,.15);color:var(--blue)}
 .dappscope .mature{color:var(--green);font-weight:700}
+.dappscope .unbtn{background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:4px 10px;font-size:12px;font-weight:600;margin-left:8px;cursor:pointer}
+.dappscope .unbtn:hover{border-color:var(--amber);color:var(--amber);background:transparent;filter:none}
+.dappscope .lockg{color:var(--mut);font-size:12px;margin-left:8px;white-space:nowrap;cursor:help}
+.dappscope button.chip{background:var(--card2);color:var(--fg);border:1px solid var(--line);font-family:ui-monospace,Menlo,monospace;font-size:13px;font-weight:600}
+.dappscope button.chip:hover{border-color:var(--red);color:var(--red);filter:none}
 .dappscope .mut{color:var(--mut)} a{color:var(--blue)}
 .dappscope .an{color:var(--mut);white-space:nowrap;padding-right:10px}
 .dappscope .aa{font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all;color:var(--fg)}
@@ -342,10 +347,23 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
 .dappscope .dpmbox h4{color:#EDEFF5;font-size:16px;margin-bottom:14px}
 .dappscope .dpwbtn{display:flex;align-items:center;gap:12px;width:100%;background:#232B3D;border:1px solid #3A3B46;color:#EDEFF5;border-radius:12px;padding:12px 14px;font-size:15px;cursor:pointer;margin-bottom:10px;text-align:left}
 .dappscope .dpwbtn:hover{border-color:#FFB11A}
+[data-theme=light] .dappscope{--card:#FFFFFF;--card2:#EEF2F7;--line:rgba(11,22,38,.14);--mut:#55627A;--fg:#0B1626}
+[data-theme=light] .dappscope .dpmbox{background:#FFFFFF;border-color:rgba(11,22,38,.14)}
+[data-theme=light] .dappscope .dpmbox h4{color:#0B1626}
+[data-theme=light] .dappscope .dpwbtn{background:#F1F5F9;color:#0B1626;border-color:rgba(11,22,38,.14)}
+[data-theme=light] .dappscope td{border-bottom-color:rgba(11,22,38,.08)}
+#btnConnect{background:#FFB11A;color:#241500;border:0;border-radius:10px;padding:9px 16px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
+#btnConnect:hover{filter:brightness(1.08)}
+#btnConnect.chip{background:transparent;color:var(--ink);border:1px solid var(--edge);font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:600}
+#btnConnect.chip:hover{border-color:#f85149;color:#f85149;filter:none}
+@media(max-width:880px){#btnConnect{padding:8px 12px;font-size:12px}}
+.dappscope .avail{display:block;color:var(--mut);font-size:12px;margin:-1px 0 5px;min-height:0}
+.dappscope .avail:empty{display:none}
+nav .btn-gold{white-space:nowrap}
 .dappscope .dpwbtn img{width:26px;height:26px;border-radius:6px}
 .dappscope .dpwcancel{background:transparent;border:0;color:#8A8FA4;font-size:13px;cursor:pointer;margin-top:2px}
 .dappscope{padding:40px 16px;display:block}
-.dappscope .dpwrap{max-width:980px;margin:0 auto}
+.dappscope .dpwrap{max-width:1180px;margin:0 auto;padding:0 24px}
 
 </style>
 </head>
@@ -409,7 +427,7 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
     <div class="glass sc reveal"><div class="lab" data-i18n="sl1">Total Value Locked <span class="mock">LIVE</span></div><b id="stTvl">—</b><span class="d">on-chain · live</span><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,20 15,17 30,19 45,12 60,14 75,8 100,4" fill="none" stroke="#FFB11A" stroke-width="1.8"/></svg></div>
     <div class="glass sc reveal"><div class="lab" data-i18n="sl2">ANL Locked (pula)</div><b id="stPool">—</b><span class="d" data-i18n="sd2">zadeklarowane na program</span><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,13 100,13" fill="none" stroke="#FFB11A" stroke-width="1.4" stroke-dasharray="3 4"/></svg></div>
     <div class="glass sc reveal"><div class="lab" data-i18n="sl3">XNT Distributed <span class="mock">LIVE</span></div><b id="stXnt">—</b><span class="d" data-i18n="sd3">naliczanie dzienne · wypłata z pozycją</span><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,14 100,14" fill="none" stroke="#7A3BFF" stroke-width="1.4" stroke-dasharray="3 4"/></svg></div>
-    <div class="glass sc reveal"><div class="lab" data-i18n="sl4">Active Stakers <span class="mock">LIVE</span></div><b id="stStakers">—</b><span class="d">on-chain · live</span><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,22 20,18 40,19 60,13 80,10 100,6" fill="none" stroke="#7A3BFF" stroke-width="1.8"/></svg></div>
+    <div class="glass sc reveal"><div class="lab" data-i18n="sl4">Active stakes <span class="mock">LIVE</span></div><b id="stStakers">—</b><span class="d">on-chain · live</span><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,22 20,18 40,19 60,13 80,10 100,6" fill="none" stroke="#7A3BFF" stroke-width="1.8"/></svg></div>
     <div class="glass sc reveal"><div class="lab" data-i18n="sl5">APY Genesis (okno)</div><b id="stApy">—</b><span class="d" id="stApyD">—</span><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,10 100,10" fill="none" stroke="#30D158" stroke-width="1.6"/></svg></div>
     <div class="glass sc reveal"><div class="lab" data-i18n="sl6">Validator Self-Stake</div><b data-count="15000" data-suf=" XNT">0</b><span class="d" data-i18n="sd6">stake własny zespołu · on-chain</span><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,22 25,18 50,14 75,10 100,5" fill="none" stroke="#30D158" stroke-width="1.8"/></svg></div>
   </div>
@@ -425,16 +443,10 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
     <button id="btnConnect" data-dp="connect">Połącz portfel</button>
   </header>
 
-  <div class="row">
-    <div class="card"><div class="lbl" data-dp="wallet">Portfel</div><div class="val" id="wallet" style="font-size:14px">—</div></div>
-    <div class="card"><div class="lbl" data-dp="balAnlL">Saldo ANL</div><div class="val" id="balAnl">—</div></div>
-    <div class="card"><div class="lbl" data-dp="balXntL">Saldo XNT <small>(gas)</small></div><div class="val" id="balXnt">—</div></div>
-  </div>
-
   <div class="card">
     <div class="lbl" style="margin-bottom:12px" data-dp="newStake">Nowy stake</div>
     <div class="grid">
-      <div class="field"><label data-dp="amountL">Kwota ANL</label><input id="amount" type="number" min="1" step="1" placeholder="np. 1000000"></div>
+      <div class="field"><label data-dp="amountL">Kwota ANL</label><span id="availAnl" class="avail"></span><input id="amount" type="number" min="1" step="1" placeholder="np. 1000000"></div>
       <div class="field"><label data-dp="poolL">Pula</label><select id="pool"><option value="1" data-dp="poolG">Genesis (okna do 20% APY)</option><option value="0">Flexible (8% APY)</option></select></div>
       <div class="field"><label data-dp="periodL">Okres (dni, testnet min. 1)</label><input id="days" type="number" min="1" step="1" placeholder="np. 3"></div>
     </div>
@@ -732,8 +744,8 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
   <div class="shead c reveal" data-i18n="rmH"><div class="kick">Roadmapa</div><h2>Plan rozwoju</h2></div>
   <div class="rmap">
     <div class="glass rq now reveal" data-i18n="rm1"><div class="q"><b>07–08 / 2026</b><span class="pill g">W TOKU</span></div><h4>Implementacja i testy</h4><ul><li>Smart kontrakt Rust + Anchor</li><li>250+ przypadków testowych</li><li>Testy inwariantów i rozszerzeń tokenowych</li></ul></div>
-    <div class="glass rq reveal" data-i18n="rm2"><div class="q"><b>09 / 2026</b><span class="pill s">PLAN</span></div><h4>Audyt AI i Testnet X1</h4><ul><li>Audyt bezpieczeństwa wspierany przez AI</li><li>Pełny cykl na testnecie X1</li><li>Fuzzing 24h+ i testy inwariantów</li></ul></div>
-    <div class="glass rq reveal" data-i18n="rm3"><div class="q"><b>10 / 2026</b><span class="pill s">PLAN</span></div><h4>Pilot Mainnet</h4><ul><li>Pula pilotażowa 100 000 ANL</li><li>Kontrolowane otwarcie (start w pauzie)</li><li>Monitoring 24/7</li></ul></div>
+    <div class="glass rq now reveal" data-i18n="rm2"><div class="q"><b>07–09 / 2026</b><span class="pill g">W TOKU</span></div><h4>Audyt AI i Testnet X1</h4><ul><li>Audyt bezpieczeństwa wspierany przez AI</li><li>Pełny cykl na testnecie X1</li><li>Fuzzing 24h+ i testy inwariantów</li></ul></div>
+    <div class="glass rq reveal" data-i18n="rm3"><div class="q"><b>10 / 2026</b><span class="pill s">PLAN</span></div><h4>Pilot Mainnet</h4><ul><li>Pula pilotażowa 5 000 000 ANL</li><li>Kontrolowane otwarcie (start w pauzie)</li><li>Monitoring 24/7</li></ul></div>
     <div class="glass rq reveal" data-i18n="rm4"><div class="q"><b>11–12 / 2026</b><span class="pill s">PLAN</span></div><h4>Pełne uruchomienie</h4><ul><li>Zasilenie puli 200 000 000 ANL</li><li>Dashboard stakingowy</li><li>Start dziennego naliczania XNT</li></ul></div>
   </div>
 </div></section>
@@ -855,7 +867,7 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
     pAudit:'🛡 4 audit rounds — code & history public',
     demoBar:'TESTNET PHASE — protocol launching on X1 testnet · statistics are read on-chain (LIVE) · <a href="https://anl.analtena.com/whitepaper" style="color:#fff;text-decoration:underline">Whitepaper</a>',
     sl1:'Total Value Locked <span class="mock">LIVE</span>',sl2:'ANL Locked (pool)',
-    sl3:'XNT Distributed <span class="mock">LIVE</span>',sl4:'Active Stakers <span class="mock">LIVE</span>',
+    sl3:'XNT Distributed <span class="mock">LIVE</span>',sl4:'Active stakes <span class="mock">LIVE</span>',
     sl5:'Genesis APY (window)',sl6:'Validator Stake <span class="mock">LIVE</span>',
     sd2:'committed to the program',sd3:'daily accrual · paid with your position',sd5:'day 12/30 · switch at 02:00 UTC',sd6:'team self-stake · on-chain',
     howH:'<div class="kick">Protocol</div><h2>How it works</h2>',
@@ -902,8 +914,8 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
     wpD:'⬇ Download PDF',wpP:'👁 Preview',
     rmH:'<div class="kick">Roadmap</div><h2>Development plan</h2>',
     rm1:'<div class="q"><b>07–08 / 2026</b><span class="pill g">IN PROGRESS</span></div><h4>Build & test</h4><ul><li>Rust + Anchor smart contract</li><li>250+ test cases</li><li>Invariant & token-extension tests</li></ul>',
-    rm2:'<div class="q"><b>09 / 2026</b><span class="pill s">PLANNED</span></div><h4>AI Audit & X1 Testnet</h4><ul><li>AI-assisted security audit</li><li>Full cycle on the X1 testnet</li><li>24h+ fuzzing & invariant tests</li></ul>',
-    rm3:'<div class="q"><b>10 / 2026</b><span class="pill s">PLANNED</span></div><h4>Mainnet Pilot</h4><ul><li>100,000 ANL pilot pool</li><li>Controlled launch (deploy paused)</li><li>24/7 monitoring</li></ul>',
+    rm2:'<div class="q"><b>07–09 / 2026</b><span class="pill g">IN PROGRESS</span></div><h4>AI Audit & X1 Testnet</h4><ul><li>AI-assisted security audit</li><li>Full cycle on the X1 testnet</li><li>24h+ fuzzing & invariant tests</li></ul>',
+    rm3:'<div class="q"><b>10 / 2026</b><span class="pill s">PLANNED</span></div><h4>Mainnet Pilot</h4><ul><li>5,000,000 ANL pilot pool</li><li>Controlled launch (deploy paused)</li><li>24/7 monitoring</li></ul>',
     rm4:'<div class="q"><b>11–12 / 2026</b><span class="pill s">PLANNED</span></div><h4>Full launch</h4><ul><li>Funding the 200,000,000 ANL pool</li><li>Staking dashboard</li><li>Daily XNT accrual goes live</li></ul>',
     fqH:'<div class="kick">FAQ</div><h2>Frequently asked questions</h2>',
     fq1:'<summary>Can my APY change after I enter?</summary><p>No. The rate assigned at the moment of staking holds for the position\u2019s entire life — regardless of how many people join later or how the program windows change. That\u2019s the Immutable APY rule written into the smart contract.</p>',
@@ -1183,6 +1195,7 @@ const ANL_MINT   = new PublicKey("BLyHV1ENioCMNeGptBJptUgPkrhkjYq527rU7Q1UpXFF")
 const TOKEN_2022 = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 const ATA_PROG   = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 const DISC_STAKE = new Uint8Array([206,176,202,18,200,209,179,108]);
+const DISC_UNSTAKE = new Uint8Array([246,212,81,180,65,2,126,125]);
 const DEC = 1_000_000_000n;
 
 const conn = new Connection(RPC, "confirmed");
@@ -1245,10 +1258,11 @@ async function pick(w){
       pubkey = (res && res.publicKey) || w.p.publicKey;
       walletAdapter = {kind:"leg", p:w.p};
     }
-    $("wallet").textContent = pubkey.toBase58().slice(0,4)+"…"+pubkey.toBase58().slice(-4)+" · "+w.name;
-    $("btnConnect").dataset.dp="connectedBtn"; dpApply();
+    const cta=document.querySelector("nav .btn-gold"); if(cta) cta.style.display="none";
+    const bc=$("btnConnect"); delete bc.dataset.dp; bc.classList.add("chip");
+    bc.textContent = pubkey.toBase58().slice(0,4)+"…"+pubkey.toBase58().slice(-4)+" ✕";
+    bc.title = T("discHint");
     $("btnStake").disabled=false; $("btnRefresh").disabled=false;
-    log(T("connected")+pubkey.toBase58(), "ok");
     await refresh();
   }catch(e){ log(T("rejected")+(e.message||e), "err"); }
 }
@@ -1279,12 +1293,13 @@ async function refresh(){
   if(!pubkey) return;
   try{
     const lam = await conn.getBalance(pubkey);
-    $("balXnt").textContent = (lam/1e9).toLocaleString("pl-PL",{maximumFractionDigits:2});
-  }catch(e){ $("balXnt").textContent="?"; }
+    const x = (lam/1e9).toLocaleString("pl-PL",{maximumFractionDigits:2});
+    $("btnConnect").textContent = x+" XNT · "+pubkey.toBase58().slice(0,4)+"…"+pubkey.toBase58().slice(-4)+" ✕";
+  }catch(e){}
   try{
     const b = await conn.getTokenAccountBalance(ownerAta(pubkey));
-    $("balAnl").textContent = fmt(Math.floor(b.value.uiAmount));
-  }catch(e){ $("balAnl").textContent="0"; }
+    $("availAnl").textContent = T("avail")+fmt(Math.floor(b.value.uiAmount))+" ANL";
+  }catch(e){ $("availAnl").textContent = T("avail")+"0 ANL"; }
   await loadPositions();
 }
 
@@ -1297,20 +1312,41 @@ async function nextIndex(){
 
 function decodePosition(data){
   const dv = new DataView(data.buffer, data.byteOffset);
+  const u128 = (off)=> (dv.getBigUint64(off+8,true)<<64n) | dv.getBigUint64(off,true);
   return {
     pool: data[41], status: data[42],
     amount: dv.getBigUint64(51, true),
+    shares: dv.getBigUint64(59, true),
     apy: dv.getUint16(67, true),
     days: dv.getUint32(69, true),
+    start: Number(dv.getBigInt64(73, true)),
     end: Number(dv.getBigInt64(81, true)),
     reward: dv.getBigUint64(89, true),
+    xntAccrued: dv.getBigUint64(97, true),
+    settled: data[105]===1,
+    xntDebt: u128(106),
   };
+}
+const XNT_PRECISION = 1_000_000_000_000n; // 1e12 — jak w kontrakcie (anl-math)
+const fmtXnt = (lam)=> (Number(lam)/1e9).toLocaleString("pl-PL",{maximumFractionDigits:4});
+const DAILY_XNT_EST = 15; // szacunkowy dzienny przychód walidatora (XNT) do prognozy
+async function poolXntIndexes(){
+  const p0 = pda([enc("pool"), new Uint8Array([0])]);
+  const p1 = pda([enc("pool"), new Uint8Array([1])]);
+  const infos = await conn.getMultipleAccountsInfo([p0,p1]);
+  const rd = (info)=>{ if(!info) return {idx:0n, und:0n, shares:0n};
+    const dv=new DataView(info.data.buffer, info.data.byteOffset);
+    return { idx: (dv.getBigUint64(29+8,true)<<64n) | dv.getBigUint64(29,true),
+             shares: dv.getBigUint64(21,true),
+             und: dv.getBigUint64(45,true) }; };
+  return [rd(infos[0]), rd(infos[1])]; // [Flexible, Genesis]
 }
 
 async function loadPositions(){
   const tb = $("positions");
   const n = await nextIndex();
-  if(n === 0n){ tb.innerHTML = '<tr><td colspan="8" class="mut">'+T("noPos")+'</td></tr>'; return; }
+  if(n === 0n){ tb.innerHTML = '<tr><td colspan="10" class="mut">'+T("noPos")+'</td></tr>'; return; }
+  const poolIdx = await poolXntIndexes();
   let rows = "";
   for(let i=0n; i<n; i++){
     const idx = new Uint8Array(8); new DataView(idx.buffer).setBigUint64(0, i, true);
@@ -1320,18 +1356,69 @@ async function loadPositions(){
     const p = decodePosition(info.data);
     const now = Date.now()/1000;
     const endD = new Date(p.end*1000).toLocaleString("pl-PL",{dateStyle:"short",timeStyle:"short"});
+    const startD = new Date(p.start*1000).toLocaleString("pl-PL",{dateStyle:"short",timeStyle:"short"});
     let st;
     if(p.status===1) st = '<span class="mut">'+T("closed")+'</span>';
     else if(now >= p.end) st = '<span class="mature">'+T("matured")+'</span>';
-    else { const h = Math.ceil((p.end-now)/3600); st = '<span class="hl">'+T("active")+(h>48? Math.ceil(h/24)+' '+T("days") : h+' h')+'</span>'; }
+    else { const h = Math.ceil((p.end-now)/3600); st = '<span class="hl">'+T("active")+(h>48? Math.ceil(h/24)+' '+T("days") : h+' h')+'</span>'
+      + (p.pool===0
+         ? '<button class="unbtn" onclick="anlUnstake('+i+','+p.pool+')">'+T("unstakeBtn")+'</button>'
+         : '<span class="lockg" title="'+T("lockedGT")+'">🔒 '+T("lockedG")+'</span>'); }
+    let xntCell;
+    if(p.status===1) xntCell = '<span class="mut">—</span>';
+    else if(p.settled) xntCell = fmtXnt(p.xntAccrued)+' XNT';
+    else {
+      const pd = poolIdx[p.pool];
+      const delta = pd.idx > p.xntDebt ? pd.idx - p.xntDebt : 0n;
+      let total = delta * p.shares / XNT_PRECISION;
+      if(pd.shares > 0n && pd.und > 0n) total += pd.und * p.shares / pd.shares;
+      xntCell = fmtXnt(total)+' XNT';
+    }
     rows += `<tr><td>${i}</td>
       <td><span class="pill ${p.pool===1?'pG':'pF'}">${p.pool===1?'Genesis':'Flexible'}</span></td>
       <td>${fmtAnl(p.amount)} ANL</td><td>${(p.apy/100).toFixed(0)}%</td>
-      <td>${p.days} ${T("days")}</td><td>${endD}</td>
-      <td>${fmtAnl(p.reward)} ANL</td><td>${st}</td></tr>`;
+      <td>${p.days} ${T("days")}</td><td>${startD}</td><td>${endD}</td>
+      <td>${fmtAnl(p.reward)} ANL</td><td>${xntCell}</td><td>${st}</td></tr>`;
   }
-  tb.innerHTML = rows || '<tr><td colspan="8" class="mut">'+T("noPos2")+'</td></tr>';
+  tb.innerHTML = rows || '<tr><td colspan="10" class="mut">'+T("noPos2")+'</td></tr>';
 }
+
+let fadeT=null;
+function okFade(){ if(fadeT) clearTimeout(fadeT); fadeT=setTimeout(()=>{ const d=$("status"); if(d) d.innerHTML=""; },6000); }
+
+async function unstakeEarly(i, poolType){
+  if(!pubkey) return;
+  if(poolType!==0){ log("🔒 "+T("lockedGT"), "err"); return; }
+  if(!confirm(T("unstakeConfirm"))) return;
+  try{
+    log(T("unstaking")+" #"+i+"…");
+    const idx = new Uint8Array(8); new DataView(idx.buffer).setBigUint64(0, BigInt(i), true);
+    const poolConfig  = pda([enc("pool"), new Uint8Array([poolType])]);
+    const userPosition= pda([enc("position"), pubkey.toBuffer(), idx]);
+    const data = new Uint8Array(8); data.set(DISC_UNSTAKE, 0);
+    const AW=(pk,s=false,w=false)=>({pubkey:pk,isSigner:s,isWritable:w});
+    const keys = [
+      AW(pubkey,true,true), AW(globalConfig,false,true), AW(poolConfig,false,true),
+      AW(userPosition,false,true), AW(vaultAuthority), AW(ANL_MINT),
+      AW(principalVault,false,true), AW(ownerAta(pubkey),false,true),
+      AW(TOKEN_2022),
+    ];
+    const tx = new Transaction().add(new TransactionInstruction({programId:PROGRAM_ID, keys, data}));
+    tx.feePayer = pubkey;
+    const bh = await conn.getLatestBlockhash("confirmed");
+    tx.recentBlockhash = bh.blockhash;
+    log(T("sending"));
+    const signature = await signAndSendViaX1(tx);
+    await conn.confirmTransaction({signature, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight}, "confirmed");
+    log("✅ UNSTAKE OK — "+T("posWord")+" #"+i+". "+T("sig")+signature, "ok");
+    okFade();
+    await refresh();
+  }catch(e){
+    log("❌ "+(e.message||e), "err");
+    if(e.logs) e.logs.forEach(l=>log("   "+l, "err"));
+  }
+}
+window.anlUnstake = unstakeEarly;
 
 async function stake(){
   const amount = BigInt($("amount").value||"0");
@@ -1369,6 +1456,7 @@ async function stake(){
     const signature = await signAndSendViaX1(tx);
     await conn.confirmTransaction({signature, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight}, "confirmed");
     log(`✅ STAKE OK — ${T("posWord")} #${index}. ${T("sig")}${signature}`, "ok");
+    okFade();
     await refresh();
   }catch(e){
     log("❌ "+(e.message||e), "err");
@@ -1376,7 +1464,24 @@ async function stake(){
   }finally{ $("btnStake").disabled = false; }
 }
 
-$("btnConnect").onclick = connect;
+function dappDisconnect(){
+  try{
+    if(walletAdapter){
+      if(walletAdapter.kind==="std" && walletAdapter.w.features["standard:disconnect"]) walletAdapter.w.features["standard:disconnect"].disconnect();
+      else if(walletAdapter.kind==="leg" && walletAdapter.p.disconnect) walletAdapter.p.disconnect();
+    }
+  }catch(_){}
+  pubkey=null; walletAdapter=null;
+  $("availAnl").textContent="";
+  const cta=document.querySelector("nav .btn-gold"); if(cta) cta.style.display="";
+  $("btnStake").disabled=true; $("btnRefresh").disabled=true;
+  const bc=$("btnConnect"); bc.classList.remove("chip"); bc.dataset.dp="connect";
+  bc.title=""; dpApply();
+  $("positions").innerHTML='<tr><td colspan="10" class="mut">'+T("connectFirstT")+'</td></tr>';
+  const d=$("status"); if(d) d.innerHTML="";
+}
+$("btnConnect").onclick = ()=> pubkey ? dappDisconnect() : connect();
+try{ const nv=document.querySelector("nav .nav-in"); if(nv) nv.appendChild($("btnConnect")); }catch(_){}
 $("dpCancel").onclick=()=>$("dpModal").classList.remove("open");
 $("btnStake").onclick = stake;
 $("btnRefresh").onclick = refresh;
@@ -1388,7 +1493,7 @@ document.querySelectorAll('.dpcp').forEach(b=>{
 });
 
 
-const DPD = {connect:{pl:'Połącz portfel',en:'Connect wallet'},connectedBtn:{pl:'Połączono',en:'Connected'},wallet:{pl:'Portfel',en:'Wallet'},balAnlL:{pl:'Saldo ANL',en:'ANL balance'},balXntL:{pl:'Saldo XNT <small>(gas)</small>',en:'XNT balance <small>(gas)</small>'},newStake:{pl:'Nowy stake',en:'New stake'},amountL:{pl:'Kwota ANL',en:'ANL amount'},poolL:{pl:'Pula',en:'Pool'},poolG:{pl:'Genesis (okna do 20% APY)',en:'Genesis (windows up to 20% APY)'},periodL:{pl:'Okres (dni, testnet min. 1)',en:'Period (days, testnet min. 1)'},stakeBtn:{pl:'Zastakuj',en:'Stake'},apyNote:{pl:'APY przypisuje kontrakt w chwili otwarcia — pozycja pokaże je niżej.',en:'APY is assigned by the contract at opening — your position shows it below.'},yourPos:{pl:'Twoje pozycje',en:'Your positions'},refresh:{pl:'Odśwież',en:'Refresh'},thead:{pl:'<tr><th>#</th><th>Pula</th><th>Kwota</th><th>APY</th><th>Okres</th><th>Koniec</th><th>Nagroda ANL</th><th>Status</th></tr>',en:'<tr><th>#</th><th>Pool</th><th>Amount</th><th>APY</th><th>Period</th><th>Ends</th><th>ANL reward</th><th>Status</th></tr>'},connectFirst:{pl:'Połącz portfel, aby zobaczyć pozycje.',en:'Connect a wallet to see your positions.'},chooseWallet:{pl:'Wybierz portfel',en:'Choose a wallet'},cancel:{pl:'Anuluj',en:'Cancel'},addrTitle:{pl:'Adresy kontraktów (testnet)',en:'Contract addresses (testnet)'},addrHint:{pl:'Kliknij ⧉, aby skopiować i zweryfikować w explorerze.',en:'Click ⧉ to copy and verify in the explorer.'}};
+const DPD = {connect:{pl:'Połącz portfel',en:'Connect wallet'},connectedBtn:{pl:'Połączono',en:'Connected'},wallet:{pl:'Portfel',en:'Wallet'},balAnlL:{pl:'Saldo ANL',en:'ANL balance'},balXntL:{pl:'Saldo XNT <small>(gas)</small>',en:'XNT balance <small>(gas)</small>'},newStake:{pl:'Nowy stake',en:'New stake'},amountL:{pl:'Kwota ANL',en:'ANL amount'},poolL:{pl:'Pula',en:'Pool'},poolG:{pl:'Genesis (do 20% APY · blokada na okres)',en:'Genesis (up to 20% APY · locked for the period)'},periodL:{pl:'Okres (dni, testnet min. 1)',en:'Period (days, testnet min. 1)'},stakeBtn:{pl:'Zastakuj',en:'Stake'},apyNote:{pl:'APY przypisuje kontrakt w chwili otwarcia — pozycja pokaże je niżej.',en:'APY is assigned by the contract at opening — your position shows it below.'},yourPos:{pl:'Twoje pozycje',en:'Your positions'},refresh:{pl:'Odśwież',en:'Refresh'},thead:{pl:'<tr><th>#</th><th>Pula</th><th>Kwota</th><th>APY</th><th>Okres</th><th>Start</th><th>Koniec</th><th>Nagroda ANL</th><th>XNT naliczone</th><th>Status</th></tr>',en:'<tr><th>#</th><th>Pool</th><th>Amount</th><th>APY</th><th>Period</th><th>Start</th><th>Ends</th><th>ANL reward</th><th>XNT accrued</th><th>Status</th></tr>'},connectFirst:{pl:'Połącz portfel, aby zobaczyć pozycje.',en:'Connect a wallet to see your positions.'},chooseWallet:{pl:'Wybierz portfel',en:'Choose a wallet'},cancel:{pl:'Anuluj',en:'Cancel'},addrTitle:{pl:'Adresy kontraktów (testnet)',en:'Contract addresses (testnet)'},addrHint:{pl:'Kliknij ⧉, aby skopiować i zweryfikować w explorerze.',en:'Click ⧉ to copy and verify in the explorer.'}};
 const DPT = {
  pl:{noWallet:"Nie wykryto portfela. Zainstaluj Phantom, Backpack lub X1 Wallet i odśwież stronę.",
      rejected:"Odmowa połączenia: ", connected:"Połączono: ",
@@ -1396,6 +1501,11 @@ const DPT = {
      closed:"Zamknięta", matured:"Dojrzała ✅", active:"Aktywna · ~", days:"dni",
      valid:"Podaj kwotę (min 1 ANL) i okres (min 1 dzień).",
      sending:"Wysłano, czekam na potwierdzenie…", posWord:"pozycja", sig:"Sygnatura: ",
+     unstakeBtn:"Zerwij", unstaking:"Zrywam pozycję",
+     discHint:"Kliknij, aby odłączyć portfel", connectFirstT:"Połącz portfel, aby zobaczyć pozycje.",
+     xntPending:"do rozdzielenia", xntDaily:"XNT/dzień (szac.)", avail:"dostępne: ",
+     lockedG:"do końca okresu", lockedGT:"Pozycje Genesis są zablokowane do końca zadeklarowanego okresu — bez opcji zerwania (WP v1.1).",
+     unstakeConfirm:"Zerwać pozycję przed czasem? Kapitał wróci od razu w całości, ale WSZYSTKIE nagrody (ANL i XNT) bezpowrotnie przepadną.",
      dayW:"dzień", winW:"okna testnetu 3/9 dni"},
  en:{noWallet:"No wallet detected. Install Phantom, Backpack or X1 Wallet and refresh the page.",
      rejected:"Connection rejected: ", connected:"Connected: ",
@@ -1403,6 +1513,11 @@ const DPT = {
      closed:"Closed", matured:"Matured ✅", active:"Active · ~", days:"days",
      valid:"Enter an amount (min 1 ANL) and a period (min 1 day).",
      sending:"Sent, waiting for confirmation…", posWord:"position", sig:"Signature: ",
+     unstakeBtn:"Unstake", unstaking:"Unstaking position",
+     discHint:"Click to disconnect the wallet", connectFirstT:"Connect a wallet to see your positions.",
+     xntPending:"pending split", xntDaily:"XNT/day (est.)", avail:"available: ",
+     lockedG:"until period end", lockedGT:"Genesis positions are locked until the end of the declared period — no early exit (WP v1.1).",
+     unstakeConfirm:"Break this position early? Principal returns immediately in full, but ALL rewards (ANL and XNT) are forfeited forever.",
      dayW:"day", winW:"testnet windows 3/9 days"}
 };
 let DPL = (document.documentElement.lang==="en")?"en":"pl";
@@ -1434,7 +1549,7 @@ dpApply();
   const xv = await tok("G1u7fJDP27vPD6gamLwZKzfdsFFFx7RBsGKR2cGHoXqA");
   if(xv!==null) set("stXnt", xv.toLocaleString("pl-PL")+" XNT");
   try{ const profs = await conn.getProgramAccounts(PROGRAM_ID,
-      {filters:[{dataSize:56}], dataSlice:{offset:0,length:0}});
+      {filters:[{memcmp:{offset:0,bytes:"j9SjDYAWesU"}},{memcmp:{offset:42,bytes:"1"}}], dataSlice:{offset:0,length:0}});
     set("stStakers", String(profs.length)); }catch(e){}
   try{ const cfg = await conn.getAccountInfo(globalConfig);
     if(cfg){ const gts = Number(new DataView(cfg.data.buffer,cfg.data.byteOffset).getBigInt64(106,true));
