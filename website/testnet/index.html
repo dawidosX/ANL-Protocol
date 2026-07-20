@@ -363,6 +363,14 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
 .dappscope .avail{display:block;color:var(--mut);font-size:12px;margin:-1px 0 5px;min-height:16px}
 .dappscope .avail{color:#4FC3FF;font-weight:700}
 .dappscope .grid{align-items:stretch}
+@media(max-width:760px){
+  .dappscope .grid{grid-template-columns:1fr!important;gap:14px}
+  .dappscope .grid .field:not(:first-child)::before{display:none}
+  .dappscope .grid .field .slrow,.dappscope .grid .field:nth-child(2) .pooltiles{margin-bottom:8px}
+  .dappscope .dpwrap{padding:0 14px}
+  .dappscope table{font-size:12px}
+  .dappscope td,.dappscope th{padding:7px 5px}
+}
 .dappscope .grid .field{display:flex;flex-direction:column}
 .dappscope .grid .field label{min-height:20px;margin-bottom:0}
 .dappscope .grid .field .avail{min-height:16px;margin:0 0 6px}
@@ -370,8 +378,8 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
 .dappscope .grid .field:not(:first-child)::before{content:"";display:block;min-height:16px;margin-bottom:6px}
 /* input/kafelki i suwak: stały, jednakowy odstęp wszędzie */
 .dappscope .grid .field .slrow{margin:0 0 10px;height:46px;align-items:center}
-.dappscope .grid .field:nth-child(2) .pooltiles{margin:0;height:100%}
-.dappscope .grid .field:nth-child(2) .ptile{display:flex;align-items:center;justify-content:center}
+.dappscope .grid .field:nth-child(2) .pooltiles{margin:0 0 10px}
+.dappscope .grid .field:nth-child(2) .ptile{height:46px;display:flex;align-items:center;justify-content:center}
 .dappscope .grid .field .slider{margin:0}
 .dappscope .grid .field .manin{margin:0}
 .dappscope .grid .field:nth-child(2) label{color:#FFB11A}
@@ -399,7 +407,7 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
 .dappscope .slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;background:var(--amber);border:2px solid #241500;cursor:pointer;box-shadow:0 0 0 3px rgba(255,177,26,.2)}
 .dappscope .slider::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:var(--amber);border:2px solid #241500;cursor:pointer}
 .dappscope .slider::-moz-range-progress{background:var(--amber);height:6px;border-radius:6px}
-.dappscope .avail:empty{display:none}
+
 nav .btn-gold{white-space:nowrap}
 .dappscope .dpwbtn img{width:26px;height:26px;border-radius:6px}
 .dappscope .dpwcancel{background:transparent;border:0;color:#8A8FA4;font-size:13px;cursor:pointer;margin-top:2px}
@@ -1611,6 +1619,7 @@ function dpApply(){
     DPL = (l==="en")?"en":"pl"; dpApply(); anlPoolLang(DPL); if(pubkey) loadPositions(); }; }
 dpApply();
 try{ anlPoolLang((document.documentElement.lang==="en")?"en":"pl"); }catch(e){}
+try{ var av=document.getElementById("availAnl"); if(av && !av.textContent) av.textContent = ((document.documentElement.lang==="en")?"available: ":"dostępne: ")+"—"; }catch(e){}
 
 
 (async function(){
