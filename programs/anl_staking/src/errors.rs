@@ -22,6 +22,8 @@ pub enum AnlError {
     InvalidPeriod,
     #[msg("Position period has already ended - use claim")]
     PeriodAlreadyEnded,
+    #[msg("Genesis positions are locked until period end - no early exit (WP v1.1)")]
+    GenesisLocked,
     #[msg("Reward period has not ended")]
     PeriodNotEnded,
     #[msg("Nothing to claim")]

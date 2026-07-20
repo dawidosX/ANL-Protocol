@@ -413,6 +413,11 @@ pub struct UnstakeEarly<'info> {
 
 pub fn unstake_early(ctx: Context<UnstakeEarly>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
+    // WP v1.1 §5/§7: pozycje Genesis są nieodwołalne — zerwanie tylko Flexible.
+    require!(
+        ctx.accounts.user_position.pool_type == PoolType::Flexible,
+        AnlError::GenesisLocked
+    );
     require!(
         ctx.accounts.user_position.status == PositionStatus::Active,
         AnlError::PositionClosed

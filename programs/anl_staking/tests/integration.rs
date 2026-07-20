@@ -1009,6 +1009,44 @@ async fn ts_early_exit_forfeits_and_redistributes() {
         .unwrap();
 }
 
+// ============================================================ TS-15: blokada Genesis (WP v1.1)
+
+#[tokio::test]
+async fn ts_genesis_locked_no_early_exit() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+    let (carol, carol_anl, carol_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&carol, carol_anl, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+
+    // zerwanie Genesis w trakcie okresu — odrzucone (GenesisLocked)
+    env.advance(DAY).await;
+    let err = env
+        .unstake_early(&carol, carol_anl, pos, PoolType::Genesis)
+        .await;
+    assert!(err.is_err(), "GenesisLocked");
+    assert!(
+        env.ctx
+            .banks_client
+            .get_account(pos)
+            .await
+            .unwrap()
+            .is_some(),
+        "pozycja Genesis nietknięta po odrzuconym zerwaniu"
+    );
+
+    // po końcu okresu środki normalnie do odebrania — blokada nie więzi kapitału
+    env.advance((days as i64) * DAY).await;
+    env.settle(pos, PoolType::Genesis, None).await.unwrap();
+    env.claim(&carol, carol_anl, carol_xnt, pos, PoolType::Genesis, None)
+        .await
+        .unwrap();
+}
+
 // ============================================================ TS-11..14: okna, pokrycie, walidacje
 
 #[tokio::test]
