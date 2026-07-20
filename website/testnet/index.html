@@ -1035,7 +1035,7 @@ nav .btn-gold{white-space:nowrap}
         pref = 'en';   // twardy EN
       }
     }
-    if (pref !== LANG) setLang(pref);
+    setLang(pref);  // zawsze wymuś — inaczej gdy LANG start == pref, treść zostaje w domyślnym HTML
   })();
 
 

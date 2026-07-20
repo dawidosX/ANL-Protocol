@@ -859,7 +859,7 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
         pref = 'en';   // twardy EN
       }
     }
-    if (pref !== LANG) setLang(pref);
+    setLang(pref);  // zawsze wymuś — inaczej gdy LANG start == pref, treść zostaje w domyślnym HTML
   })();
 
 
