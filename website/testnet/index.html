@@ -326,7 +326,10 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
 .dappscope .ok{color:var(--green)} .err{color:var(--red)} .hl{color:var(--blue)}
 .dappscope table{width:100%;border-collapse:collapse;font-size:13.5px}
 .dappscope th{color:var(--mut);text-align:left;font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px;text-transform:uppercase;letter-spacing:.4px}
-.dappscope td{padding:10px;border-bottom:1px solid var(--card2)}
+.dappscope td{padding:10px;border-bottom:1px solid var(--card2);white-space:nowrap}
+.dappscope table{font-size:13px}
+.dappscope td,.dappscope th{padding:9px 8px}
+.dappscope .lockg,.dappscope .unbtn{margin-left:6px}
 .dappscope .pill{padding:2px 9px;border-radius:20px;font-size:12px;font-weight:600}
 .dappscope .pG{background:rgba(255,177,26,.15);color:var(--amber)} .pF{background:rgba(79,195,255,.15);color:var(--blue)}
 .dappscope .mature{color:var(--green);font-weight:700}
@@ -357,7 +360,43 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
 #btnConnect.chip{background:transparent;color:var(--ink);border:1px solid var(--edge);font-family:ui-monospace,Menlo,monospace;font-size:12.5px;font-weight:600}
 #btnConnect.chip:hover{border-color:#f85149;color:#f85149;filter:none}
 @media(max-width:880px){#btnConnect{padding:8px 12px;font-size:12px}}
-.dappscope .avail{display:block;color:var(--mut);font-size:12px;margin:-1px 0 5px;min-height:0}
+.dappscope .avail{display:block;color:var(--mut);font-size:12px;margin:-1px 0 5px;min-height:16px}
+.dappscope .avail{color:#4FC3FF;font-weight:700}
+.dappscope .grid{align-items:stretch}
+.dappscope .grid .field{display:flex;flex-direction:column}
+.dappscope .grid .field label{min-height:20px;margin-bottom:0}
+.dappscope .grid .field .avail{min-height:16px;margin:0 0 6px}
+/* pola bez 'dostępne' dostają identyczną rezerwację (16px+6px), by input startował na równi */
+.dappscope .grid .field:not(:first-child)::before{content:"";display:block;min-height:16px;margin-bottom:6px}
+/* input/kafelki i suwak: stały, jednakowy odstęp wszędzie */
+.dappscope .grid .field .slrow,.dappscope .grid .field .pooltiles{margin:0 0 10px}
+.dappscope .grid .field .slider{margin:0}
+.dappscope .grid .field .manin{margin:0}
+.dappscope .grid .field:nth-child(2) label{color:#FFB11A}
+.dappscope .grid .field:nth-child(3) label{color:#7A3BFF}
+.dappscope .grid .field:first-child label{color:#30D158}
+.dappscope .slrow{display:flex;align-items:center;gap:7px;margin:2px 0 8px}
+.dappscope .manin{width:100%;background:var(--card2);border:1px solid var(--line);color:var(--amber);font-size:16px;font-weight:700;border-radius:9px;padding:8px 11px}
+.dappscope .manin:focus{outline:none;border-color:var(--amber)}
+.dappscope .unit{color:var(--amber);font-size:14px;font-weight:800;white-space:nowrap}
+.dappscope .newstake-h{font-size:18px;font-weight:800;letter-spacing:.5px;color:var(--amber);text-transform:uppercase;margin-bottom:16px}
+.dappscope .slrow .unit{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:11px 12px;color:var(--amber);font-weight:800;font-size:14px;display:flex;align-items:center}
+.dappscope .grid .field{display:flex;flex-direction:column}
+.dappscope .grid .field select,.dappscope .grid .field input{margin-top:auto}
+.dappscope .grid .field label{min-height:20px}
+.dappscope .pooltiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:auto}
+.dappscope .ptile{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:11px 10px;cursor:pointer;text-align:center;font-size:14px;font-weight:700;color:var(--fg);transition:border-color .12s,background .12s}
+.dappscope .ptile:hover{border-color:var(--amber)}
+.dappscope .ptile.sel{border-color:var(--amber);background:rgba(255,177,26,.1);color:var(--amber)}
+.dappscope .quick{display:flex;gap:6px;margin-top:7px}
+.dappscope .quick button{flex:1;background:transparent;border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:5px 0;font-size:12px;font-weight:600;cursor:pointer}
+.dappscope .quick button:hover{border-color:var(--amber);color:var(--amber)}
+.dappscope .slval{font-size:15px;font-weight:700;color:var(--fg);margin:2px 0 8px}
+.dappscope .slval span{color:var(--amber)}
+.dappscope .slider{-webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:6px;background:var(--line);outline:none;margin:6px 0 2px;cursor:pointer}
+.dappscope .slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;background:var(--amber);border:2px solid #241500;cursor:pointer;box-shadow:0 0 0 3px rgba(255,177,26,.2)}
+.dappscope .slider::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:var(--amber);border:2px solid #241500;cursor:pointer}
+.dappscope .slider::-moz-range-progress{background:var(--amber);height:6px;border-radius:6px}
 .dappscope .avail:empty{display:none}
 nav .btn-gold{white-space:nowrap}
 .dappscope .dpwbtn img{width:26px;height:26px;border-radius:6px}
@@ -368,7 +407,7 @@ nav .btn-gold{white-space:nowrap}
 </style>
 </head>
 <body>
-<div id="demoBar" style="position:relative;z-index:9999;background:linear-gradient(90deg,#7A3BFF,#5B2BD0);color:#fff;text-align:center;font:600 12px/1.5 Inter,system-ui,sans-serif;padding:7px 14px;letter-spacing:.05em" data-i18n="demoBar">FAZA TESTNET — protokół wchodzi na testnet X1 · statystyki pobierane on-chain (LIVE) · <a href="https://anl.analtena.com/whitepaper" style="color:#fff;text-decoration:underline">Whitepaper</a></div>
+<div id="demoBar" style="position:relative;z-index:9999;background:linear-gradient(90deg,#7A3BFF,#5B2BD0);color:#fff;text-align:center;font:600 12px/1.5 Inter,system-ui,sans-serif;padding:7px 14px;letter-spacing:.05em" data-i18n="demoBar">FAZA TESTNET — protokół wchodzi na testnet X1 · statystyki pobierane on-chain (LIVE) · <a href="/whitepaper.html" style="color:#fff;text-decoration:underline">Whitepaper</a></div>
 
 <nav><div class="wrap nav-in">
   <a class="logo" href="#top" aria-label="ANL — strona główna">
@@ -377,7 +416,7 @@ nav .btn-gold{white-space:nowrap}
   </a>
   <div class="nlinks">
     <a href="#staking" data-i18n="n1">Staking</a><a href="#rewards" data-i18n="n2">Nagrody</a><a href="#validator" data-i18n="nV">Walidator</a><a href="#flow" data-i18n="n3">Protokół</a>
-    <a href="#security" data-i18n="n4">Bezpieczeństwo</a><a href="#roadmap" data-i18n="n5">Roadmapa</a><a href="#faq" data-i18n="n6">FAQ</a><a href="https://anl.analtena.com/whitepaper" style="color:var(--gold)">Whitepaper</a>
+    <a href="#security" data-i18n="n4">Bezpieczeństwo</a><a href="#roadmap" data-i18n="n5">Roadmapa</a><a href="#faq" data-i18n="n6">FAQ</a><a href="/whitepaper.html" style="color:var(--gold)">Whitepaper</a>
   </div>
   <div class="spacer"></div>
   <button class="tgl lang" id="langTgl" aria-label="Switch language / Zmień język">EN</button>
@@ -444,11 +483,11 @@ nav .btn-gold{white-space:nowrap}
   </header>
 
   <div class="card">
-    <div class="lbl" style="margin-bottom:12px" data-dp="newStake">Nowy stake</div>
+    <div class="lbl newstake-h" data-dp="newStake">Nowy stake</div>
     <div class="grid">
-      <div class="field"><label data-dp="amountL">Kwota ANL</label><span id="availAnl" class="avail"></span><input id="amount" type="number" min="1" step="1" placeholder="np. 1000000"></div>
-      <div class="field"><label data-dp="poolL">Pula</label><select id="pool"><option value="1" data-dp="poolG">Genesis (okna do 20% APY)</option><option value="0">Flexible (8% APY)</option></select></div>
-      <div class="field"><label data-dp="periodL">Okres (dni, testnet min. 1)</label><input id="days" type="number" min="1" step="1" placeholder="np. 3"></div>
+      <div class="field"><label data-dp="amountL">Kwota ANL</label><span id="availAnl" class="avail"></span><div class="slrow"><input id="amtManual" class="manin" type="text" inputmode="numeric" placeholder="0" oninput="anlAmtManual(this.value)"><span class="unit">ANL</span></div><input id="amtRange" class="slider" type="range" min="0" max="100" value="0" step="1" oninput="anlAmtSlide(this.value)"><input id="amount" type="hidden" value="0"><input id="amtVal" type="hidden"></div>
+      <div class="field"><label data-dp="poolL">&nbsp;</label><div class="pooltiles"><input type="hidden" id="pool" value="1"><button type="button" class="ptile sel" data-pool="1" onclick="anlPickPool(1)" data-pp="gT">Genesis</button><button type="button" class="ptile" data-pool="0" onclick="anlPickPool(0)" data-pp="fT">Flexible</button></div></div>
+      <div class="field"><label data-dp="periodL">&nbsp;</label><div class="slrow"><input id="daysManual" class="manin" type="number" min="1" max="720" step="1" value="3" oninput="anlDaysManual(this.value)"><span class="unit" data-dp="dniW">Dni</span></div><input id="daysRange" class="slider" type="range" min="1" max="720" value="3" step="1" oninput="anlDaysSlide(this.value)"><input id="days" type="hidden" value="3"><input id="daysVal" type="hidden"></div>
     </div>
     <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <button id="btnStake" disabled data-dp="stakeBtn">Zastakuj</button>
@@ -771,7 +810,7 @@ nav .btn-gold{white-space:nowrap}
     <a class="glass soc reveal" href="https://github.com/dawidosX/ANL-Protocol" target="_blank" rel="noopener">
       <span class="bicon gh"><svg viewBox="0 0 24 24" width="20" height="20" fill="#fff"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56 0-.27-.01-1.17-.02-2.12-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.72-1.54-2.55-.29-5.23-1.28-5.23-5.68 0-1.26.45-2.28 1.18-3.09-.12-.29-.51-1.46.11-3.05 0 0 .96-.31 3.15 1.18a10.9 10.9 0 0 1 5.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.59.23 2.76.11 3.05.73.81 1.18 1.83 1.18 3.09 0 4.41-2.69 5.38-5.25 5.67.41.35.77 1.05.77 2.12 0 1.53-.01 2.76-.01 3.14 0 .3.2.67.8.55A11.52 11.52 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg></span><span class="stx">GitHub<small>dawidosX/ANL-Protocol</small></span>
     </a>
-    <a class="glass soc reveal" href="https://anl.analtena.com/whitepaper">
+    <a class="glass soc reveal" href="/whitepaper.html">
       <span class="bicon wp"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#241500" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span><span class="stx">Whitepaper<small>v1.0 · online + PDF</small></span>
     </a>
   </div>
@@ -814,7 +853,7 @@ nav .btn-gold{white-space:nowrap}
     </div>
     <div data-i18n="ftC1"><h5>PROTOKÓŁ</h5><a href="#how">Jak to działa</a><a href="#security">Bezpieczeństwo</a><a href="#flow">Architektura</a></div>
     <div data-i18n="ftC2"><h5>STAKING</h5><a href="#staking">Flexible Pool</a><a href="#staking">Genesis Pool</a><a href="#staking">Kalkulator</a></div>
-    <div data-i18n="ftC3"><h5>ZASOBY</h5><a href="https://anl.analtena.com/whitepaper">Whitepaper</a><a href="#roadmap">Roadmapa</a><a href="#faq">FAQ</a></div>
+    <div data-i18n="ftC3"><h5>ZASOBY</h5><a href="/whitepaper.html">Whitepaper</a><a href="#roadmap">Roadmapa</a><a href="#faq">FAQ</a></div>
   </div>
   <div class="addrs">
     <h5 data-i18n="ftA0">ADRESY KONTRAKTÓW (X1 NETWORK)</h5>
@@ -865,7 +904,7 @@ nav .btn-gold{white-space:nowrap}
     sub:'ANL Staking Protocol lets you stake ANL tokens with a dual reward system: fixed APY paid in <b>ANL</b> plus a share of 100% of the rewards generated by the dedicated <b>XNT</b> validator.',
     cta1:'Start Staking →',cta2:'📄 Read Whitepaper',
     pAudit:'🛡 4 audit rounds — code & history public',
-    demoBar:'TESTNET PHASE — protocol launching on X1 testnet · statistics are read on-chain (LIVE) · <a href="https://anl.analtena.com/whitepaper" style="color:#fff;text-decoration:underline">Whitepaper</a>',
+    demoBar:'TESTNET PHASE — protocol launching on X1 testnet · statistics are read on-chain (LIVE) · <a href="/whitepaper.html" style="color:#fff;text-decoration:underline">Whitepaper</a>',
     sl1:'Total Value Locked <span class="mock">LIVE</span>',sl2:'ANL Locked (pool)',
     sl3:'XNT Distributed <span class="mock">LIVE</span>',sl4:'Active stakes <span class="mock">LIVE</span>',
     sl5:'Genesis APY (window)',sl6:'Validator Stake <span class="mock">LIVE</span>',
@@ -928,14 +967,14 @@ nav .btn-gold{white-space:nowrap}
     ftD:'A secure staking protocol on X1 Network with a dual ANL + XNT reward system.',
     ftC1:'<h5>PROTOCOL</h5><a href="#how">How it works</a><a href="#security">Security</a><a href="#flow">Architecture</a>',
     ftC2:'<h5>STAKING</h5><a href="#staking">Flexible Pool</a><a href="#staking">Genesis Pool</a><a href="#staking">Calculator</a>',
-    ftC3:'<h5>RESOURCES</h5><a href="https://anl.analtena.com/whitepaper">Whitepaper</a><a href="#roadmap">Roadmap</a><a href="#faq">FAQ</a>',
+    ftC3:'<h5>RESOURCES</h5><a href="/whitepaper.html">Whitepaper</a><a href="#roadmap">Roadmap</a><a href="#faq">FAQ</a>',
     ftA0:'CONTRACT ADDRESSES (X1 NETWORK)',
     ftS:'<span class="sol"></span>Built on <a href="https://x1.xyz" target="_blank" rel="noopener" style="color:var(--ink);text-decoration:underline">X1 Network · x1.xyz</a> — fast · secure · scalable',
     ftL:'© 2026 ANL Staking Protocol. Informational material — statistics marked MOCK will be replaced with on-chain data. Not investment advice. APY values refer to rewards denominated in ANL; XNT rewards depend on validator performance and are not guaranteed. Participation involves risk, including loss of funds.'
   };
   var PL = {};
   document.querySelectorAll('[data-i18n]').forEach(function(el){ PL[el.dataset.i18n] = el.innerHTML; });
-  var LANG = 'pl';
+  var LANG = 'en';
   var TITLES = { pl:'ANL Staking Protocol — Stakuj ANL. Zarabiaj ANL + XNT.', en:'ANL Staking Protocol — Stake ANL. Earn ANL + XNT.' };
   function setLang(l){
     LANG = l;
@@ -954,7 +993,7 @@ nav .btn-gold{white-space:nowrap}
   // Linki do whitepapera podazaja za jezykiem strony (PL -> /whitepaper, EN -> /whitepaper-en)
   (function(){
     function syncWP(l){
-      document.querySelectorAll('a[href="https://anl.analtena.com/whitepaper"],a[href="/whitepaper-en"]').forEach(function(a){
+      document.querySelectorAll('a[href="/whitepaper.html"],a[href="/ANL_White_Paper_EN.pdf" target="_blank" rel="noopener"]').forEach(function(a){
         a.setAttribute('href', l === 'en' ? 'https://anl.analtena.com/whitepaper-en' : '/whitepaper');
       });
     }
@@ -976,7 +1015,7 @@ nav .btn-gold{white-space:nowrap}
     var forced = new URLSearchParams(location.search).get('lang');
     var pref = (forced === 'pl' || forced === 'en') ? forced : null;
     // 2) wczesniejszy, zapamietany wybor uzytkownika
-    if (!pref) { try { var s = localStorage.getItem('anlLang'); if (s === 'pl' || s === 'en') pref = s; } catch(e){} }
+    if (!pref && USE_BROWSER_LANG) { try { var s = localStorage.getItem('anlLang'); if (s === 'pl' || s === 'en') pref = s; } catch(e){} }
     // 3) polityka domyslna
     if (!pref) {
       if (USE_BROWSER_LANG) {
@@ -1298,8 +1337,10 @@ async function refresh(){
   }catch(e){}
   try{
     const b = await conn.getTokenAccountBalance(ownerAta(pubkey));
-    $("availAnl").textContent = T("avail")+fmt(Math.floor(b.value.uiAmount))+" ANL";
-  }catch(e){ $("availAnl").textContent = T("avail")+"0 ANL"; }
+    window.__availAnl = Math.floor(b.value.uiAmount);
+    $("availAnl").textContent = T("avail")+fmt(window.__availAnl)+" ANL";
+    try{ anlAmtSlide(document.getElementById("amtRange").value); }catch(e){}
+  }catch(e){ window.__availAnl=0; $("availAnl").textContent = T("avail")+"0 ANL"; }
   await loadPositions();
 }
 
@@ -1356,14 +1397,14 @@ async function loadPositions(){
     const p = decodePosition(info.data);
     const now = Date.now()/1000;
     const endD = new Date(p.end*1000).toLocaleString("pl-PL",{dateStyle:"short",timeStyle:"short"});
-    const startD = new Date(p.start*1000).toLocaleString("pl-PL",{dateStyle:"short",timeStyle:"short"});
+    const startD = new Date(p.start*1000).toLocaleDateString("pl-PL",{dateStyle:"short"});
     let st;
     if(p.status===1) st = '<span class="mut">'+T("closed")+'</span>';
     else if(now >= p.end) st = '<span class="mature">'+T("matured")+'</span>';
     else { const h = Math.ceil((p.end-now)/3600); st = '<span class="hl">'+T("active")+(h>48? Math.ceil(h/24)+' '+T("days") : h+' h')+'</span>'
       + (p.pool===0
          ? '<button class="unbtn" onclick="anlUnstake('+i+','+p.pool+')">'+T("unstakeBtn")+'</button>'
-         : '<span class="lockg" title="'+T("lockedGT")+'">🔒 '+T("lockedG")+'</span>'); }
+         : '<span class="lockg" title="'+T("lockedGT")+'">🔒</span>'); }
     let xntCell;
     if(p.status===1) xntCell = '<span class="mut">—</span>';
     else if(p.settled) xntCell = fmtXnt(p.xntAccrued)+' XNT';
@@ -1419,6 +1460,39 @@ async function unstakeEarly(i, poolType){
   }
 }
 window.anlUnstake = unstakeEarly;
+
+function anlPickPool(v){
+  var h=document.getElementById("pool"); if(h) h.value=String(v);
+  document.querySelectorAll(".dappscope .ptile").forEach(function(b){ b.classList.toggle("sel", b.dataset.pool===String(v)); });
+}
+window.anlPickPool = anlPickPool;
+function anlAmtPct(p){ var av=window.__availAnl||0; var el=document.getElementById("amount"); if(el){ el.value=Math.floor(av*p/100); } }
+function anlSetDays(d){ var el=document.getElementById("days"); if(el) el.value=d; }
+function fmtN(n){return Number(n).toLocaleString(DPL==="en"?"en-US":"pl-PL");}
+function paintSlider(el){var p=(el.value-el.min)/(el.max-el.min)*100;el.style.background="linear-gradient(90deg,var(--amber) "+p+"%,var(--line) "+p+"%)";}
+function anlAmtSlide(v){var av=window.__availAnl||0;var amt=Math.floor(av*v/100);
+  var h=document.getElementById("amount");if(h)h.value=amt;
+  var m=document.getElementById("amtManual");if(m&&document.activeElement!==m)m.value=amt?grp(amt):"";
+  paintSlider(document.getElementById("amtRange"));}
+function grp(n){return Number(n).toLocaleString("pl-PL");}
+function anlAmtManual(v){var av=window.__availAnl||1;var raw=String(v).replace(/[^0-9]/g,"");var amt=Math.max(0,Math.min(Number(raw)||0,av));
+  var h=document.getElementById("amount");if(h)h.value=amt;
+  var m=document.getElementById("amtManual");if(m){var pos=m.selectionStart,old=m.value;m.value=amt?grp(amt):"";}
+  var r=document.getElementById("amtRange");if(r){r.value=av>0?Math.round(amt/av*100):0;paintSlider(r);}}
+function anlDaysSlide(v){var h=document.getElementById("days");if(h)h.value=v;
+  var m=document.getElementById("daysManual");if(m&&document.activeElement!==m)m.value=v;
+  paintSlider(document.getElementById("daysRange"));}
+function anlDaysManual(v){var d=Math.max(1,Math.min(Number(v)||1,720));
+  var h=document.getElementById("days");if(h)h.value=d;
+  var r=document.getElementById("daysRange");if(r){r.value=d;paintSlider(r);}}
+window.anlAmtSlide=anlAmtSlide; window.anlDaysSlide=anlDaysSlide;
+window.anlAmtManual=anlAmtManual; window.anlDaysManual=anlDaysManual;
+window.anlAmtPct=anlAmtPct; window.anlSetDays=anlSetDays;
+var POOLTXT={pl:{gT:"Genesis",gS:"do 20% APY · blokada na okres",fT:"Flexible",fS:"8% APY · można zerwać"},
+             en:{gT:"Genesis",gS:"up to 20% APY · locked for the period",fT:"Flexible",fS:"8% APY · early exit allowed"}};
+function anlPoolLang(l){ var D=POOLTXT[l==="en"?"en":"pl"];
+  document.querySelectorAll(".dappscope [data-pp]").forEach(function(el){ var v=D[el.dataset.pp]; if(v!==undefined) el.textContent=v; }); }
+window.anlPoolLang = anlPoolLang;
 
 async function stake(){
   const amount = BigInt($("amount").value||"0");
@@ -1493,7 +1567,7 @@ document.querySelectorAll('.dpcp').forEach(b=>{
 });
 
 
-const DPD = {connect:{pl:'Połącz portfel',en:'Connect wallet'},connectedBtn:{pl:'Połączono',en:'Connected'},wallet:{pl:'Portfel',en:'Wallet'},balAnlL:{pl:'Saldo ANL',en:'ANL balance'},balXntL:{pl:'Saldo XNT <small>(gas)</small>',en:'XNT balance <small>(gas)</small>'},newStake:{pl:'Nowy stake',en:'New stake'},amountL:{pl:'Kwota ANL',en:'ANL amount'},poolL:{pl:'Pula',en:'Pool'},poolG:{pl:'Genesis (do 20% APY · blokada na okres)',en:'Genesis (up to 20% APY · locked for the period)'},periodL:{pl:'Okres (dni, testnet min. 1)',en:'Period (days, testnet min. 1)'},stakeBtn:{pl:'Zastakuj',en:'Stake'},apyNote:{pl:'APY przypisuje kontrakt w chwili otwarcia — pozycja pokaże je niżej.',en:'APY is assigned by the contract at opening — your position shows it below.'},yourPos:{pl:'Twoje pozycje',en:'Your positions'},refresh:{pl:'Odśwież',en:'Refresh'},thead:{pl:'<tr><th>#</th><th>Pula</th><th>Kwota</th><th>APY</th><th>Okres</th><th>Start</th><th>Koniec</th><th>Nagroda ANL</th><th>XNT naliczone</th><th>Status</th></tr>',en:'<tr><th>#</th><th>Pool</th><th>Amount</th><th>APY</th><th>Period</th><th>Start</th><th>Ends</th><th>ANL reward</th><th>XNT accrued</th><th>Status</th></tr>'},connectFirst:{pl:'Połącz portfel, aby zobaczyć pozycje.',en:'Connect a wallet to see your positions.'},chooseWallet:{pl:'Wybierz portfel',en:'Choose a wallet'},cancel:{pl:'Anuluj',en:'Cancel'},addrTitle:{pl:'Adresy kontraktów (testnet)',en:'Contract addresses (testnet)'},addrHint:{pl:'Kliknij ⧉, aby skopiować i zweryfikować w explorerze.',en:'Click ⧉ to copy and verify in the explorer.'}};
+const DPD = {connect:{pl:'Połącz portfel',en:'Connect wallet'},connectedBtn:{pl:'Połączono',en:'Connected'},wallet:{pl:'Portfel',en:'Wallet'},balAnlL:{pl:'Saldo ANL',en:'ANL balance'},balXntL:{pl:'Saldo XNT <small>(gas)</small>',en:'XNT balance <small>(gas)</small>'},newStake:{pl:'Nowy stake',en:'New stake'},amountL:{pl:'Kwota ANL',en:'ANL amount'},poolL:{pl:'',en:''},dniW:{pl:'Dni',en:'Days'},poolG:{pl:'Genesis (do 20% APY · blokada na okres)',en:'Genesis (up to 20% APY · locked for the period)'},periodL:{pl:'',en:''},stakeBtn:{pl:'Zastakuj',en:'Stake'},apyNote:{pl:'APY przypisuje kontrakt w chwili otwarcia — pozycja pokaże je niżej.',en:'APY is assigned by the contract at opening — your position shows it below.'},yourPos:{pl:'Twoje pozycje',en:'Your positions'},refresh:{pl:'Odśwież',en:'Refresh'},thead:{pl:'<tr><th>#</th><th>Pula</th><th>Kwota</th><th>APY</th><th>Okres</th><th>Start</th><th>Koniec</th><th>Nagroda ANL</th><th>XNT naliczone</th><th>Status</th></tr>',en:'<tr><th>#</th><th>Pool</th><th>Amount</th><th>APY</th><th>Period</th><th>Start</th><th>Ends</th><th>ANL reward</th><th>XNT accrued</th><th>Status</th></tr>'},connectFirst:{pl:'Połącz portfel, aby zobaczyć pozycje.',en:'Connect a wallet to see your positions.'},chooseWallet:{pl:'Wybierz portfel',en:'Choose a wallet'},cancel:{pl:'Anuluj',en:'Cancel'},addrTitle:{pl:'Adresy kontraktów (testnet)',en:'Contract addresses (testnet)'},addrHint:{pl:'Kliknij ⧉, aby skopiować i zweryfikować w explorerze.',en:'Click ⧉ to copy and verify in the explorer.'}};
 const DPT = {
  pl:{noWallet:"Nie wykryto portfela. Zainstaluj Phantom, Backpack lub X1 Wallet i odśwież stronę.",
      rejected:"Odmowa połączenia: ", connected:"Połączono: ",
@@ -1532,8 +1606,9 @@ function dpApply(){
 }
 { const prev = window.anlLiveSetLang;
   window.anlLiveSetLang = function(l){ if(prev) prev(l);
-    DPL = (l==="en")?"en":"pl"; dpApply(); if(pubkey) loadPositions(); }; }
+    DPL = (l==="en")?"en":"pl"; dpApply(); anlPoolLang(DPL); if(pubkey) loadPositions(); }; }
 dpApply();
+try{ anlPoolLang((document.documentElement.lang==="en")?"en":"pl"); }catch(e){}
 
 
 (async function(){
