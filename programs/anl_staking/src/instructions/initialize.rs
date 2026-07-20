@@ -1,4 +1,11 @@
-//! initialize — TC-001…TC-006. Tworzy GlobalConfig, VaultAuthority i trzy skarbce.
+//! initialize + init_vaults — TC-001…TC-006.
+//! ROZBICIE (fix stack-overflow SBF): `initialize` tworzy tylko GlobalConfig i
+//! waliduje minty; `init_vaults` tworzy trzy skarbce osobno. Każda instrukcja
+//! ma małą ramkę stosu (pojedyncze `init` zamiast trzech naraz). Logika i
+//! inwarianty bez zmian — jedynie podział na dwa etapy jednej operacji setup.
+//! Zabezpieczenie stanu pośredniego: init_vaults wymaga `has_one = authority`
+//! z już istniejącego GlobalConfig — obcy nie podłoży własnych vaultów (front-run
+//! niemożliwy; PDA i tak wykluczają duplikaty).
 //! D-14: ANL = Token-2022, XNT = legacy SPL Token (dwa programy tokenowe).
 //! D-11: `start_paused` — controlled rollout; `genesis_start_ts` = planowany go-live.
 
@@ -15,6 +22,10 @@ use crate::constants::*;
 use crate::errors::AnlError;
 use crate::state::*;
 
+// ============================================================================
+// ETAP 1: initialize — GlobalConfig + walidacja mintów (bez tworzenia vaultów)
+// ============================================================================
+
 #[derive(Accounts)]
 pub struct Initialize<'info> {
     #[account(mut)]
@@ -27,52 +38,19 @@ pub struct Initialize<'info> {
         seeds = [GLOBAL_CONFIG_SEED],
         bump
     )]
-    pub global_config: Account<'info, GlobalConfig>,
+    pub global_config: Box<Account<'info, GlobalConfig>>,
 
-    /// CHECK: PDA-authority wszystkich skarbców; bez danych, walidacja seeds+bump (TC-145).
+    /// CHECK: PDA-authority wszystkich skarbców; walidacja seeds+bump (TC-145).
     #[account(seeds = [VAULT_AUTHORITY_SEED], bump)]
     pub vault_authority: UncheckedAccount<'info>,
 
     /// ANL musi należeć do Token-2022 (TC-004, D-14).
     #[account(mint::token_program = anl_token_program)]
-    pub anl_mint: InterfaceAccount<'info, Mint>,
+    pub anl_mint: Box<InterfaceAccount<'info, Mint>>,
 
     /// XNT (wrapped native X1) musi należeć do legacy SPL Token (TC-005, D-14).
     #[account(mint::token_program = xnt_token_program)]
-    pub xnt_mint: InterfaceAccount<'info, Mint>,
-
-    #[account(
-        init,
-        payer = authority,
-        seeds = [PRINCIPAL_VAULT_SEED],
-        bump,
-        token::mint = anl_mint,
-        token::authority = vault_authority,
-        token::token_program = anl_token_program
-    )]
-    pub principal_vault: InterfaceAccount<'info, TokenAccount>,
-
-    #[account(
-        init,
-        payer = authority,
-        seeds = [REWARD_VAULT_SEED],
-        bump,
-        token::mint = anl_mint,
-        token::authority = vault_authority,
-        token::token_program = anl_token_program
-    )]
-    pub reward_vault: InterfaceAccount<'info, TokenAccount>,
-
-    #[account(
-        init,
-        payer = authority,
-        seeds = [XNT_VAULT_SEED],
-        bump,
-        token::mint = xnt_mint,
-        token::authority = vault_authority,
-        token::token_program = xnt_token_program
-    )]
-    pub xnt_vault: InterfaceAccount<'info, TokenAccount>,
+    pub xnt_mint: Box<InterfaceAccount<'info, Mint>>,
 
     pub anl_token_program: Program<'info, Token2022>,
     pub xnt_token_program: Program<'info, Token>,
@@ -86,8 +64,7 @@ pub fn initialize_handler(
 ) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
 
-    // Twarda kotwica minta XNT (wrapped native). W buildzie testowym
-    // wyłączona — testy używają mintów lokalnych; osobny Program ID.
+    // Twarda kotwica minta XNT (wrapped native). W buildzie testowym wyłączona.
     #[cfg(not(feature = "test-periods"))]
     require_keys_eq!(
         ctx.accounts.xnt_mint.key(),
@@ -96,9 +73,6 @@ pub fn initialize_handler(
     );
 
     // ---- Audyt pkt 4: allowlista rozszerzeń Token-2022 minta ANL ----
-    // Odrzucamy wszystko, co daje administracyjną ścieżkę do tokenów w vaultach
-    // (PermanentDelegate) lub wpina nieaudytowany kod w transfery (TransferHook),
-    // lub zmienia semantykę wypłat. Dozwolone wyłącznie rozszerzenia pasywne.
     {
         let ai = ctx.accounts.anl_mint.to_account_info();
         let data = ai.try_borrow_data()?;
@@ -108,7 +82,6 @@ pub fn initialize_handler(
             state.base.freeze_authority.is_none(),
             AnlError::MintHasFreezeAuthority
         );
-        // Fixed supply: mint authority musi być odwołane (audyt #2)
         require!(
             state.base.mint_authority.is_none(),
             AnlError::MintHasMintAuthority
@@ -118,16 +91,12 @@ pub fn initialize_handler(
             .map_err(|_| error!(AnlError::InvalidMint))?
         {
             match ext {
-                // pasywne metadane — bez wpływu na transfery i salda
                 ExtensionType::MetadataPointer | ExtensionType::TokenMetadata => {}
-                // wszystko inne (PermanentDelegate, TransferHook, TransferFeeConfig,
-                // DefaultAccountState, NonTransferable, przyszłe) — odrzucone
                 _ => return err!(AnlError::ForbiddenMintExtension),
             }
         }
     }
 
-    // Go-live nie może być w przeszłości: pauza nie zjada okna 20% (sekcja 7).
     require!(genesis_start_ts >= now, AnlError::GenesisStartInPast);
 
     #[cfg(feature = "test-periods")]
@@ -154,6 +123,133 @@ pub fn initialize_handler(
         paused: start_paused,
         timestamp: now,
     });
+    Ok(())
+}
+
+// ============================================================================
+// ETAP 2: trzy osobne instrukcje, każda tworzy JEDEN vault (mała ramka stosu).
+// Rozdzielone, bo trzy `init` Token-2022/SPL w jednej instrukcji przepełniają
+// stos SBF. Każda wymaga istniejącego GlobalConfig + tej samej authority.
+// ============================================================================
+
+/// Wspólne konta bazowe dla init pojedynczego vaulta ANL (principal/reward).
+#[derive(Accounts)]
+pub struct InitPrincipalVault<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        seeds = [GLOBAL_CONFIG_SEED],
+        bump = global_config.bump,
+        has_one = authority @ AnlError::InvalidAuthority,
+        constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion,
+    )]
+    pub global_config: Box<Account<'info, GlobalConfig>>,
+
+    /// CHECK: PDA-authority skarbców (seeds + bump z configu).
+    #[account(seeds = [VAULT_AUTHORITY_SEED], bump = global_config.vault_authority_bump)]
+    pub vault_authority: UncheckedAccount<'info>,
+
+    #[account(address = global_config.anl_mint @ AnlError::InvalidMint)]
+    pub anl_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        init,
+        payer = authority,
+        seeds = [PRINCIPAL_VAULT_SEED],
+        bump,
+        token::mint = anl_mint,
+        token::authority = vault_authority,
+        token::token_program = anl_token_program
+    )]
+    pub principal_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    pub anl_token_program: Program<'info, Token2022>,
+    pub system_program: Program<'info, System>,
+}
+
+pub fn init_principal_vault_handler(ctx: Context<InitPrincipalVault>) -> Result<()> {
+    msg!("principal_vault: {}", ctx.accounts.principal_vault.key());
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct InitRewardVault<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        seeds = [GLOBAL_CONFIG_SEED],
+        bump = global_config.bump,
+        has_one = authority @ AnlError::InvalidAuthority,
+        constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion,
+    )]
+    pub global_config: Box<Account<'info, GlobalConfig>>,
+
+    /// CHECK: PDA-authority skarbców.
+    #[account(seeds = [VAULT_AUTHORITY_SEED], bump = global_config.vault_authority_bump)]
+    pub vault_authority: UncheckedAccount<'info>,
+
+    #[account(address = global_config.anl_mint @ AnlError::InvalidMint)]
+    pub anl_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        init,
+        payer = authority,
+        seeds = [REWARD_VAULT_SEED],
+        bump,
+        token::mint = anl_mint,
+        token::authority = vault_authority,
+        token::token_program = anl_token_program
+    )]
+    pub reward_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    pub anl_token_program: Program<'info, Token2022>,
+    pub system_program: Program<'info, System>,
+}
+
+pub fn init_reward_vault_handler(ctx: Context<InitRewardVault>) -> Result<()> {
+    msg!("reward_vault: {}", ctx.accounts.reward_vault.key());
+    Ok(())
+}
+
+#[derive(Accounts)]
+pub struct InitXntVault<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(
+        seeds = [GLOBAL_CONFIG_SEED],
+        bump = global_config.bump,
+        has_one = authority @ AnlError::InvalidAuthority,
+        constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion,
+    )]
+    pub global_config: Box<Account<'info, GlobalConfig>>,
+
+    /// CHECK: PDA-authority skarbców.
+    #[account(seeds = [VAULT_AUTHORITY_SEED], bump = global_config.vault_authority_bump)]
+    pub vault_authority: UncheckedAccount<'info>,
+
+    #[account(address = global_config.xnt_mint @ AnlError::InvalidMint)]
+    pub xnt_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        init,
+        payer = authority,
+        seeds = [XNT_VAULT_SEED],
+        bump,
+        token::mint = xnt_mint,
+        token::authority = vault_authority,
+        token::token_program = xnt_token_program
+    )]
+    pub xnt_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    pub xnt_token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+pub fn init_xnt_vault_handler(ctx: Context<InitXntVault>) -> Result<()> {
+    msg!("xnt_vault: {}", ctx.accounts.xnt_vault.key());
     Ok(())
 }
 

@@ -1,5 +1,10 @@
 //! Testy integracyjne pełnego cyklu (WP v1.0) — solana-program-test.
 //!
+//! Po audycie #5 setup jest 4-etapowy (fix stack-overflow SBF):
+//! `initialize` (sam GlobalConfig) → `init_principal_vault` →
+//! `init_reward_vault` → `init_xnt_vault` → `create_pool`×2.
+//! Test TS-AUD5 pokrywa stan pośredni (GlobalConfig bez skarbców).
+//!
 //! Program wykonuje się in-process (processor!) z prawdziwymi CPI do
 //! Token-2022 (ANL) i SPL Token (XNT). Zegar kontrolowany przez sysvar Clock.
 //! Scenariusze TS-xx mapują rozdziały White Papera; stałe czasowe brane z
@@ -61,7 +66,19 @@ struct Env {
 }
 
 impl Env {
+    /// Pełny setup 4-etapowy — stan „gotowy do stakingu" (jak w produkcji).
     async fn new() -> Self {
+        let mut env = Self::new_pre_init().await;
+        let ix = env.ix_initialize();
+        env.send(&[ix], &[]).await.unwrap();
+        env.init_all_vaults().await;
+        env.create_pools().await;
+        env
+    }
+
+    /// Środowisko TUŻ PRZED `initialize`: minty gotowe, podaż ANL wybita,
+    /// mint authority odwołane. Testy stanu pośredniego startują stąd.
+    async fn new_pre_init() -> Self {
         let program_id = anl_staking::id();
         let mut pt = ProgramTest::new("anl_staking", program_id, processor!(anchor_entry));
         pt.add_program(
@@ -174,51 +191,131 @@ impl Env {
             env.send(&[ix], &[]).await.unwrap();
         }
 
-        // initialize + dwie pule
-        let ix = Instruction {
-            program_id,
+        env
+    }
+
+    // ------------- setup 4-etapowy (po audycie #5, A-01) -------------
+
+    fn ix_initialize(&self) -> Instruction {
+        Instruction {
+            program_id: self.program_id,
             accounts: anl_staking::accounts::Initialize {
-                authority: env.authority.pubkey(),
-                global_config: env.global_config,
-                vault_authority: env.vault_authority,
-                anl_mint: env.anl_mint.pubkey(),
-                xnt_mint: env.xnt_mint,
-                principal_vault: env.principal_vault,
-                reward_vault: env.reward_vault,
-                xnt_vault: env.xnt_vault,
+                authority: self.authority.pubkey(),
+                global_config: self.global_config,
+                vault_authority: self.vault_authority,
+                anl_mint: self.anl_mint.pubkey(),
+                xnt_mint: self.xnt_mint,
                 anl_token_program: spl_token_2022::id(),
                 xnt_token_program: spl_token::id(),
                 system_program: solana_sdk::system_program::id(),
             }
             .to_account_metas(None),
             data: anl_staking::instruction::Initialize {
-                genesis_start_ts: env.genesis_start_ts,
+                genesis_start_ts: self.genesis_start_ts,
                 start_paused: false,
             }
             .data(),
-        };
-        env.send(&[ix], &[]).await.unwrap();
+        }
+    }
 
+    /// `authority_key` jawnie parametrem — testy stanu pośredniego wołają
+    /// tę instrukcję także jako NIE-authority (oczekując odrzucenia has_one).
+    fn ix_init_principal_vault(&self, authority_key: Pubkey) -> Instruction {
+        Instruction {
+            program_id: self.program_id,
+            accounts: anl_staking::accounts::InitPrincipalVault {
+                authority: authority_key,
+                global_config: self.global_config,
+                vault_authority: self.vault_authority,
+                anl_mint: self.anl_mint.pubkey(),
+                principal_vault: self.principal_vault,
+                anl_token_program: spl_token_2022::id(),
+                system_program: solana_sdk::system_program::id(),
+            }
+            .to_account_metas(None),
+            data: anl_staking::instruction::InitPrincipalVault {}.data(),
+        }
+    }
+
+    fn ix_init_reward_vault(&self, authority_key: Pubkey) -> Instruction {
+        Instruction {
+            program_id: self.program_id,
+            accounts: anl_staking::accounts::InitRewardVault {
+                authority: authority_key,
+                global_config: self.global_config,
+                vault_authority: self.vault_authority,
+                anl_mint: self.anl_mint.pubkey(),
+                reward_vault: self.reward_vault,
+                anl_token_program: spl_token_2022::id(),
+                system_program: solana_sdk::system_program::id(),
+            }
+            .to_account_metas(None),
+            data: anl_staking::instruction::InitRewardVault {}.data(),
+        }
+    }
+
+    fn ix_init_xnt_vault(&self, authority_key: Pubkey) -> Instruction {
+        Instruction {
+            program_id: self.program_id,
+            accounts: anl_staking::accounts::InitXntVault {
+                authority: authority_key,
+                global_config: self.global_config,
+                vault_authority: self.vault_authority,
+                xnt_mint: self.xnt_mint,
+                xnt_vault: self.xnt_vault,
+                xnt_token_program: spl_token::id(),
+                system_program: solana_sdk::system_program::id(),
+            }
+            .to_account_metas(None),
+            data: anl_staking::instruction::InitXntVault {}.data(),
+        }
+    }
+
+    /// Trzy skarbce w jednej transakcji (limit ramki stosu liczy się
+    /// per instrukcję, nie per transakcję — to weryfikuje fix audytu #5).
+    async fn init_all_vaults(&mut self) {
+        let ixs = [
+            self.ix_init_principal_vault(self.authority.pubkey()),
+            self.ix_init_reward_vault(self.authority.pubkey()),
+            self.ix_init_xnt_vault(self.authority.pubkey()),
+        ];
+        self.send(&ixs, &[]).await.unwrap();
+    }
+
+    async fn create_pools(&mut self) {
         for pool_type in [PoolType::Genesis, PoolType::Flexible] {
             let pool = if pool_type == PoolType::Genesis {
-                env.genesis_pool
+                self.genesis_pool
             } else {
-                env.flexible_pool
+                self.flexible_pool
             };
             let ix = Instruction {
-                program_id,
+                program_id: self.program_id,
                 accounts: anl_staking::accounts::CreatePool {
-                    authority: env.authority.pubkey(),
-                    global_config: env.global_config,
+                    authority: self.authority.pubkey(),
+                    global_config: self.global_config,
                     pool_config: pool,
                     system_program: solana_sdk::system_program::id(),
                 }
                 .to_account_metas(None),
                 data: anl_staking::instruction::CreatePool { pool_type }.data(),
             };
-            env.send(&[ix], &[]).await.unwrap();
+            self.send(&[ix], &[]).await.unwrap();
         }
-        env
+    }
+
+    /// Transakcja z DOWOLNYM płatnikiem (testy odrzucenia nie-authority).
+    async fn send_as(
+        &mut self,
+        payer: &Keypair,
+        ixs: &[Instruction],
+        extra: &[&Keypair],
+    ) -> Result<(), BanksClientError> {
+        let bh = self.ctx.banks_client.get_latest_blockhash().await.unwrap();
+        let mut signers: Vec<&Keypair> = vec![payer];
+        signers.extend_from_slice(extra);
+        let tx = Transaction::new_signed_with_payer(ixs, Some(&payer.pubkey()), &signers, bh);
+        self.ctx.banks_client.process_transaction(tx).await
     }
 
     /// Transakcja podpisana przez authority + dodatkowych signerów.
@@ -1120,4 +1217,57 @@ async fn ts_audit_funding_after_end_epoch_not_counted() {
     // inwariant wypłacalności: wypłaty + saldo vaulta == suma fundingów
     let vault = env.token_balance(env.xnt_vault).await;
     assert_eq!(vault, 2_000_000 - 350_000, "reszta pozostaje w skarbcu");
+}
+
+/// TS-AUD5 (audyt #5, A-01/A-05): stan pośredni 4-etapowego setupu.
+/// (a) po samym `initialize` stake musi upaść — skarbce nie istnieją;
+/// (b) nie-authority nie utworzy skarbca (has_one → InvalidAuthority);
+/// (c) powtórny `initialize` odrzucony (GlobalConfig już istnieje);
+/// (d) po dokończeniu setupu powtórna inicjalizacja skarbca odrzucona;
+/// (e) stan pośredni jest naprawialny: dokończony setup ⇒ stake przechodzi.
+#[tokio::test]
+async fn ts_split_init_intermediate_state_guards() {
+    let mut env = Env::new_pre_init().await;
+
+    // etap 1: sama konfiguracja (bez skarbców)
+    let ix = env.ix_initialize();
+    env.send(&[ix], &[]).await.unwrap();
+
+    // pule nie zależą od skarbców — wolno je utworzyć w oknie pośrednim
+    env.create_pools().await;
+
+    // (a) okno pośrednie: stake odrzucony (principal_vault nie istnieje)
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+    let (user, user_anl, _user_xnt) = env.user_with_anl(5_000 * ONE_ANL).await;
+    let r = env
+        .stake(&user, user_anl, PoolType::Genesis, 1_000 * ONE_ANL, days, 0)
+        .await;
+    assert!(r.is_err(), "stake w oknie pośrednim musi zostać odrzucony");
+
+    // (b) obcy podpisujący nie utworzy skarbca (front-run niemożliwy)
+    let attacker = Keypair::new();
+    airdrop(&mut env.ctx, &attacker.pubkey(), 10_000_000_000).await;
+    let ix = env.ix_init_principal_vault(attacker.pubkey());
+    let r = env.send_as(&attacker, &[ix], &[]).await;
+    assert!(r.is_err(), "nie-authority nie może utworzyć skarbca");
+
+    // (c) powtórny initialize — GlobalConfig już istnieje (init, nie init_if_needed)
+    let ix = env.ix_initialize();
+    let r = env.send(&[ix], &[]).await;
+    assert!(r.is_err(), "powtórny initialize musi zostać odrzucony");
+
+    // (d) authority kończy setup; powtórny init skarbca odrzucony (PDA zajęte)
+    env.init_all_vaults().await;
+    let ix = env.ix_init_principal_vault(env.authority.pubkey());
+    let r = env.send(&[ix], &[]).await;
+    assert!(
+        r.is_err(),
+        "powtórna inicjalizacja skarbca musi zostać odrzucona"
+    );
+
+    // (e) stan naprawiony: funding i stake przechodzą normalnie
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    env.stake(&user, user_anl, PoolType::Genesis, 1_000 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
 }

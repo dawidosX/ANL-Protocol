@@ -21,7 +21,7 @@ pub struct Stake<'info> {
 
     #[account(mut, seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
         constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
-    pub global_config: Account<'info, GlobalConfig>,
+    pub global_config: Box<Account<'info, GlobalConfig>>,
 
     #[account(
         mut,
@@ -29,14 +29,14 @@ pub struct Stake<'info> {
         bump = pool_config.bump,
         constraint = pool_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
     )]
-    pub pool_config: Account<'info, PoolConfig>,
+    pub pool_config: Box<Account<'info, PoolConfig>>,
 
     /// CHECK: PDA-authority skarbcow (seeds + bump) - do constraints vaultow.
     #[account(seeds = [VAULT_AUTHORITY_SEED], bump = global_config.vault_authority_bump)]
     pub vault_authority: UncheckedAccount<'info>,
 
     #[account(address = global_config.anl_mint @ AnlError::InvalidMint)]
-    pub anl_mint: InterfaceAccount<'info, Mint>,
+    pub anl_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(
         mut,
@@ -44,18 +44,18 @@ pub struct Stake<'info> {
         token::authority = owner,
         token::token_program = anl_token_program
     )]
-    pub owner_anl: InterfaceAccount<'info, TokenAccount>,
+    pub owner_anl: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut, seeds = [PRINCIPAL_VAULT_SEED], bump,
         token::mint = anl_mint, token::authority = vault_authority,
         token::token_program = anl_token_program)]
-    pub principal_vault: InterfaceAccount<'info, TokenAccount>,
+    pub principal_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// Pokrycie nagrody sprawdzane względem salda tego skarbca (WP §11).
     #[account(seeds = [REWARD_VAULT_SEED], bump,
         token::mint = anl_mint, token::authority = vault_authority,
         token::token_program = anl_token_program)]
-    pub reward_vault: InterfaceAccount<'info, TokenAccount>,
+    pub reward_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(
         init_if_needed,
@@ -64,7 +64,7 @@ pub struct Stake<'info> {
         seeds = [USER_PROFILE_SEED, owner.key().as_ref()],
         bump
     )]
-    pub user_profile: Account<'info, UserProfile>,
+    pub user_profile: Box<Account<'info, UserProfile>>,
 
     #[account(
         init,
@@ -77,7 +77,7 @@ pub struct Stake<'info> {
         ],
         bump
     )]
-    pub user_position: Account<'info, UserPosition>,
+    pub user_position: Box<Account<'info, UserPosition>>,
 
     pub anl_token_program: Program<'info, Token2022>,
     pub system_program: Program<'info, System>,

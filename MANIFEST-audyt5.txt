@@ -1,0 +1,74 @@
+=================================================================
+PACZKA DO AUDYTU #5 — ANL Staking Protocol
+Stan repo: 2026-07-20, working tree (zmiany NIEZACOMMITOWANE)
+=================================================================
+
+## CO TO ZA PACZKA
+Kod po naprawie stack-overflow SBF w instrukcji initialize.
+Zmiany są w working tree (git status: 7 plików M), NIE w commicie.
+Audytowi podlega DOKŁADNIE ten zmieniony kod, nie ostatni commit.
+
+## ZMIANY OD RUNDY #4 (7 plików)
+1. lib.rs
+   - declare_id! testnet: HSCKEu6Q... -> 6jiCaw... (reset pod tokenomię 1B)
+   - rejestracja 3 nowych instrukcji: init_principal_vault, init_reward_vault, init_xnt_vault
+2. initialize.rs  [NAJWAŻNIEJSZE — zmiana strukturalna audytowanej instrukcji]
+   - Initialize rozbite na 4 instrukcje:
+     * initialize        -> tworzy TYLKO GlobalConfig + waliduje minty
+     * init_principal_vault -> tworzy principal vault (osobno)
+     * init_reward_vault    -> tworzy reward vault (osobno)
+     * init_xnt_vault       -> tworzy xnt vault (osobno)
+   - powód: Initialize::try_accounts przepełniał stos SBF (6720-7232B > limit 4096),
+     program kompilował się ale initialize był NIEWYKONYWALNY na łańcuchu
+     (Access violation in stack frame przy 3x init token account w jednej instrukcji)
+   - każda init_*_vault ma has_one=authority (guard stanu pośredniego)
+   - boxowanie kont (Box<Account>, Box<InterfaceAccount>)
+3. stake.rs, lifecycle.rs, fund.rs
+   - boxowanie kont (zmiana pamięciowa stos->sterta, logika bez zmian)
+4. Cargo.toml
+   - anchor-lang/anchor-spl: 0.29.0 -> 0.30.1
+5. Cargo.lock — konsekwencja
+
+## ZNANE ROZJAZDY DO NAPRAWY (nie przeoczenia — świadome, do poprawy przy commicie)
+- Anchor.toml linia ~13: nadal stary Program ID HSCKEu6Q... (kod ma już 6jiCaw...)
+- docs/SECURITY-AUDITS(.pl).md: opisują stary Program ID HSCKEu6Q... (6 miejsc)
+  -> testnetowy Program ID jest EFEMERYCZNY (2 resety w dniu 2026-07-20);
+     rozważana decyzja: trzymać adresy testnet POZA repo
+
+## LOKALIZACJA TESTÓW (uwaga: NIE w tests/ w korzeniu!)
+- programs/anl_staking/tests/integration.rs  <- testy integracyjne TU
+- core/tests/properties.rs                    <- property-based
+- crates/anl-math/tests/properties.rs         <- property-based (matematyka nagród)
+USTALONE (grep): integration.rs NIE pokrywa nowej struktury.
+  - grep init_*_vault w integration.rs = 0 (żadna z 3 nowych instrukcji nie testowana)
+  - grep initialize = 7 (woła STARĄ jednoetapową formę z 3 vaultami w jednej instrukcji)
+  KONSEKWENCJE:
+  * testy integracyjne są NIESPÓJNE z nowym kodem (wołają initialize ze starą listą
+    kont zawierającą vaulty — nowa struktura ich tam nie ma)
+  * prawdopodobnie NIE KOMPILUJĄ SIĘ / FAILUJĄ -> CI zapłonie przy pushu bez aktualizacji
+  * nowy 4-etapowy setup (init_principal/reward/xnt_vault + stan pośredni) BEZ POKRYCIA
+  ZNANA LUKA do uzupełnienia: przepisać integration.rs pod 4-etapowy setup przed mainnetem.
+
+## PLIKI KTÓRYCH BRAK (audytor o nie pytał — NIE ISTNIEJĄ w repo)
+- TEST-LOG.txt   — nie istnieje
+- AUDIT-HEAD.txt — nie istnieje
+- tests/integration.rs w KORZENIU — nie istnieje (jest w programs/anl_staking/tests/)
+
+## STATUS ON-CHAIN (testnet X1, do weryfikacji audytora)
+- Program v2 zdeployowany: 6jiCawqJg5NPR26wCov15tD3HtjKVk1Ao252ZJbZYj1w
+- Wykonano on-chain i potwierdzono: initialize, 3x init_vault, create_pool x2,
+  fund_rewards (200M ANL), fund_xnt (10k XNT), stake (100K ANL Genesis)
+- NIE testowano jeszcze on-chain: claim, unstake_early, settle_expired
+- Tokenomia testnet zgodna z WP: ANL 1B total, 200M Reward Vault, XNT strumień
+
+## STATUS MAINNET
+- declare_id! mainnet = PLACEHOLDER (CvvG4xQq...) BEZ keypaira — NIEWDRAŻALNY (celowo)
+- immutable mainnet: NIE gotowy (per audyty #1-4 + ta zmiana wymaga re-audytu)
+
+## MATERIAŁ POMOCNICZY (nie część audytu #5 — nasza wewnętrzna analiza)
+- 2026-07-20_audyt-zmian-po-audycie.md — wewnętrzna analiza zmian (Claude),
+  DO WERYFIKACJI przez audyt #5, nie zastępuje go.
+
+=================================================================
+Ten manifest opisuje stan faktyczny do rzetelnego audytu #5.
+=================================================================

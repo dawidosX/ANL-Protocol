@@ -1,5 +1,5 @@
 [toolchain]
-anchor_version = "0.29.0"
+anchor_version = "0.30.1"
 
 [features]
 seeds = false
@@ -9,8 +9,10 @@ skip-lint = false
 anl_staking = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
 
 # Testnet X1 (build: scripts/build-testnet.sh; klaster przez provider.cluster)
+# UWAGA: testnetowy Program ID jest EFEMERYCZNY (resety środowiska);
+# źródłem prawdy jest declare_id! w lib.rs pod feature network-testnet.
 [programs.testnet]
-anl_staking = "HSCKEu6Q3U96HBzQV6FjbVmhCgeidaBm7uLgC7nG5id7"
+anl_staking = "6jiCawqJg5NPR26wCov15tD3HtjKVk1Ao252ZJbZYj1w"
 
 # Mainnet: placeholder bez keypaira — do ceremonii Program ID
 [programs.mainnet]

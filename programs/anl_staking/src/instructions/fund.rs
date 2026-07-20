@@ -25,14 +25,14 @@ pub struct FundRewards<'info> {
 
     #[account(seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
         constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
-    pub global_config: Account<'info, GlobalConfig>,
+    pub global_config: Box<Account<'info, GlobalConfig>>,
 
     /// CHECK: PDA-authority skarbcow (seeds + bump).
     #[account(seeds = [VAULT_AUTHORITY_SEED], bump = global_config.vault_authority_bump)]
     pub vault_authority: UncheckedAccount<'info>,
 
     #[account(address = global_config.anl_mint @ AnlError::InvalidMint)]
-    pub anl_mint: InterfaceAccount<'info, Mint>,
+    pub anl_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(
         mut,
@@ -40,12 +40,12 @@ pub struct FundRewards<'info> {
         token::authority = funder,
         token::token_program = anl_token_program
     )]
-    pub funder_anl: InterfaceAccount<'info, TokenAccount>,
+    pub funder_anl: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut, seeds = [REWARD_VAULT_SEED], bump,
         token::mint = anl_mint, token::authority = vault_authority,
         token::token_program = anl_token_program)]
-    pub reward_vault: InterfaceAccount<'info, TokenAccount>,
+    pub reward_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     pub anl_token_program: Program<'info, Token2022>,
 }
@@ -99,14 +99,14 @@ pub struct FundXnt<'info> {
 
     #[account(seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
         constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
-    pub global_config: Account<'info, GlobalConfig>,
+    pub global_config: Box<Account<'info, GlobalConfig>>,
 
     /// CHECK: PDA-authority skarbcow (seeds + bump).
     #[account(seeds = [VAULT_AUTHORITY_SEED], bump = global_config.vault_authority_bump)]
     pub vault_authority: UncheckedAccount<'info>,
 
     #[account(address = global_config.xnt_mint @ AnlError::InvalidMint)]
-    pub xnt_mint: InterfaceAccount<'info, Mint>,
+    pub xnt_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(
         mut,
@@ -114,12 +114,12 @@ pub struct FundXnt<'info> {
         token::authority = funder,
         token::token_program = xnt_token_program
     )]
-    pub funder_xnt: InterfaceAccount<'info, TokenAccount>,
+    pub funder_xnt: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut, seeds = [XNT_VAULT_SEED], bump,
         token::mint = xnt_mint, token::authority = vault_authority,
         token::token_program = xnt_token_program)]
-    pub xnt_vault: InterfaceAccount<'info, TokenAccount>,
+    pub xnt_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(
         mut,
@@ -128,7 +128,7 @@ pub struct FundXnt<'info> {
         constraint = genesis_pool.pool_type == PoolType::Genesis @ AnlError::InvalidVault,
         constraint = genesis_pool.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
     )]
-    pub genesis_pool: Account<'info, PoolConfig>,
+    pub genesis_pool: Box<Account<'info, PoolConfig>>,
 
     #[account(
         mut,
@@ -137,7 +137,7 @@ pub struct FundXnt<'info> {
         constraint = flexible_pool.pool_type == PoolType::Flexible @ AnlError::InvalidVault,
         constraint = flexible_pool.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
     )]
-    pub flexible_pool: Account<'info, PoolConfig>,
+    pub flexible_pool: Box<Account<'info, PoolConfig>>,
 
     pub xnt_token_program: Program<'info, Token>,
 
@@ -145,13 +145,13 @@ pub struct FundXnt<'info> {
     #[account(init_if_needed, payer = funder, space = XntCheckpoint::LEN,
         seeds = [XNT_CKPT_SEED, &[PoolType::Genesis as u8], &epoch.to_le_bytes()],
         bump)]
-    pub genesis_ckpt: Account<'info, XntCheckpoint>,
+    pub genesis_ckpt: Box<Account<'info, XntCheckpoint>>,
 
     /// Checkpoint BIEŻĄCEJ epoki fundingu — Flexible.
     #[account(init_if_needed, payer = funder, space = XntCheckpoint::LEN,
         seeds = [XNT_CKPT_SEED, &[PoolType::Flexible as u8], &epoch.to_le_bytes()],
         bump)]
-    pub flexible_ckpt: Account<'info, XntCheckpoint>,
+    pub flexible_ckpt: Box<Account<'info, XntCheckpoint>>,
 
     /// CHECK: checkpoint POPRZEDNIEJ epoki fundingu Genesis (wymagany, gdy
     /// last_funded_epoch ∉ {NO_EPOCH, epoch}); PDA weryfikowane w handlerze.
@@ -322,7 +322,7 @@ pub struct SetOperator<'info> {
 
     #[account(mut, seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
         constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
-    pub global_config: Account<'info, GlobalConfig>,
+    pub global_config: Box<Account<'info, GlobalConfig>>,
 }
 
 /// Ustawia gorący klucz operatora bota dziennego (tylko authority).

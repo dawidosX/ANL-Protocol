@@ -122,6 +122,18 @@ Documentation findings **DOC-01…DOC-05** accepted and corrected in this revisi
 
 ---
 
+### Round #5 — post-audit structural change: split of `initialize` (20 Jul 2026, GPT + Grok)
+
+**What changed after Round #4 and why.** On 20 Jul 2026 the team discovered that `Initialize::try_accounts` overflowed the SBF stack (frame 6720–7232 B against the 4096 B limit): the program compiled, but `initialize` was **unexecutable on-chain** (`Access violation in stack frame`). The fix is structural: the single setup instruction was split into four — `initialize` (GlobalConfig + mint validation only) → `init_principal_vault` → `init_reward_vault` → `init_xnt_vault` — plus account boxing (`Box<Account>` / `Box<InterfaceAccount>`) across `initialize`/`stake`/`lifecycle`/`fund`, and a dependency bump `anchor-lang`/`anchor-spl` 0.29.0 → 0.30.1. **This is a change to a previously audited instruction** and is treated as a delta requiring its own review.
+
+**Round #5 scope and verdicts.** Both reviewers examined the working-tree snapshot (`anl-audyt5-repo.zip`, reports archived in `docs/audits/`). Agreement on all findings: **no new critical or high-severity vectors**; the newly created **intermediate state** (GlobalConfig exists, vaults do not) is protected by three independent layers — `has_one = authority` on every `init_*_vault`, program-derived vault PDAs with `token::authority = vault_authority` (a PDA), and `stake` requiring already-initialized vaults (no `init` attribute ⇒ `AccountNotInitialized` in the window). Boxing leaves every Anchor constraint intact; the 0.30.1 migration shows no regression (the code already used named `ctx.bumps` fields). Grok's one **MEDIUM (process)** finding: the integration suite still exercised the old single-step `Initialize` and gave the new four-step flow **zero coverage** — CI would be red and the lifecycle safety net was gone.
+
+**Closure of the Round #5 MUST items (this revision).** `tests/integration.rs` was rewritten for the four-step setup (`Env::new_pre_init` → `initialize` → `init_all_vaults` → `create_pools`) and extended with **TS-AUD5** covering the intermediate state directly: stake in the window is rejected, a non-authority signer cannot create a vault, repeated `initialize` and repeated vault init are rejected, and a completed setup restores full functionality. `Anchor.toml` was synchronised (toolchain 0.30.1; the testnet Program ID entry now documents that testnet addresses are ephemeral). This section is the honest record that post-Round-#4 code differs structurally from the audited snapshot.
+
+**Verdicts (round #5).** *GPT:* closed testnet **READY after successful execution of the full integration suite on the real toolchain**; immutable mainnet **not ready**. *Grok:* closed testnet **ACCEPTABLE after the integration-test update**; immutable mainnet **NOT READY — formal re-verification of this delta required**. **Team position: the stricter reading wins** — the rewritten suite must pass on the real toolchain (log published as evidence) before any testnet expansion, and the split-`initialize` delta goes through formal re-verification before immutable mainnet.
+
+---
+
 ## 8. Consolidated findings table
 
 Severity: C = Critical, H = High, M = Medium, L = Low, I = Info, P = process. Round `1p` = the 18 Jul parallel review (§2a). Status: ✅ fixed & verified, 🟡 open (tracked in §9), 📋 deployment checklist.

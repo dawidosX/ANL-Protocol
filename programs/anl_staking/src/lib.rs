@@ -31,7 +31,7 @@ use state::PoolType;
 declare_id!("CvvG4xQq1w4gYRSidZZ3CzcGcGzaD9LprYjh9XEoMbWC");
 #[cfg(feature = "network-testnet")]
 // Testnet X1 — keypair z 19.07.2026 (po rotacji higienicznej), poza repo.
-declare_id!("HSCKEu6Q3U96HBzQV6FjbVmhCgeidaBm7uLgC7nG5id7");
+declare_id!("6jiCawqJg5NPR26wCov15tD3HtjKVk1Ao252ZJbZYj1w");
 #[cfg(not(any(feature = "network-mainnet", feature = "network-testnet")))]
 // DEV-ONLY: lokalne testy i IDE; nie odpowiada żadnemu wdrożonemu adresowi.
 declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
@@ -48,6 +48,20 @@ pub mod anl_staking {
         start_paused: bool,
     ) -> Result<()> {
         instructions::initialize::initialize_handler(ctx, genesis_start_ts, start_paused)
+    }
+
+    /// TC-001b. Etap 2 setupu: trzy skarbce tworzone osobno (mała ramka stosu SBF).
+    /// Każda wymaga istniejącego GlobalConfig i tej samej authority (has_one).
+    pub fn init_principal_vault(ctx: Context<InitPrincipalVault>) -> Result<()> {
+        instructions::initialize::init_principal_vault_handler(ctx)
+    }
+
+    pub fn init_reward_vault(ctx: Context<InitRewardVault>) -> Result<()> {
+        instructions::initialize::init_reward_vault_handler(ctx)
+    }
+
+    pub fn init_xnt_vault(ctx: Context<InitXntVault>) -> Result<()> {
+        instructions::initialize::init_xnt_vault_handler(ctx)
     }
 
     /// TC-010…016. Dokładnie jedna pula per typ (PDA wyklucza duplikaty).

@@ -34,7 +34,7 @@ pub struct SettleExpired<'info> {
         constraint = pool_config.pool_type == user_position.pool_type @ AnlError::InvalidVault,
         constraint = pool_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
     )]
-    pub pool_config: Account<'info, PoolConfig>,
+    pub pool_config: Box<Account<'info, PoolConfig>>,
 
     #[account(
         mut,
@@ -46,7 +46,7 @@ pub struct SettleExpired<'info> {
         ],
         bump = user_position.bump
     )]
-    pub user_position: Account<'info, UserPosition>,
+    pub user_position: Box<Account<'info, UserPosition>>,
 
     /// CHECK: checkpoint ostatniej epoki fundingu ≤ end_epoch pozycji;
     /// PDA + łańcuch (next) weryfikowane w handlerze. None dozwolone tylko,
@@ -142,7 +142,7 @@ pub struct Claim<'info> {
 
     #[account(mut, seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
         constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
-    pub global_config: Account<'info, GlobalConfig>,
+    pub global_config: Box<Account<'info, GlobalConfig>>,
 
     #[account(
         mut,
@@ -151,7 +151,7 @@ pub struct Claim<'info> {
         constraint = pool_config.pool_type == user_position.pool_type @ AnlError::InvalidVault,
         constraint = pool_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
     )]
-    pub pool_config: Account<'info, PoolConfig>,
+    pub pool_config: Box<Account<'info, PoolConfig>>,
 
     #[account(
         mut,
@@ -164,32 +164,32 @@ pub struct Claim<'info> {
         ],
         bump = user_position.bump
     )]
-    pub user_position: Account<'info, UserPosition>,
+    pub user_position: Box<Account<'info, UserPosition>>,
 
     /// CHECK: PDA-authority skarbców (seeds + bump).
     #[account(seeds = [VAULT_AUTHORITY_SEED], bump = global_config.vault_authority_bump)]
     pub vault_authority: UncheckedAccount<'info>,
 
     #[account(address = global_config.anl_mint @ AnlError::InvalidMint)]
-    pub anl_mint: InterfaceAccount<'info, Mint>,
+    pub anl_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(address = global_config.xnt_mint @ AnlError::InvalidMint)]
-    pub xnt_mint: InterfaceAccount<'info, Mint>,
+    pub xnt_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(mut, seeds = [PRINCIPAL_VAULT_SEED], bump,
         token::mint = anl_mint, token::authority = vault_authority,
         token::token_program = anl_token_program)]
-    pub principal_vault: InterfaceAccount<'info, TokenAccount>,
+    pub principal_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut, seeds = [REWARD_VAULT_SEED], bump,
         token::mint = anl_mint, token::authority = vault_authority,
         token::token_program = anl_token_program)]
-    pub reward_vault: InterfaceAccount<'info, TokenAccount>,
+    pub reward_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut, seeds = [XNT_VAULT_SEED], bump,
         token::mint = xnt_mint, token::authority = vault_authority,
         token::token_program = xnt_token_program)]
-    pub xnt_vault: InterfaceAccount<'info, TokenAccount>,
+    pub xnt_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(
         mut,
@@ -197,7 +197,7 @@ pub struct Claim<'info> {
         token::authority = owner,
         token::token_program = anl_token_program
     )]
-    pub owner_anl: InterfaceAccount<'info, TokenAccount>,
+    pub owner_anl: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(
         mut,
@@ -205,7 +205,7 @@ pub struct Claim<'info> {
         token::authority = owner,
         token::token_program = xnt_token_program
     )]
-    pub owner_xnt: InterfaceAccount<'info, TokenAccount>,
+    pub owner_xnt: Box<InterfaceAccount<'info, TokenAccount>>,
 
     pub anl_token_program: Program<'info, Token2022>,
     pub xnt_token_program: Program<'info, Token>,
@@ -364,7 +364,7 @@ pub struct UnstakeEarly<'info> {
 
     #[account(mut, seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
         constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
-    pub global_config: Account<'info, GlobalConfig>,
+    pub global_config: Box<Account<'info, GlobalConfig>>,
 
     #[account(
         mut,
@@ -373,7 +373,7 @@ pub struct UnstakeEarly<'info> {
         constraint = pool_config.pool_type == user_position.pool_type @ AnlError::InvalidVault,
         constraint = pool_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
     )]
-    pub pool_config: Account<'info, PoolConfig>,
+    pub pool_config: Box<Account<'info, PoolConfig>>,
 
     #[account(
         mut,
@@ -386,19 +386,19 @@ pub struct UnstakeEarly<'info> {
         ],
         bump = user_position.bump
     )]
-    pub user_position: Account<'info, UserPosition>,
+    pub user_position: Box<Account<'info, UserPosition>>,
 
     /// CHECK: PDA-authority skarbców (seeds + bump).
     #[account(seeds = [VAULT_AUTHORITY_SEED], bump = global_config.vault_authority_bump)]
     pub vault_authority: UncheckedAccount<'info>,
 
     #[account(address = global_config.anl_mint @ AnlError::InvalidMint)]
-    pub anl_mint: InterfaceAccount<'info, Mint>,
+    pub anl_mint: Box<InterfaceAccount<'info, Mint>>,
 
     #[account(mut, seeds = [PRINCIPAL_VAULT_SEED], bump,
         token::mint = anl_mint, token::authority = vault_authority,
         token::token_program = anl_token_program)]
-    pub principal_vault: InterfaceAccount<'info, TokenAccount>,
+    pub principal_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(
         mut,
@@ -406,7 +406,7 @@ pub struct UnstakeEarly<'info> {
         token::authority = owner,
         token::token_program = anl_token_program
     )]
-    pub owner_anl: InterfaceAccount<'info, TokenAccount>,
+    pub owner_anl: Box<InterfaceAccount<'info, TokenAccount>>,
 
     pub anl_token_program: Program<'info, Token2022>,
 }

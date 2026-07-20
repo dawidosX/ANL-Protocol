@@ -122,6 +122,18 @@ Ustalenia dokumentacyjne **DOC-01…DOC-05** przyjęte i poprawione w tej rewizj
 
 ---
 
+### Runda #5 — zmiana strukturalna po audycie: rozbicie `initialize` (20.07.2026, GPT + Grok)
+
+**Co i dlaczego zmieniło się po rundzie #4.** 20.07.2026 zespół wykrył, że `Initialize::try_accounts` przepełnia stos SBF (ramka 6720–7232 B przy limicie 4096 B): program się kompilował, ale `initialize` był **niewykonywalny na łańcuchu** (`Access violation in stack frame`). Naprawa jest strukturalna: jedna instrukcja setupu została rozbita na cztery — `initialize` (sam GlobalConfig + walidacja mintów) → `init_principal_vault` → `init_reward_vault` → `init_xnt_vault` — plus boxowanie kont (`Box<Account>` / `Box<InterfaceAccount>`) w `initialize`/`stake`/`lifecycle`/`fund` oraz podbicie zależności `anchor-lang`/`anchor-spl` 0.29.0 → 0.30.1. **To zmiana w audytowanej wcześniej instrukcji** — traktowana jako delta wymagająca własnego przeglądu.
+
+**Zakres i werdykty rundy #5.** Obaj recenzenci zbadali migawkę working tree (`anl-audyt5-repo.zip`, raporty zarchiwizowane w `docs/audits/`). Pełna zgodność ustaleń: **brak nowych wektorów krytycznych i wysokich**; nowo powstały **stan pośredni** (GlobalConfig istnieje, skarbce nie) chronią trzy niezależne warstwy — `has_one = authority` w każdej `init_*_vault`, skarbce jako PDA programu z `token::authority = vault_authority` (również PDA), oraz `stake` wymagający już zainicjalizowanych skarbców (brak atrybutu `init` ⇒ `AccountNotInitialized` w oknie). Boxowanie nie narusza żadnej reguły Anchora; migracja 0.30.1 bez regresji (kod używał już nazwanych pól `ctx.bumps`). Jedyne ustalenie **MEDIUM (procesowe)** Groka: testy integracyjne wciąż ćwiczyły stary jednoetapowy `Initialize`, a nowy czteroetapowy przepływ miał **zerowe pokrycie** — CI byłoby czerwone, a siatka bezpieczeństwa cyklu życia znikła.
+
+**Zamknięcie punktów MUST rundy #5 (ta rewizja).** `tests/integration.rs` przepisano pod setup czteroetapowy (`Env::new_pre_init` → `initialize` → `init_all_vaults` → `create_pools`) i rozszerzono o **TS-AUD5** pokrywający stan pośredni wprost: stake w oknie odrzucony, nie-authority nie utworzy skarbca, powtórny `initialize` i powtórna inicjalizacja skarbca odrzucone, a dokończony setup przywraca pełną funkcjonalność. Zsynchronizowano `Anchor.toml` (toolchain 0.30.1; wpis testnetowego Program ID dokumentuje, że adresy testnetu są efemeryczne). Ta sekcja jest uczciwym zapisem, że kod po rundzie #4 różni się strukturalnie od audytowanej migawki.
+
+**Werdykty (runda #5).** *GPT:* zamknięty testnet **GOTOWY po pomyślnym wykonaniu pełnego zestawu testów integracyjnych na prawdziwym toolchainie**; immutable mainnet **niegotowy**. *Grok:* zamknięty testnet **AKCEPTOWALNY po aktualizacji testów integracyjnych**; immutable mainnet **NIEGOTOWY — wymagana formalna re-weryfikacja tej delty**. **Stanowisko zespołu: ponownie wygrywa surowsza interpretacja** — przepisany zestaw testów musi przejść na prawdziwym toolchainie (log opublikowany jako dowód) przed jakąkolwiek ekspansją testnetu, a delta rozbicia `initialize` przechodzi formalną re-weryfikację przed immutable mainnetem.
+
+---
+
 ## 8. Zbiorcza tabela ustaleń
 
 Waga: C = krytyczne, H = wysokie, M = średnie, L = niskie, I = info, P = procesowe. Runda `1p` = równoległy przegląd z 18.07 (§2a). Status: ✅ naprawione i zweryfikowane, 🟡 otwarte (śledzone w §9), 📋 checklista wdrożeniowa.

@@ -1,0 +1,46 @@
+=================================================================
+PACZKA DO AUDYTU #6 — ANL Staking Protocol
+Delta-weryfikacja: zamknięcie punktów MUST z audytu #5
+Stan repo: 2026-07-20, working tree (nadal niezacommitowane)
+=================================================================
+
+## PRZEDMIOT AUDYTU #6
+Runda #5 (GPT+Grok, 20.07.2026) zamknęła kod bez ustaleń critical/high,
+ale postawiła warunki. Ta paczka dokumentuje ich wykonanie:
+
+1. [MUST #5] tests/integration.rs PRZEPISANY pod 4-etapowy setup
+   - Env::new() = new_pre_init -> initialize -> init_all_vaults -> create_pools
+   - 3x init_*_vault w JEDNEJ transakcji (ramka stosu liczy sie per
+     instrukcje — pozytywny dowod, ze fix SBF dziala takze zlozony)
+   - NOWY test TS-AUD5 (ts_split_init_intermediate_state_guards):
+     (a) stake w oknie posrednim -> odrzucony (skarbce nie istnieja)
+     (b) nie-authority nie utworzy skarbca (has_one -> InvalidAuthority)
+     (c) powtorny initialize -> odrzucony
+     (d) powtorna inicjalizacja skarbca -> odrzucona
+     (e) dokonczony setup -> fund_rewards + stake przechodza (naprawialnosc)
+2. [MUST #5] SECURITY-AUDITS(.pl).md: sekcja "Runda #5" — jawny zapis
+   zmiany strukturalnej po rundzie #4 + werdykty + stanowisko zespolu
+   ("surowsza interpretacja wygrywa")
+3. [MUST #5] COMMIT-MSG.txt — uczciwy commit message (structural change)
+4. [SHOULD #5] Anchor.toml: toolchain 0.30.1 (sync z Cargo.toml),
+   testnet ID zsynchronizowany + komentarz o efemerycznosci adresow
+
+## DOWOD WYKONANIA NA REALNYM TOOLCHAINIE (warunek GPT)
+- TEST-LOG-2026-07-20.txt: cargo test -p anl_staking
+  --features test-periods --test integration
+  WYNIK: test result: ok. 5 passed; 0 failed; 0 ignored
+  (4 testy cyklu zycia + TS-AUD5)
+- TEST-LOG-2026-07-20.sha256: suma kontrolna logu (lekcja z rundy #4)
+
+## CZEGO AUDYT #6 NIE OBEJMUJE (bez zmian od #5)
+- programs/anl_staking/src/** — kod programu NIEZMIENIONY od paczki #5
+  (audyt #6 to delta testow/docs/config; zrodla zalaczone dla kontekstu)
+- Status on-chain: bez zmian (testnet 1B dziala; claim/unstake_early
+  nadal nietestowane on-chain — pozycje musza dojrzec)
+- Immutable mainnet: NOT READY (formalna re-weryfikacja delty #5
+  pozostaje otwarta — zgodnie z werdyktami obu audytorow)
+
+## RAPORTY RUNDY #5 (archiwum)
+- docs/audits/2026-07-20_audyt5_gpt.pdf
+- docs/audits/2026-07-20_audyt5_grok.pdf
+=================================================================
