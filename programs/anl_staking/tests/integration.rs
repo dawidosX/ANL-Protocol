@@ -661,6 +661,20 @@ impl Env {
         PoolConfig::try_deserialize(&mut acc.data.as_slice()).unwrap()
     }
 
+    /// Odczyt globalnej rezerwy nagród ANL (pole GlobalConfig.anl_reward_reserved).
+    async fn global_reward_reserved(&mut self) -> u64 {
+        let acc = self
+            .ctx
+            .banks_client
+            .get_account(self.global_config)
+            .await
+            .unwrap()
+            .unwrap();
+        anl_staking::state::GlobalConfig::try_deserialize(&mut acc.data.as_slice())
+            .unwrap()
+            .anl_reward_reserved
+    }
+
     async fn token_balance(&mut self, addr: Pubkey) -> u64 {
         let acc = self
             .ctx
@@ -1308,4 +1322,161 @@ async fn ts_split_init_intermediate_state_guards() {
     env.stake(&user, user_anl, PoolType::Genesis, 1_000 * ONE_ANL, days, 0)
         .await
         .unwrap();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// GRUPA A — ATAKI NA IZOLACJĘ SKARBCÓW (plan pentestów, A1–A4)
+// Cel: udowodnić, że nie da się okraść ani pomieszać trzech skarbców.
+// Każdy atak MUSI się odbić właściwym błędem; inwarianty MUSZĄ się zgadzać.
+// ═══════════════════════════════════════════════════════════════════════
+
+// A1 — Podstawienie Reward Vault w miejsce Principal Vault przy claim.
+// Napastnik chce, by principal wypłacił się z puli nagród (albo odwrotnie),
+// licząc na wyciągnięcie ANL ponad to, co mu się należy.
+#[tokio::test]
+async fn atak_a1_podstawienie_skarbca_w_claim() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+    let (user, user_anl, user_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&user, user_anl, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+    env.advance((days as i64) * DAY + DAY).await;
+
+    // Atak: budujemy claim, ale jako principal_vault podstawiamy reward_vault.
+    let ix = Instruction {
+        program_id: env.program_id,
+        accounts: anl_staking::accounts::Claim {
+            owner: user.pubkey(),
+            global_config: env.global_config,
+            pool_config: env.genesis_pool,
+            user_position: pos,
+            vault_authority: env.vault_authority,
+            anl_mint: env.anl_mint.pubkey(),
+            xnt_mint: env.xnt_mint,
+            principal_vault: env.reward_vault, // ⚠️ PODMIANA
+            reward_vault: env.reward_vault,
+            xnt_vault: env.xnt_vault,
+            owner_anl: user_anl,
+            owner_xnt: user_xnt,
+            anl_token_program: spl_token_2022::id(),
+            xnt_token_program: spl_token::id(),
+            xnt_checkpoint: None,
+        }
+        .to_account_metas(None),
+        data: anl_staking::instruction::Claim {}.data(),
+    };
+    let res = env.send_as(&user, &[ix], &[&user]).await;
+    assert!(
+        res.is_err(),
+        "A1: podstawienie reward_vault jako principal_vault MUSI być odrzucone (seeds/token::mint)"
+    );
+}
+
+// A2 — Claim cudzej pozycji. Napastnik podpisuje własnym kluczem,
+// ale wskazuje pozycję ofiary, licząc na wypłatę na swoje konto.
+#[tokio::test]
+async fn atak_a2_claim_cudzej_pozycji() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+    let (ofiara, ofiara_anl, _ofiara_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let (napastnik, napastnik_anl, napastnik_xnt) = env.user_with_anl(1 * ONE_ANL).await;
+    let pos_ofiary = env
+        .stake(&ofiara, ofiara_anl, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+    env.advance((days as i64) * DAY + DAY).await;
+
+    // Atak: napastnik jako owner, ale user_position = pozycja ofiary,
+    // konta docelowe = konta napastnika.
+    let ix = Instruction {
+        program_id: env.program_id,
+        accounts: anl_staking::accounts::Claim {
+            owner: napastnik.pubkey(), // ⚠️ nie właściciel pozycji
+            global_config: env.global_config,
+            pool_config: env.genesis_pool,
+            user_position: pos_ofiary, // ⚠️ cudza pozycja
+            vault_authority: env.vault_authority,
+            anl_mint: env.anl_mint.pubkey(),
+            xnt_mint: env.xnt_mint,
+            principal_vault: env.principal_vault,
+            reward_vault: env.reward_vault,
+            xnt_vault: env.xnt_vault,
+            owner_anl: napastnik_anl,
+            owner_xnt: napastnik_xnt,
+            anl_token_program: spl_token_2022::id(),
+            xnt_token_program: spl_token::id(),
+            xnt_checkpoint: None,
+        }
+        .to_account_metas(None),
+        data: anl_staking::instruction::Claim {}.data(),
+    };
+    let res = env.send_as(&napastnik, &[ix], &[&napastnik]).await;
+    assert!(
+        res.is_err(),
+        "A2: claim cudzej pozycji MUSI być odrzucony (PositionOwnerMismatch / seeds pozycji)"
+    );
+}
+
+// A3 — Inwariant: saldo Principal Vault == suma total_staked wszystkich pul.
+// Po serii stake/claim sprawdzamy, że kapitał w skarbcu zgadza się z księgowością.
+#[tokio::test]
+async fn atak_a3_inwariant_principal_vs_total_staked() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+
+    let (u1, u1a, _) = env.user_with_anl(500 * ONE_ANL).await;
+    let (u2, u2a, _) = env.user_with_anl(500 * ONE_ANL).await;
+    env.stake(&u1, u1a, PoolType::Genesis, 300 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+    env.stake(&u2, u2a, PoolType::Flexible, 200 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+
+    let g = env.pool(env.genesis_pool).await;
+    let f = env.pool(env.flexible_pool).await;
+    let vault = env.token_balance(env.principal_vault).await;
+    assert_eq!(
+        vault,
+        g.total_staked + f.total_staked,
+        "A3: Principal Vault MUSI równać się sumie total_staked (co do lamporta)"
+    );
+    assert_eq!(vault, 500 * ONE_ANL, "A3: 300 + 200 = 500 ANL kapitału");
+}
+
+// A4 — Integralność anl_reward_reserved: rezerwa nagród == suma zarezerwowana
+// żywych pozycji i nie schodzi poniżej zera (checked_sub).
+#[tokio::test]
+async fn atak_a4_inwariant_reward_reserved() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+
+    let (u1, u1a, u1x) = env.user_with_anl(500 * ONE_ANL).await;
+    let p1 = env
+        .stake(&u1, u1a, PoolType::Genesis, 300 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+    let pos = env.position(p1).await;
+    let reserved_after_stake = env.global_reward_reserved().await;
+    assert_eq!(
+        reserved_after_stake, pos.anl_reward,
+        "A4: rezerwa == nagroda pojedynczej żywej pozycji"
+    );
+
+    // Po claim rezerwa wraca do zera (pozycja zamknięta, nagroda wypłacona).
+    env.advance((days as i64) * DAY + DAY).await;
+    env.claim(&u1, u1a, u1x, p1, PoolType::Genesis, None)
+        .await
+        .unwrap();
+    let reserved_after_claim = env.global_reward_reserved().await;
+    assert_eq!(
+        reserved_after_claim, 0,
+        "A4: po claim rezerwa schodzi do zera bez underflow"
+    );
 }
