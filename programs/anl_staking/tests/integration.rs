@@ -1480,3 +1480,96 @@ async fn atak_a4_inwariant_reward_reserved() {
         "A4: po claim rezerwa schodzi do zera bez underflow"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// GRUPA B — ATAKI NA BLOKADĘ GENESIS (plan pentestów, B1–B3)
+// WP v1.1 §5/§7: pozycja Genesis jest nieodwołalna — brak wcześniejszego
+// wyjścia ŻADNĄ ścieżką. Każda próba MUSI się odbić.
+// ═══════════════════════════════════════════════════════════════════════
+
+// B1 — Bezpośrednie unstake_early na pozycji Genesis.
+// Napastnik (właściciel) próbuje zerwać zablokowaną pozycję Genesis.
+#[tokio::test]
+async fn atak_b1_unstake_early_na_genesis() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+    let (user, user_anl, _user_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&user, user_anl, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+
+    // Atak: unstake_early na Genesis — musi odbić się GenesisLocked.
+    let res = env
+        .unstake_early(&user, user_anl, pos, PoolType::Genesis)
+        .await;
+    assert!(
+        res.is_err(),
+        "B1: unstake_early na Genesis MUSI być odrzucone (GenesisLocked)"
+    );
+}
+
+// B2 — Oszustwo pool_config: pozycja Genesis, ale podstawiamy pool_config
+// Flexible, licząc na to, że kontrakt potraktuje ją jak Flexible i pozwoli wyjść.
+#[tokio::test]
+async fn atak_b2_podstawienie_flexible_pool_pod_genesis() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+    let (user, user_anl, _user_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&user, user_anl, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+
+    // Atak: budujemy unstake_early ręcznie, pool_config = flexible_pool,
+    // ale user_position to pozycja Genesis.
+    let ix = Instruction {
+        program_id: env.program_id,
+        accounts: anl_staking::accounts::UnstakeEarly {
+            owner: user.pubkey(),
+            global_config: env.global_config,
+            pool_config: env.flexible_pool, // ⚠️ Flexible pod pozycję Genesis
+            user_position: pos,
+            vault_authority: env.vault_authority,
+            anl_mint: env.anl_mint.pubkey(),
+            principal_vault: env.principal_vault,
+            owner_anl: user_anl,
+            anl_token_program: spl_token_2022::id(),
+        }
+        .to_account_metas(None),
+        data: anl_staking::instruction::UnstakeEarly {}.data(),
+    };
+    let res = env.send_as(&user, &[ix], &[&user]).await;
+    assert!(
+        res.is_err(),
+        "B2: podstawienie Flexible pool_config pod pozycję Genesis MUSI być odrzucone (InvalidVault)"
+    );
+}
+
+// B3 — Genesis po końcu okresu: unstake_early nie może być użyte nawet gdy
+// okres minął (właściwa ścieżka to claim). Potwierdza, że nie ma tylnej furtki.
+#[tokio::test]
+async fn atak_b3_unstake_genesis_po_okresie() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+    let (user, user_anl, _user_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&user, user_anl, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+    // Przewijamy PO końcu okresu.
+    env.advance((days as i64) * DAY + DAY).await;
+
+    // Atak: unstake_early na Genesis po okresie — nadal GenesisLocked
+    // (blokada jest bezwarunkowa, sprawdzana przed czasem).
+    let res = env
+        .unstake_early(&user, user_anl, pos, PoolType::Genesis)
+        .await;
+    assert!(
+        res.is_err(),
+        "B3: unstake_early na Genesis (nawet po okresie) MUSI być odrzucone"
+    );
+}
