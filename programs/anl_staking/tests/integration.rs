@@ -1573,3 +1573,184 @@ async fn atak_b3_unstake_genesis_po_okresie() {
         "B3: unstake_early na Genesis (nawet po okresie) MUSI być odrzucone"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// GRUPA C — ATAKI NA XNT / fund_xnt (plan pentestów, C1–C5)
+// Najtrudniejsza grupa: matematyka indeksów, zaokrąglenia, autoryzacja,
+// przypisania wsteczne. Tu giną protokoły — nie na braku podpisu.
+// ═══════════════════════════════════════════════════════════════════════
+
+// C1 — Gamowanie czasu: stake TUŻ przed fundingiem nie może dać XNT za
+// dni, w których pozycja nie istniała. (Debt index ustawiany przy stake.)
+#[tokio::test]
+async fn atak_c1_stake_tuz_przed_fundingiem() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+
+    // Uczciwy staker już w puli od początku.
+    let (early, early_a, _) = env.user_with_anl(100 * ONE_ANL).await;
+    env.stake(&early, early_a, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+
+    // Kilka fundingów mija (uczciwy zbiera XNT).
+    env.fund_xnt(1_000).await.unwrap();
+    env.advance(DAY).await;
+    env.fund_xnt(1_000).await.unwrap();
+    env.advance(DAY).await;
+
+    // Napastnik wchodzi TERAZ, tuż przed kolejnym fundingiem.
+    // (Nowy user → jego pierwsza pozycja ma indeks 0.)
+    let (late, late_a, _) = env.user_with_anl(100 * ONE_ANL).await;
+    let p_late = env
+        .stake(&late, late_a, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+    let pos_late = env.position(p_late).await;
+    let g = env.pool(env.genesis_pool).await;
+
+    // Debt index napastnika MUSI == bieżący indeks puli (brak roszczeń wstecz).
+    assert_eq!(
+        pos_late.xnt_debt_index, g.xnt_reward_index,
+        "C1: pozycja wchodząca późno startuje z aktualnym debt_index — zero XNT za przeszłe fundingi"
+    );
+    // Zatem pending na wejściu == 0.
+    let pending = g.pending_xnt(pos_late.shares, pos_late.xnt_debt_index).unwrap();
+    assert_eq!(pending, 0, "C1: brak naliczonego XNT tuż po wejściu");
+}
+
+// C2 — Zaokrąglenie podziału 65/35: suma części ZAWSZE == całość,
+// dla wielu różnych kwot (żaden lamport nie ginie ani nie powstaje).
+#[tokio::test]
+async fn atak_c2_split_bez_utraty_lamportow() {
+    // Czysto matematyczny atak — nie potrzebuje łańcucha.
+    for net in [1u64, 2, 3, 7, 99, 100, 101, 999, 1_000, 1_001, 65_535,
+                1_000_000, 1_000_003, u64::MAX / 2, u64::MAX - 1] {
+        let (g, f) = anl_math::split_xnt(net);
+        assert_eq!(
+            (g as u128) + (f as u128),
+            net as u128,
+            "C2: split_xnt({net}) MUSI sumować się do całości — g={g}, f={f}"
+        );
+        // Genesis dostaje ~65%, nigdy więcej niż całość.
+        assert!(g <= net, "C2: część Genesis nie może przekroczyć całości");
+    }
+}
+
+// C3 — fund_xnt przez NIE-operatora. Napastnik z własnym kontem XNT
+// próbuje wywołać funding (i tak zmanipulować indeksy). Musi się odbić.
+#[tokio::test]
+async fn atak_c3_fund_xnt_przez_obcego() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+    let (user, user_a, _) = env.user_with_anl(100 * ONE_ANL).await;
+    env.stake(&user, user_a, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+
+    // Napastnik: własny keypair + własne konto XNT z zapasem.
+    let napastnik = Keypair::new();
+    airdrop(&mut env.ctx, &napastnik.pubkey(), 10_000_000_000).await;
+    let atk_xnt = create_token_account(&mut env.ctx, &napastnik.pubkey(), &env.xnt_mint, spl_token::id()).await;
+    mint_to(&mut env.ctx, &env.xnt_mint, &atk_xnt, &env.authority, 1_000, spl_token::id()).await;
+
+    let epoch = env.current_epoch().await;
+    let ix = Instruction {
+        program_id: env.program_id,
+        accounts: anl_staking::accounts::FundXnt {
+            funder: napastnik.pubkey(), // ⚠️ nie authority ani operator
+            global_config: env.global_config,
+            vault_authority: env.vault_authority,
+            xnt_mint: env.xnt_mint,
+            funder_xnt: atk_xnt,
+            xnt_vault: env.xnt_vault,
+            genesis_pool: env.genesis_pool,
+            flexible_pool: env.flexible_pool,
+            xnt_token_program: spl_token::id(),
+            genesis_ckpt: env.ckpt_pda(PoolType::Genesis, epoch),
+            flexible_ckpt: env.ckpt_pda(PoolType::Flexible, epoch),
+            genesis_prev_ckpt: None,
+            flexible_prev_ckpt: None,
+            system_program: solana_sdk::system_program::id(),
+        }
+        .to_account_metas(None),
+        data: anl_staking::instruction::FundXnt { amount: 1_000, epoch }.data(),
+    };
+    let res = env.send_as(&napastnik, &[ix], &[&napastnik]).await;
+    assert!(
+        res.is_err(),
+        "C3: fund_xnt przez obcego (nie operator/authority) MUSI być odrzucone (InvalidAuthority)"
+    );
+}
+
+// C4 — Pusty koszyk: funding gdy total_shares == 0 nie może dzielić przez
+// zero; XNT trafia do xnt_undistributed i czeka na następny funding.
+#[tokio::test]
+async fn atak_c4_funding_pusty_koszyk() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+
+    // Żadnych pozycji — oba koszyki puste. Funding MUSI przejść bez paniki.
+    env.fund_xnt(1_000).await.unwrap();
+
+    let g = env.pool(env.genesis_pool).await;
+    let f = env.pool(env.flexible_pool).await;
+    // Indeks zostaje 0 (nic nie rozdzielono), XNT czeka jako undistributed.
+    assert_eq!(g.xnt_reward_index, 0, "C4: pusty koszyk Genesis — indeks nie rośnie");
+    assert_eq!(f.xnt_reward_index, 0, "C4: pusty koszyk Flexible — indeks nie rośnie");
+    assert_eq!(
+        g.xnt_undistributed + f.xnt_undistributed,
+        1_000,
+        "C4: całe XNT czeka jako undistributed (nic nie zginęło)"
+    );
+}
+
+// C5 — Funding wstecz: próba fund_xnt ze starą epoką (przypisać nagrody
+// wstecz / nadpisać checkpoint). Musi się odbić EpochMismatch.
+#[tokio::test]
+async fn atak_c5_funding_stara_epoka() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+    let (user, user_a, _) = env.user_with_anl(100 * ONE_ANL).await;
+    env.stake(&user, user_a, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+
+    // Przesuwamy czas o kilka dni i fundujemy w bieżącej epoce.
+    env.advance(3 * DAY).await;
+    env.fund_xnt(1_000).await.unwrap();
+
+    // Atak: próba fundingu z epoką 0 (przeszłość), ręcznie zbudowana.
+    let src = create_token_account(&mut env.ctx, &env.authority.pubkey(), &env.xnt_mint, spl_token::id()).await;
+    mint_to(&mut env.ctx, &env.xnt_mint, &src, &env.authority, 1_000, spl_token::id()).await;
+    let stara_epoka = 0u64;
+    let ix = Instruction {
+        program_id: env.program_id,
+        accounts: anl_staking::accounts::FundXnt {
+            funder: env.authority.pubkey(),
+            global_config: env.global_config,
+            vault_authority: env.vault_authority,
+            xnt_mint: env.xnt_mint,
+            funder_xnt: src,
+            xnt_vault: env.xnt_vault,
+            genesis_pool: env.genesis_pool,
+            flexible_pool: env.flexible_pool,
+            xnt_token_program: spl_token::id(),
+            genesis_ckpt: env.ckpt_pda(PoolType::Genesis, stara_epoka),
+            flexible_ckpt: env.ckpt_pda(PoolType::Flexible, stara_epoka),
+            genesis_prev_ckpt: None,
+            flexible_prev_ckpt: None,
+            system_program: solana_sdk::system_program::id(),
+        }
+        .to_account_metas(None),
+        data: anl_staking::instruction::FundXnt { amount: 1_000, epoch: stara_epoka }.data(),
+    };
+    let res = env.send(&[ix], &[]).await;
+    assert!(
+        res.is_err(),
+        "C5: funding ze starą epoką MUSI być odrzucony (EpochMismatch — brak przypisań wstecz)"
+    );
+}
