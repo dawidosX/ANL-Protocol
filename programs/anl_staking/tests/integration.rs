@@ -2088,3 +2088,144 @@ async fn atak_f2_podstawiony_checkpoint_na_settle() {
         .unwrap();
 }
 
+// GRUPA G — rozszerzenia z audytu GPT (2026-07-21)
+// Luki w pokryciu wskazane przez GPT jako KRYTYCZNE/WYSOKIE:
+//   G1  = dwa OSOBNE claim w osobnych transakcjach (nie dwa kroki w jednej, jak D1)
+//   G2  = dwa OSOBNE unstake_early w osobnych transakcjach
+//   G3  = settle po dojrzeniu, potem DRUGI settle (double-settle) — nie może podwójnie naliczyć
+//
+// UWAGA metodyczna: solana-program-test wykonuje tx SEKWENCYJNIE, nie współbieżnie.
+// Te testy sprawdzają wariant SEKWENCYJNY (druga osobna tx po pierwszej). Prawdziwy
+// RACE (dwie tx w tym samym slocie) wymaga osobnego skryptu na żywym testnecie —
+// tu NIEWYKONALNY z założenia harnessu. To jest mocniejsze niż D1 (osobne tx, nie
+// jedna tx z dwoma ix), ale nie zastępuje prawdziwego race na testnecie.
+// ═══════════════════════════════════════════════════════════════════
+
+// G1 — Dwa OSOBNE claim (osobne transakcje). D1 sprawdzał dwa kroki w JEDNEJ
+// symulowanej tx; tu robimy dwie NIEZALEŻNE transakcje claim. Pierwszy legalny
+// zamyka pozycję (close = owner); drugi musi być odrzucony i NIE zwiększyć salda.
+#[tokio::test]
+async fn atak_g1_dwa_osobne_claim() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+    let (user, user_a, user_x) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&user, user_a, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+    env.advance((days as i64) * DAY + DAY).await;
+
+    // Transakcja #1: legalny claim. Zamyka pozycję.
+    env.claim(&user, user_a, user_x, pos, PoolType::Genesis, None)
+        .await
+        .unwrap();
+
+    // Konto pozycji MUSI być zamknięte po pierwszym claim (close = owner).
+    let acc = env.ctx.banks_client.get_account(pos).await.unwrap();
+    assert!(
+        acc.is_none() || acc.unwrap().lamports == 0,
+        "G1: po pierwszym claim konto pozycji MUSI być zamknięte"
+    );
+
+    // Transakcja #2: OSOBNA, niezależna próba claim tej samej pozycji.
+    // Dowód TWARDY (jak D1 per Grok T-03): saldo ANL nie może wzrosnąć,
+    // nawet gdyby banks_client zwrócił fałszywe Ok na zamkniętym koncie.
+    let bal_przed = env.token_balance(user_a).await;
+    let _ = env
+        .claim(&user, user_a, user_x, pos, PoolType::Genesis, None)
+        .await;
+    let bal_po = env.token_balance(user_a).await;
+    assert_eq!(
+        bal_przed, bal_po,
+        "G1: druga OSOBNA transakcja claim NIE MOŻE zwiększyć salda ANL (brak podwójnej wypłaty)"
+    );
+}
+
+// G2 — Dwa OSOBNE unstake_early (Flexible). Pierwszy zwraca kapitał i zamyka
+// pozycję; drugi musi być odrzucony i NIE zwrócić kapitału ponownie.
+#[tokio::test]
+async fn atak_g2_dwa_osobne_unstake() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32 + 2;
+    let (user, user_a, _user_x) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&user, user_a, PoolType::Flexible, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+
+    // Transakcja #1: legalne zerwanie (Flexible dozwolone). Kapitał wraca.
+    env.unstake_early(&user, user_a, pos, PoolType::Flexible)
+        .await
+        .unwrap();
+
+    // Konto pozycji MUSI być zamknięte po pierwszym unstake.
+    let acc = env.ctx.banks_client.get_account(pos).await.unwrap();
+    assert!(
+        acc.is_none() || acc.unwrap().lamports == 0,
+        "G2: po pierwszym unstake konto pozycji MUSI być zamknięte"
+    );
+
+    // Transakcja #2: OSOBNA próba unstake tej samej pozycji.
+    // Dowód TWARDY: saldo ANL nie może wzrosnąć drugi raz (kapitał już wrócił).
+    let bal_przed = env.token_balance(user_a).await;
+    let _ = env
+        .unstake_early(&user, user_a, pos, PoolType::Flexible)
+        .await;
+    let bal_po = env.token_balance(user_a).await;
+    assert_eq!(
+        bal_przed, bal_po,
+        "G2: druga OSOBNA transakcja unstake NIE MOŻE zwrócić kapitału ponownie"
+    );
+}
+
+// G3 — Double-settle po dojrzeniu. Pozycja dojrzewa, ma funding XNT.
+// Pierwszy settle nalicza należne XNT. DRUGI settle nie może naliczyć
+// tego samego drugi raz (idempotencja rozliczenia).
+#[tokio::test]
+async fn atak_g3_double_settle_po_dojrzeniu() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32 + 2;
+    let (user, user_a, _user_x) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&user, user_a, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+
+    // Funding XNT w epoce 0 (≤ end_epoch), żeby było co rozliczać.
+    env.fund_xnt(1_000).await.unwrap();
+    let ep0 = env.current_epoch().await;
+
+    // Dojazd do końca okresu.
+    env.advance((days as i64) * DAY + DAY).await;
+
+    // Pierwszy settle — legalny, nalicza XNT wg checkpointu ep0.
+    env.settle(pos, PoolType::Genesis, Some(ep0))
+        .await
+        .unwrap();
+
+    // Odczyt stanu pozycji po pierwszym settle: naliczone XNT + flaga settled.
+    let pos_po_1 = env.position(pos).await;
+    let xnt_po_1 = pos_po_1.xnt_accrued;
+    assert!(
+        pos_po_1.settled,
+        "G3: po pierwszym settle pozycja MUSI mieć settled = true"
+    );
+
+    // Drugi settle tej samej pozycji z tym samym checkpointem.
+    // MUSI być odrzucony ALBO no-op — w żadnym razie nie może naliczyć XNT drugi raz.
+    let res2 = env.settle(pos, PoolType::Genesis, Some(ep0)).await;
+
+    if res2.is_ok() {
+        // Jeśli program dopuścił drugie wywołanie jako no-op — naliczone XNT
+        // nie może się zwiększyć (idempotencja rozliczenia).
+        let pos_po_2 = env.position(pos).await;
+        assert_eq!(
+            xnt_po_1, pos_po_2.xnt_accrued,
+            "G3: drugi settle NIE MOŻE naliczyć XNT drugi raz (idempotencja rozliczenia)"
+        );
+    }
+    // Jeśli res2.is_err() — program odrzucił drugie rozliczenie, co też jest poprawne.
+}
