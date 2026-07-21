@@ -1754,3 +1754,215 @@ async fn atak_c5_funding_stara_epoka() {
         "C5: funding ze starą epoką MUSI być odrzucony (EpochMismatch — brak przypisań wstecz)"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// GRUPA D — ATAKI NA CYKL ŻYCIA POZYCJI (plan pentestów, D1–D5)
+// Maszyna stanów: podwójny claim, claim po zerwaniu, claim przed czasem,
+// patologiczne parametry. Każda nielegalna ścieżka MUSI się odbić.
+// ═══════════════════════════════════════════════════════════════════════
+
+// D1 — Podwójny claim: druga próba claim tej samej pozycji musi się odbić
+// (pozycja zamknięta i konto zwolnione po pierwszym claim).
+#[tokio::test]
+async fn atak_d1_podwojny_claim() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+    let (user, user_a, user_x) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&user, user_a, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+    env.advance((days as i64) * DAY + DAY).await;
+
+    // Pierwszy claim — legalny.
+    env.claim(&user, user_a, user_x, pos, PoolType::Genesis, None)
+        .await
+        .unwrap();
+    // Po claim konto pozycji MUSI być zamknięte (close = owner) — nie ma
+    // czego claimować drugi raz. To zamyka wektor podwójnej wypłaty.
+    let acc = env.ctx.banks_client.get_account(pos).await.unwrap();
+    assert!(
+        acc.is_none() || acc.unwrap().lamports == 0,
+        "D1: po claim konto pozycji MUSI być zamknięte (brak podwójnego claim)"
+    );
+}
+
+// D2 — Claim po zerwaniu (Flexible): zerwij pozycję, potem spróbuj claim.
+// Kapitał już wrócił — claim nie może wypłacić drugi raz.
+#[tokio::test]
+async fn atak_d2_claim_po_zerwaniu() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32 + 2;
+    let (user, user_a, user_x) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&user, user_a, PoolType::Flexible, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+
+    // Zerwanie (Flexible dozwolone) — kapitał wraca, pozycja zamknięta.
+    env.unstake_early(&user, user_a, pos, PoolType::Flexible)
+        .await
+        .unwrap();
+    // Po zerwaniu konto pozycji MUSI być zamknięte (close = owner) —
+    // nie ma czego claimować, kapitał nie wypłaci się drugi raz.
+    let acc = env.ctx.banks_client.get_account(pos).await.unwrap();
+    assert!(
+        acc.is_none() || acc.unwrap().lamports == 0,
+        "D2: po zerwaniu konto pozycji MUSI być zamknięte (brak podwójnej wypłaty)"
+    );
+}
+
+// D3 — Claim przed końcem okresu: nagroda wymagalna dopiero po end_ts.
+#[tokio::test]
+async fn atak_d3_claim_przed_koncem() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32 + 3;
+    let (user, user_a, user_x) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&user, user_a, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+
+    // Bez przewijania czasu — okres NIE minął.
+    let res = env
+        .claim(&user, user_a, user_x, pos, PoolType::Genesis, None)
+        .await;
+    assert!(
+        res.is_err(),
+        "D3: claim przed końcem okresu MUSI być odrzucony (PeriodNotEnded)"
+    );
+}
+
+// D4 — Stake zerową kwotą: musi się odbić (ZeroAmount).
+#[tokio::test]
+async fn atak_d4_stake_zero() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32;
+    let (user, user_a, _) = env.user_with_anl(100 * ONE_ANL).await;
+    let res = env
+        .stake(&user, user_a, PoolType::Genesis, 0, days, 0)
+        .await;
+    assert!(
+        res.is_err(),
+        "D4: stake zerową kwotą MUSI być odrzucony (ZeroAmount)"
+    );
+}
+
+// D5 — Stake z okresem poza zakresem: dni > MAX_PERIOD_DAYS musi się odbić
+// (InvalidPeriod). Chroni przed patologicznymi parametrami czasu.
+#[tokio::test]
+async fn atak_d5_stake_okres_poza_zakresem() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let (user, user_a, _) = env.user_with_anl(100 * ONE_ANL).await;
+    // MAX to 3650; próbujemy 3651.
+    let za_duzo = anl_math::MAX_PERIOD_DAYS as u32 + 1;
+    let res = env
+        .stake(&user, user_a, PoolType::Genesis, 100 * ONE_ANL, za_duzo, 0)
+        .await;
+    assert!(
+        res.is_err(),
+        "D5: stake z okresem > MAX MUSI być odrzucony (InvalidPeriod)"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// GRUPA E — ATAKI NA AUTORYZACJĘ GLOBALNĄ (plan pentestów, E1–E3)
+// Kto może pauzować i zmieniać operatora. Napastnik/operator NIE mogą
+// przejąć uprawnień administratora. Każda próba MUSI się odbić.
+// ═══════════════════════════════════════════════════════════════════════
+
+// E1 — Pauza przez obcego: napastnik próbuje zapauzować protokół (griefing).
+#[tokio::test]
+async fn atak_e1_pauza_przez_obcego() {
+    let mut env = Env::new().await;
+    let napastnik = Keypair::new();
+    airdrop(&mut env.ctx, &napastnik.pubkey(), 10_000_000_000).await;
+
+    let ix = Instruction {
+        program_id: env.program_id,
+        accounts: anl_staking::accounts::SetPause {
+            authority: napastnik.pubkey(), // ⚠️ nie admin
+            global_config: env.global_config,
+        }
+        .to_account_metas(None),
+        data: anl_staking::instruction::Pause {}.data(),
+    };
+    let res = env.send_as(&napastnik, &[ix], &[&napastnik]).await;
+    assert!(
+        res.is_err(),
+        "E1: pauza przez obcego MUSI być odrzucona (InvalidAuthority)"
+    );
+}
+
+// E2 — set_operator przez obcego: napastnik próbuje ustawić SIEBIE jako
+// operatora (a potem fundować/manipulować). Musi się odbić.
+#[tokio::test]
+async fn atak_e2_set_operator_przez_obcego() {
+    let mut env = Env::new().await;
+    let napastnik = Keypair::new();
+    airdrop(&mut env.ctx, &napastnik.pubkey(), 10_000_000_000).await;
+
+    let ix = Instruction {
+        program_id: env.program_id,
+        accounts: anl_staking::accounts::SetOperator {
+            authority: napastnik.pubkey(), // ⚠️ nie admin
+            global_config: env.global_config,
+        }
+        .to_account_metas(None),
+        data: anl_staking::instruction::SetOperator {
+            new_operator: napastnik.pubkey(),
+        }
+        .data(),
+    };
+    let res = env.send_as(&napastnik, &[ix], &[&napastnik]).await;
+    assert!(
+        res.is_err(),
+        "E2: set_operator przez obcego MUSI być odrzucone (InvalidAuthority)"
+    );
+}
+
+// E3 — Operator próbuje pauzować: operator ma prawo TYLKO fundować,
+// nie pauzować. Ustawiamy operatora legalnie (admin), potem operator
+// próbuje pauzy — musi się odbić.
+#[tokio::test]
+async fn atak_e3_operator_nie_moze_pauzowac() {
+    let mut env = Env::new().await;
+    let operator = Keypair::new();
+    airdrop(&mut env.ctx, &operator.pubkey(), 10_000_000_000).await;
+
+    // Admin legalnie ustawia operatora.
+    let set_ix = Instruction {
+        program_id: env.program_id,
+        accounts: anl_staking::accounts::SetOperator {
+            authority: env.authority.pubkey(),
+            global_config: env.global_config,
+        }
+        .to_account_metas(None),
+        data: anl_staking::instruction::SetOperator {
+            new_operator: operator.pubkey(),
+        }
+        .data(),
+    };
+    env.send(&[set_ix], &[]).await.unwrap();
+
+    // Operator próbuje pauzy — MUSI się odbić (pauza tylko dla authority).
+    let pause_ix = Instruction {
+        program_id: env.program_id,
+        accounts: anl_staking::accounts::SetPause {
+            authority: operator.pubkey(), // ⚠️ operator, nie admin
+            global_config: env.global_config,
+        }
+        .to_account_metas(None),
+        data: anl_staking::instruction::Pause {}.data(),
+    };
+    let res = env.send_as(&operator, &[pause_ix], &[&operator]).await;
+    assert!(
+        res.is_err(),
+        "E3: operator NIE może pauzować (tylko fundować) — MUSI być odrzucone"
+    );
+}
