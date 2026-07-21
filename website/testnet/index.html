@@ -654,8 +654,8 @@ nav .btn-gold{white-space:nowrap}
   var stat=document.querySelector('#validator .vsec');
   if(!box) return;
   var DICTS={
-    pl:{stake:'Rozbicie stake',self:'Self stake',pool:'Z puli delegacji',ext:'Zewnętrzny',act:'Aktywuje się',vote:'Konto vote i nagrody',vbal:'Saldo vote acc.',apr:'APR delegatora',astake:'Aktywny stake',met:'Metryki',del:'Delegatorzy',skip:'Skip rate',lead:'Sloty lidera',tot:'Łączny stake',on:'Aktywny',off:'Delinquent',src:'Dane: x1watch.xyz · łańcuch X1',upd:'Aktualizacja: '},
-    en:{stake:'Stake breakdown',self:'Self stake',pool:'Delegation pool',ext:'External',act:'Activating',vote:'Vote account & rewards',vbal:'Vote acc. balance',apr:'Delegator APR',astake:'Active stake',met:'Metrics',del:'Delegators',skip:'Skip rate',lead:'Leader slots',tot:'Total stake',on:'Active',off:'Delinquent',src:'Data: x1watch.xyz · X1 chain',upd:'Updated: '}
+    pl:{stake:'Rozbicie stake',self:'Self stake',pool:'Z puli delegacji',ext:'Zewnętrzny',act:'Aktywuje się',actIn:'aktywuje się',astakeShort:'W tym aktywny',vote:'Konto vote i nagrody',vbal:'Saldo vote acc.',apr:'APR delegatora',astake:'Aktywny stake',met:'Metryki',del:'Delegatorzy',skip:'Skip rate',lead:'Sloty lidera',tot:'Łączny stake',on:'Aktywny',off:'Delinquent',src:'Dane: x1watch.xyz · łańcuch X1',upd:'Aktualizacja: '},
+    en:{stake:'Stake breakdown',self:'Self stake',pool:'Delegation pool',ext:'External',act:'Activating',actIn:'activating',astakeShort:'Of which active',vote:'Vote account & rewards',vbal:'Vote acc. balance',apr:'Delegator APR',astake:'Active stake',met:'Metrics',del:'Delegators',skip:'Skip rate',lead:'Leader slots',tot:'Total stake',on:'Active',off:'Delinquent',src:'Data: x1watch.xyz · X1 chain',upd:'Updated: '}
   };
   var WLANG='en';function cur(){return WLANG;}
   function LBLf(){return DICTS[cur()];}
@@ -683,6 +683,13 @@ nav .btn-gold{white-space:nowrap}
     var aprDel=(INFLATION*(1-comm/100)*100);
     var voteBal=vb&&vb.current_balance_xnt!=null?vb.current_balance_xnt:null;
     var total=Number(v.total_stake_xnt)||0;
+    var OWN_WD='9oPuSbYmeeYZdUJQRuvpPa3nGnfGuRW1FeK1QKXwC5wi';
+    var selfFull=(v.delegators||[]).filter(function(d){return d.withdrawer_full===OWN_WD;}).reduce(function(a,d){return a+(Number(d.amount_xnt)||0);},0);
+    if(selfFull<=0) selfFull=Number(v.self_stake_xnt)||0;
+    var externOwn=(v.delegators||[]).filter(function(d){return d.withdrawer_full===OWN_WD&&d.type==='external';}).reduce(function(a,d){return a+(Number(d.amount_xnt)||0);},0);
+    var externReal=(Number(v.external_stake_xnt)||0)-externOwn;
+    if(externReal<0) externReal=0;
+    var selfActivating=(v.delegators||[]).filter(function(d){return d.withdrawer_full===OWN_WD&&d.status==='activating';}).reduce(function(a,d){return a+(Number(d.amount_xnt)||0);},0);
     function pct(x){return total>0?((Number(x)||0)/total*100):0;}
     box.innerHTML=
       '<div class="lv-card">'+
@@ -696,13 +703,13 @@ nav .btn-gold{white-space:nowrap}
       '<div class="lv-hero"><b>'+xnt(v.total_stake_xnt)+'</b><span>'+LBLf().tot+'</span></div>'+
       '<div class="lv-sec">'+LBLf().stake+'</div>'+
       '<div class="lv-bar">'+
-        seg(pct(v.self_stake_xnt),'var(--gold)')+seg(pct(v.pool_delegation_xnt),'#58a6ff')+
-        seg(pct(v.external_stake_xnt),'var(--mint)')+seg(pct(v.activating_stake_xnt),'#a371f7')+
+        seg(pct(selfFull),'var(--gold)')+seg(pct(v.pool_delegation_xnt),'#58a6ff')+
+        seg(pct(externReal),'var(--mint)')+seg(pct(v.activating_stake_xnt),'#a371f7')+
       '</div>'+
       '<div class="lv-grid">'+
-        it(LBLf().self, xnt(v.self_stake_xnt),'g')+
+        it(LBLf().self, xnt(selfFull)+(selfActivating>0.5?' <span style=\"color:#a371f7;font-size:.78em;font-weight:600\">('+xnt(selfActivating)+' '+LBLf().actIn+')</span>':''),'g')+
         it(LBLf().pool, xnt(v.pool_delegation_xnt),'b')+
-        it(LBLf().ext, xnt(v.external_stake_xnt),'m')+
+        it(LBLf().ext, xnt(externReal),'m')+
         it(LBLf().act, xnt(v.activating_stake_xnt),'')+
       '</div>'+
       '<div class="lv-sec">'+LBLf().vote+'</div>'+
