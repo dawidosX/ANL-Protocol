@@ -808,7 +808,7 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
   var PL = {};
   document.querySelectorAll('[data-i18n]').forEach(function(el){ PL[el.dataset.i18n] = el.innerHTML; });
   PL.demoBar = 'FAZA TESTNET — protokół wchodzi na testnet X1 · dane oznaczone MOCK są przykładowe · <a href="/whitepaper-en.html" style="color:#fff;text-decoration:underline">Whitepaper</a>';
-  var LANG = 'pl';
+  var LANG = 'en';
   var TITLES = { pl:'ANL Staking Protocol — Stakuj ANL. Zarabiaj ANL + XNT.', en:'ANL Staking Protocol — Stake ANL. Earn ANL + XNT.' };
   function setLang(l){
     LANG = l;
@@ -849,7 +849,7 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
     var forced = new URLSearchParams(location.search).get('lang');
     var pref = (forced === 'pl' || forced === 'en') ? forced : null;
     // 2) wczesniejszy, zapamietany wybor uzytkownika
-    if (!pref) { try { var s = localStorage.getItem('anlLang'); if (s === 'pl' || s === 'en') pref = s; } catch(e){} }
+    if (!pref && USE_BROWSER_LANG) { try { var s = localStorage.getItem('anlLang'); if (s === 'pl' || s === 'en') pref = s; } catch(e){} }
     // 3) polityka domyslna
     if (!pref) {
       if (USE_BROWSER_LANG) {
