@@ -1779,12 +1779,22 @@ async fn atak_d1_podwojny_claim() {
     env.claim(&user, user_a, user_x, pos, PoolType::Genesis, None)
         .await
         .unwrap();
-    // Po claim konto pozycji MUSI być zamknięte (close = owner) — nie ma
-    // czego claimować drugi raz. To zamyka wektor podwójnej wypłaty.
+    // Po claim konto pozycji MUSI być zamknięte (close = owner).
     let acc = env.ctx.banks_client.get_account(pos).await.unwrap();
     assert!(
         acc.is_none() || acc.unwrap().lamports == 0,
         "D1: po claim konto pozycji MUSI być zamknięte (brak podwójnego claim)"
+    );
+    // Rekomendacja Grok T-03: dowód TWARDY — druga próba claim nie może
+    // zwiększyć salda ANL (nawet jeśli banks_client zwróci fałszywe Ok).
+    let bal_przed = env.token_balance(user_a).await;
+    let _ = env
+        .claim(&user, user_a, user_x, pos, PoolType::Genesis, None)
+        .await;
+    let bal_po = env.token_balance(user_a).await;
+    assert_eq!(
+        bal_przed, bal_po,
+        "D1: druga próba claim NIE MOŻE zwiększyć salda ANL (brak podwójnej wypłaty)"
     );
 }
 
@@ -1966,3 +1976,115 @@ async fn atak_e3_operator_nie_moze_pauzowac() {
         "E3: operator NIE może pauzować (tylko fundować) — MUSI być odrzucone"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// GRUPA F — REKOMENDACJE Z AUDYTU GROK (T-03 + sekcja 4.2)
+// Dwa wektory wskazane niezależnie przez Groka, których nie pokrywały A-E:
+// F1 — pauza nie może więzić użytkowników (stake blokowany, wyjścia działają)
+// F2 — podstawiony checkpoint (zła epoka) przy settle → CheckpointMismatch
+// ═══════════════════════════════════════════════════════════════════════
+
+// F1 — Pauza nie więzi środków: po pauzie stake jest blokowany, ale
+// ścieżki wyjścia (unstake_early na Flexible) NADAL działają — użytkownik
+// nigdy nie jest uwięziony. (Grok 4.2 #5.)
+#[tokio::test]
+async fn atak_f1_pauza_nie_wiezi_uzytkownika() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32 + 2;
+    let (user, user_a, _) = env.user_with_anl(200 * ONE_ANL).await;
+    // Pozycja Flexible PRZED pauzą.
+    let pos = env
+        .stake(&user, user_a, PoolType::Flexible, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+
+    // Admin pauzuje protokół.
+    let pause_ix = Instruction {
+        program_id: env.program_id,
+        accounts: anl_staking::accounts::SetPause {
+            authority: env.authority.pubkey(),
+            global_config: env.global_config,
+        }
+        .to_account_metas(None),
+        data: anl_staking::instruction::Pause {}.data(),
+    };
+    env.send(&[pause_ix], &[]).await.unwrap();
+
+    // (a) Nowy stake MUSI być zablokowany podczas pauzy.
+    let (u2, u2a, _) = env.user_with_anl(100 * ONE_ANL).await;
+    let stake_res = env
+        .stake(&u2, u2a, PoolType::Flexible, 100 * ONE_ANL, days, 0)
+        .await;
+    assert!(
+        stake_res.is_err(),
+        "F1: stake podczas pauzy MUSI być zablokowany (Paused)"
+    );
+
+    // (b) KLUCZOWE: wyjście (unstake_early Flexible) MUSI działać mimo pauzy —
+    // użytkownik nie może być uwięziony ze swoim kapitałem.
+    let bal_przed = env.token_balance(user_a).await;
+    env.unstake_early(&user, user_a, pos, PoolType::Flexible)
+        .await
+        .unwrap();
+    let bal_po = env.token_balance(user_a).await;
+    assert!(
+        bal_po > bal_przed,
+        "F1: unstake podczas pauzy MUSI zwrócić kapitał — użytkownik nie uwięziony"
+    );
+}
+
+// F2 — Podstawiony checkpoint przy settle: gdy pula ma funding w WIELU
+// epokach ≤ end_epoch, settle wymaga OSTATNIEGO takiego checkpointu.
+// Napastnik podaje WCZEŚNIEJSZY (nie-ostatni) checkpoint, licząc na inny
+// (korzystniejszy) indeks. Musi się odbić CheckpointMismatch. (Grok 4.2 #6.)
+#[tokio::test]
+async fn atak_f2_podstawiony_checkpoint_na_settle() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    // Okres 5 dni: end_epoch = 4. Fundujemy w epoce 0 i epoce 2 (obie ≤ 4).
+    let days = anl_math::MIN_PERIOD_DAYS as u32 + 4;
+    let (user, user_a, _) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&user, user_a, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+
+    // Funding #1 w epoce 0.
+    env.fund_xnt(1_000).await.unwrap();
+    let ep0 = env.current_epoch().await;
+    // Przeskok o 2 dni → epoka 2, funding #2.
+    env.advance(2 * DAY).await;
+    env.fund_xnt(1_000).await.unwrap();
+    let ep2 = env.current_epoch().await;
+    assert!(ep2 > ep0, "kontrola: dwa fundingi w różnych epokach");
+
+    // Dojazd do końca okresu.
+    env.advance((days as i64) * DAY + DAY).await;
+
+    // Atak: settle z checkpointem WCZEŚNIEJSZEJ epoki (ep0), gdy właściwy
+    // to ostatni ≤ end_epoch (ep2). ep0 ma next_funded_epoch = ep2 ≤ end_epoch,
+    // więc warunek "brak następcy albo następca > end_epoch" jest FAŁSZYWY → odbicie.
+    let ix = Instruction {
+        program_id: env.program_id,
+        accounts: anl_staking::accounts::SettleExpired {
+            cranker: env.authority.pubkey(),
+            pool_config: env.genesis_pool,
+            user_position: pos,
+            xnt_checkpoint: Some(env.ckpt_pda(PoolType::Genesis, ep0)), // ⚠️ nie-ostatni
+        }
+        .to_account_metas(None),
+        data: anl_staking::instruction::SettleExpired {}.data(),
+    };
+    let res = env.send(&[ix], &[]).await;
+    assert!(
+        res.is_err(),
+        "F2: settle z WCZEŚNIEJSZYM (nie-ostatnim) checkpointem MUSI być odrzucone (CheckpointMismatch)"
+    );
+
+    // Dowód pozytywny: settle z POPRAWNYM (ostatnim ≤ end_epoch) checkpointem przechodzi.
+    env.settle(pos, PoolType::Genesis, Some(ep2))
+        .await
+        .unwrap();
+}
+
