@@ -1003,7 +1003,7 @@ nav .btn-gold{white-space:nowrap}
   // Linki do whitepapera podazaja za jezykiem strony (PL -> /whitepaper, EN -> /whitepaper-en)
   (function(){
     function syncWP(l){
-      document.querySelectorAll('a[href="/whitepaper.html"],a[href="/ANL_White_Paper_EN.pdf" target="_blank" rel="noopener"]').forEach(function(a){
+      document.querySelectorAll('a[href="/whitepaper.html"],a[href="/ANL_White_Paper_EN.pdf"]').forEach(function(a){
         a.setAttribute('href', l === 'en' ? 'https://anl.analtena.com/whitepaper-en' : '/whitepaper');
       });
     }
