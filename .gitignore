@@ -11,3 +11,4 @@ id.json
 .env
 .DS_Store
 scripts/
+website/testnet/*_01.html
