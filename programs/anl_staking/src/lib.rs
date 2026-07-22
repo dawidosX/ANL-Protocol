@@ -110,6 +110,13 @@ pub mod anl_staking {
         instructions::lifecycle::claim(ctx)
     }
 
+    /// WP okna Genesis: przed end_ts — okienkowa wypłata XNT (co pełne 30 dni
+    /// od genesis), kumulacja przez xnt_window_claimed; pozycja NIE zamykana,
+    /// kapitał zablokowany do end_ts. Tylko pule Genesis.
+    pub fn claim_genesis_window(ctx: Context<ClaimGenesisWindow>) -> Result<()> {
+        instructions::lifecycle::claim_genesis_window(ctx)
+    }
+
     /// WP §7: przed end_ts — principal wraca w całości, całość nagród przepada.
     pub fn unstake_early(ctx: Context<UnstakeEarly>) -> Result<()> {
         instructions::lifecycle::unstake_early(ctx)

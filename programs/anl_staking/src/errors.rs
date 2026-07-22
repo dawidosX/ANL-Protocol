@@ -84,6 +84,10 @@ pub enum AnlError {
     CheckpointMismatch,
     #[msg("Operator pubkey is invalid or unchanged")]
     InvalidOperator,
+    #[msg("Genesis window not reached yet (need a full 30-day block)")]
+    WindowNotReached,
+    #[msg("Genesis window claim is only for Genesis positions")]
+    NotGenesisPool,
 }
 
 impl From<anl_math::MathError> for AnlError {

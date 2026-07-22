@@ -146,6 +146,29 @@ impl PoolConfig {
         Ok(pending)
     }
 
+    /// Genesis okna (WP okna 30-dniowe): policz XNT naliczony do `cap_index`
+    /// BEZ zdejmowania shares — pozycja żyje dalej i nalicza w kolejnych oknach.
+    /// Zwraca skumulowaną należność do progu (nie „do teraz"). Kwota do wypłaty
+    /// w danym oknie = ta wartość MINUS `xnt_window_claimed` pozycji.
+    /// `&self` — nic nie mutuje (w przeciwieństwie do settle_position_at).
+    pub fn accrued_to_cap(
+        &self,
+        shares: u64,
+        debt_index: u128,
+        cap_index: u128,
+    ) -> std::result::Result<u64, anl_math::MathError> {
+        let delta = cap_index
+            .checked_sub(debt_index)
+            .ok_or(anl_math::MathError::Overflow)?;
+        let acc_u128 = delta
+            .checked_mul(shares as u128)
+            .ok_or(anl_math::MathError::Overflow)?
+            / anl_math::PRECISION;
+        acc_u128
+            .try_into()
+            .map_err(|_| anl_math::MathError::Overflow)
+    }
+
     /// Wcześniejsze zerwanie (WP §7): naliczone XNT wracają do puli
     /// dystrybucji koszyka (`xnt_undistributed`), shares schodzą.
     pub fn forfeit_position(
@@ -192,12 +215,18 @@ pub struct UserPosition {
     /// Epoka XNT zawierająca ostatnią naliczaną sekundę pozycji
     /// (epoch_of(end_ts - 1)). Settlement używa checkpointu ≤ end_epoch.
     pub end_epoch: u64,
-    pub reserved: [u8; 24],
+    /// Genesis: skumulowana suma XNT już wypłacona w oknach 30-dniowych.
+    /// Zapewnia kumulację i chroni przed podwójną wypłatą (WP okna Genesis).
+    pub xnt_window_claimed: u64,
+    /// Genesis: timestamp ostatniej wypłaty okienkowej (0 = nigdy).
+    pub last_window_ts: i64,
+    pub reserved: [u8; 8],
 }
 
 impl UserPosition {
+    // ...end_epoch(8) + xnt_window_claimed(8) + last_window_ts(8) + reserved(8) = 32
     pub const LEN: usize =
-        8 + 1 + 32 + 1 + 1 + 8 + 8 + 8 + 2 + 4 + 8 + 8 + 8 + 8 + 1 + 16 + 1 + 8 + 24;
+        8 + 1 + 32 + 1 + 1 + 8 + 8 + 8 + 2 + 4 + 8 + 8 + 8 + 8 + 1 + 16 + 1 + 8 + 8 + 8 + 8;
 }
 
 #[account]

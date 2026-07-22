@@ -194,7 +194,9 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
     pos.bump = ctx.bumps.user_position;
     pos.end_epoch = epoch_of(pos.end_ts.saturating_sub(1), cfg.genesis_start_ts)
         .ok_or(AnlError::BeforeGenesis)?;
-    pos.reserved = [0; 24];
+    pos.xnt_window_claimed = 0;
+    pos.last_window_ts = 0;
+    pos.reserved = [0; 8];
 
     emit!(PositionOpened {
         owner: pos.owner,

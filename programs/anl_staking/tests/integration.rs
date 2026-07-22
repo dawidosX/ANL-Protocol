@@ -606,6 +606,39 @@ impl Env {
         self.send(&[ix], &[user]).await
     }
 
+    async fn claim_genesis_window(
+        &mut self,
+        user: &Keypair,
+        user_xnt: Pubkey,
+        position: Pubkey,
+        pool_type: PoolType,
+        ckpt_epoch: Option<u64>,
+    ) -> Result<(), BanksClientError> {
+        let pool = if pool_type == PoolType::Genesis {
+            self.genesis_pool
+        } else {
+            self.flexible_pool
+        };
+        let ix = Instruction {
+            program_id: self.program_id,
+            accounts: anl_staking::accounts::ClaimGenesisWindow {
+                owner: user.pubkey(),
+                global_config: self.global_config,
+                pool_config: pool,
+                user_position: position,
+                vault_authority: self.vault_authority,
+                xnt_mint: self.xnt_mint,
+                xnt_vault: self.xnt_vault,
+                owner_xnt: user_xnt,
+                xnt_token_program: spl_token::id(),
+                xnt_checkpoint: ckpt_epoch.map(|e| self.ckpt_pda(pool_type, e)),
+            }
+            .to_account_metas(None),
+            data: anl_staking::instruction::ClaimGenesisWindow {}.data(),
+        };
+        self.send(&[ix], &[user]).await
+    }
+
     async fn unstake_early(
         &mut self,
         user: &Keypair,
@@ -2228,4 +2261,228 @@ async fn atak_g3_double_settle_po_dojrzeniu() {
         );
     }
     // Jeśli res2.is_err() — program odrzucił drugie rozliczenie, co też jest poprawne.
+}
+
+// ==================================================== GW: okna Genesis (30-dniowe)
+// GENESIS_WINDOW_DAYS = 3 w test-periods (produkcyjnie 30). Blok liczony od
+// genesis protokołu: pełny_blok = epoch(now)/W, próg = pełne_bloki*W - 1.
+
+/// GW-1: przed pierwszym pełnym blokiem → WindowNotReached.
+#[tokio::test]
+async fn gw1_window_not_reached_before_first_block() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let days = 90; // długa pozycja Genesis, żeby okna miały sens
+    let (alice, alice_anl, alice_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&alice, alice_anl, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+    // dzień 0 — żaden pełny blok nie minął
+    let r = env
+        .claim_genesis_window(&alice, alice_xnt, pos, PoolType::Genesis, None)
+        .await;
+    assert!(r.is_err(), "GW-1: przed pełnym blokiem okno musi być zamknięte");
+}
+
+/// GW-2: po pierwszym pełnym bloku → wypłaca XNT naliczony do progu, pozycja żyje.
+#[tokio::test]
+async fn gw2_first_window_pays_and_keeps_position() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let w = anl_math::GENESIS_WINDOW_DAYS as i64;
+    let days = 90;
+    let (alice, alice_anl, alice_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&alice, alice_anl, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+    // funduj codziennie przez pierwszy blok
+    let mut last_ep = None;
+    for _ in 0..w {
+        env.fund_xnt(600_000).await.unwrap();
+        last_ep = Some(env.current_epoch().await);
+        env.advance(DAY).await;
+    }
+    // teraz jesteśmy w bloku 1 (dzień w = początek 2. bloku). prog_epoch = w-1.
+    let xnt_before = env.token_balance(alice_xnt).await;
+    let prog_epoch = w as u64 - 1;
+    // checkpoint dla prog_epoch — użyj epoki ostatniego fundingu ≤ prog_epoch
+    let ck = last_ep.filter(|e| *e <= prog_epoch);
+    env.claim_genesis_window(&alice, alice_xnt, pos, PoolType::Genesis, ck)
+        .await
+        .unwrap();
+    let paid = env.token_balance(alice_xnt).await - xnt_before;
+    assert!(paid > 0, "GW-2: pierwsze okno musi wypłacić XNT");
+    // pozycja NADAL aktywna, kapitał nietknięty, shares zostają
+    let p = env.position(pos).await;
+    assert_eq!(p.status, PositionStatus::Active, "GW-2: pozycja żyje po oknie");
+    assert_eq!(p.amount, 100 * ONE_ANL, "GW-2: kapitał zablokowany");
+    assert_eq!(p.xnt_window_claimed, paid, "GW-2: kumulacja zapisana");
+}
+
+/// GW-3: podwójne wołanie w tym samym oknie → drugie NothingToClaim.
+#[tokio::test]
+async fn gw3_double_claim_same_window_rejected() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let w = anl_math::GENESIS_WINDOW_DAYS as i64;
+    let (alice, alice_anl, alice_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&alice, alice_anl, PoolType::Genesis, 100 * ONE_ANL, 90, 0)
+        .await
+        .unwrap();
+    let mut last_ep = None;
+    for _ in 0..w {
+        env.fund_xnt(600_000).await.unwrap();
+        last_ep = Some(env.current_epoch().await);
+        env.advance(DAY).await;
+    }
+    let prog_epoch = w as u64 - 1;
+    let ck = last_ep.filter(|e| *e <= prog_epoch);
+    env.claim_genesis_window(&alice, alice_xnt, pos, PoolType::Genesis, ck)
+        .await
+        .unwrap();
+    let claimed_1 = env.position(pos).await.xnt_window_claimed;
+    let bal_1 = env.token_balance(alice_xnt).await;
+
+    // Przesuń zegar o minutę — WCIĄŻ ten sam blok okienkowy, ale transakcja
+    // jest odrębna (inny blockhash), więc nie zadziała dedup BanksClienta.
+    env.advance(60).await;
+
+    // Drugie wołanie w tym samym oknie: MUSI być odrzucone ALBO no-op —
+    // w żadnym razie nie może wypłacić XNT drugi raz.
+    let r2 = env
+        .claim_genesis_window(&alice, alice_xnt, pos, PoolType::Genesis, ck)
+        .await;
+    if r2.is_ok() {
+        assert_eq!(
+            env.position(pos).await.xnt_window_claimed,
+            claimed_1,
+            "GW-3: drugie okno NIE MOŻE zwiększyć kumulacji"
+        );
+    }
+    assert_eq!(
+        env.token_balance(alice_xnt).await,
+        bal_1,
+        "GW-3: drugie okno NIE MOŻE wypłacić XNT drugi raz"
+    );
+}
+
+/// GW-4: kumulacja — pomiń blok, następne okno wypłaca za oba.
+#[tokio::test]
+async fn gw4_cumulation_across_skipped_block() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let w = anl_math::GENESIS_WINDOW_DAYS as i64;
+    let (alice, alice_anl, alice_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&alice, alice_anl, PoolType::Genesis, 100 * ONE_ANL, 90, 0)
+        .await
+        .unwrap();
+    // funduj przez 2 pełne bloki (2*w dni), NIE odbieraj po pierwszym
+    let mut last_ep = None;
+    for _ in 0..(2 * w) {
+        env.fund_xnt(600_000).await.unwrap();
+        last_ep = Some(env.current_epoch().await);
+        env.advance(DAY).await;
+    }
+    // teraz w bloku 2 (minęły 2 pełne bloki). prog_epoch = 2*w - 1.
+    let prog_epoch = 2 * w as u64 - 1;
+    let ck = last_ep.filter(|e| *e <= prog_epoch);
+    let xnt_before = env.token_balance(alice_xnt).await;
+    env.claim_genesis_window(&alice, alice_xnt, pos, PoolType::Genesis, ck)
+        .await
+        .unwrap();
+    let paid = env.token_balance(alice_xnt).await - xnt_before;
+    // jedyna alicja w Genesis → dostaje ~cały koszyk Genesis za 2*w dni fundingu
+    // (2*w × 65% z 600k = 2*w × 390_000). Kluczowe: wypłata objęła OBA bloki.
+    let expected_min = (2 * w as u64) * 390_000 - 10; // tolerancja floor
+    assert!(
+        paid >= expected_min,
+        "GW-4: kumulacja musi objąć oba bloki (paid={} exp>={})",
+        paid, expected_min
+    );
+}
+
+/// GW-5: końcowy claim po oknach → wypłaca resztę (frozen − window_claimed), bez podwójnej.
+#[tokio::test]
+async fn gw5_final_claim_subtracts_window_claimed() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let w = anl_math::GENESIS_WINDOW_DAYS as i64;
+    // pozycja Genesis kończy się PO pierwszym oknie: days = w + 1
+    let days = (w + 1) as u32;
+    let (alice, alice_anl, alice_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&alice, alice_anl, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+    // funduj przez pierwszy blok
+    let mut last_ep = None;
+    for _ in 0..w {
+        env.fund_xnt(600_000).await.unwrap();
+        last_ep = Some(env.current_epoch().await);
+        env.advance(DAY).await;
+    }
+    // odbierz okno 1
+    let prog_epoch = w as u64 - 1;
+    let ck_win = last_ep.filter(|e| *e <= prog_epoch);
+    env.claim_genesis_window(&alice, alice_xnt, pos, PoolType::Genesis, ck_win)
+        .await
+        .unwrap();
+    let after_window = env.token_balance(alice_xnt).await;
+    let window_claimed = env.position(pos).await.xnt_window_claimed;
+    assert!(window_claimed > 0, "GW-5: okno wypłaciło część");
+    // dojedź do end_ts i zrób końcowy claim
+    env.advance(2 * DAY).await; // przekrocz end_ts (days = w+1)
+    let end_epoch = env.position(pos).await.end_epoch;
+    // checkpoint końcowy ≤ end_epoch
+    let ck_end = last_ep.filter(|e| *e <= end_epoch);
+    env.claim(&alice, alice_anl, alice_xnt, pos, PoolType::Genesis, ck_end)
+        .await
+        .unwrap();
+    let final_xnt = env.token_balance(alice_xnt).await - after_window;
+    // końcowy XNT = całość naliczona − już wypłacone w oknie; NIE może podwoić.
+    // suma (okno + końcówka) musi ≈ całość naliczona do end_epoch.
+    let total_paid = window_claimed + final_xnt;
+    // całość ≈ w dni × 390_000 (65% z 600k), pozycja jedyna w Genesis
+    let expected_total = (w as u64) * 390_000;
+    assert!(
+        total_paid <= expected_total + 10 && total_paid + 10 >= expected_total,
+        "GW-5: suma okno+końcówka ≈ całość ({} vs {}), bez podwójnej wypłaty",
+        total_paid, expected_total
+    );
+    // pozycja zamknięta po końcowym claim (konto usunięte, close=owner)
+    assert!(
+        env.ctx
+            .banks_client
+            .get_account(pos)
+            .await
+            .unwrap()
+            .is_none(),
+        "GW-5: końcowy claim zamyka pozycję"
+    );
+}
+
+/// GW-6: Flexible → claim_genesis_window odrzucony (NotGenesisPool).
+#[tokio::test]
+async fn gw6_flexible_rejected_from_window_claim() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let w = anl_math::GENESIS_WINDOW_DAYS as i64;
+    let (alice, alice_anl, alice_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&alice, alice_anl, PoolType::Flexible, 100 * ONE_ANL, 90, 0)
+        .await
+        .unwrap();
+    for _ in 0..w {
+        env.fund_xnt(600_000).await.unwrap();
+        env.advance(DAY).await;
+    }
+    // Flexible NIE ma okien — instrukcja musi odrzucić
+    let r = env
+        .claim_genesis_window(&alice, alice_xnt, pos, PoolType::Flexible, None)
+        .await;
+    assert!(r.is_err(), "GW-6: Flexible nie może użyć okna Genesis");
 }

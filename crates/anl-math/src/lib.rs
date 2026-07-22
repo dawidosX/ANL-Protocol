@@ -39,6 +39,15 @@ pub const MIN_PERIOD_DAYS: i64 = 7;
 pub const MIN_PERIOD_DAYS: i64 = 1;
 pub const MAX_PERIOD_DAYS: i64 = 3_650;
 
+/// WP okna Genesis: okienkowa wypłata XNT co pełny blok N-dniowy liczony od
+/// genesis protokołu. Produkcyjnie 30 dni; w `test-periods` skrócone do 3 dni
+/// (spójnie z pozostałymi oknami), by suite mógł zweryfikować kumulację bez
+/// przewijania 30 dób symulowanego czasu.
+#[cfg(not(feature = "test-periods"))]
+pub const GENESIS_WINDOW_DAYS: u64 = 30;
+#[cfg(feature = "test-periods")]
+pub const GENESIS_WINDOW_DAYS: u64 = 3;
+
 pub const XNT_SHARE_GENESIS_BPS: u128 = 6_500; // Flexible = reszta (35%)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

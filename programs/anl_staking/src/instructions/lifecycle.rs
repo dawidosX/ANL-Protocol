@@ -63,7 +63,24 @@ fn settlement_cap_index(
     ckpt: Option<&UncheckedAccount>,
     program_id: &Pubkey,
 ) -> Result<u128> {
-    if pool.last_funded_epoch == NO_EPOCH || pool.first_funded_epoch > pos.end_epoch {
+    // Settlement końcowy liczy XNT do końca end_epoch pozycji.
+    cap_index_at(pool, pos, pos.end_epoch, ckpt, program_id)
+}
+
+/// Indeks-granica dla DOWOLNEJ epoki docelowej `target_epoch` (audyt #2:
+/// snapshot ostatniej epoki fundingu ≤ target_epoch). Wspólny rdzeń dla
+/// końcowego settlementu (target = end_epoch) ORAZ okien Genesis
+/// (target = koniec ostatniego pełnego bloku 30-dniowego). Gdy pula nie
+/// miała fundingu ≤ target_epoch → pending = 0 (indeks = debt), checkpoint
+/// niewymagany.
+fn cap_index_at(
+    pool: &PoolConfig,
+    pos: &UserPosition,
+    target_epoch: u64,
+    ckpt: Option<&UncheckedAccount>,
+    program_id: &Pubkey,
+) -> Result<u128> {
+    if pool.last_funded_epoch == NO_EPOCH || pool.first_funded_epoch > target_epoch {
         return Ok(pos.xnt_debt_index);
     }
     let ai = ckpt.ok_or(AnlError::CheckpointRequired)?;
@@ -74,10 +91,10 @@ fn settlement_cap_index(
         ck.version == ACCOUNT_VERSION && ck.pool_type == pos.pool_type,
         AnlError::CheckpointMismatch
     );
-    require!(ck.epoch <= pos.end_epoch, AnlError::CheckpointMismatch);
-    // dowód "ostatni ≤ end_epoch": brak następcy albo następca > end_epoch
+    require!(ck.epoch <= target_epoch, AnlError::CheckpointMismatch);
+    // dowód "ostatni ≤ target_epoch": brak następcy albo następca > target_epoch
     require!(
-        ck.next_funded_epoch == NO_EPOCH || ck.next_funded_epoch > pos.end_epoch,
+        ck.next_funded_epoch == NO_EPOCH || ck.next_funded_epoch > target_epoch,
         AnlError::CheckpointMismatch
     );
     let (pda, _) = Pubkey::find_program_address(
@@ -252,7 +269,17 @@ pub fn claim(ctx: Context<Claim>) -> Result<()> {
 
     let amount = ctx.accounts.user_position.amount;
     let anl_reward = ctx.accounts.user_position.anl_reward;
-    let xnt_accrued = ctx.accounts.user_position.xnt_accrued;
+    // Genesis: część XNT mogła być już wypłacona w oknach 30-dniowych.
+    // Końcowa wypłata XNT = pełna naliczona (xnt_accrued) MINUS już wypłacone
+    // w oknach. Działa niezależnie od tego, czy settle wykonał się teraz czy
+    // wcześniej przez bota (xnt_accrued zawsze trzyma pełną kwotę). Flexible:
+    // xnt_window_claimed == 0, więc bez zmiany.
+    let xnt_accrued = ctx
+        .accounts
+        .user_position
+        .xnt_accrued
+        .checked_sub(ctx.accounts.user_position.xnt_window_claimed)
+        .ok_or(AnlError::MathOverflow)?;
 
     require!(
         ctx.accounts.reward_vault.amount >= anl_reward,
@@ -352,6 +379,180 @@ pub struct PositionClaimed {
     pub principal: u64,
     pub anl_reward: u64,
     pub xnt_reward: u64,
+    pub timestamp: i64,
+}
+
+// ------------------------------------------------------ claim_genesis_window
+
+/// Okienkowa wypłata XNT dla pozycji Genesis (WP okna 30-dniowe). Wypłaca
+/// XNT naliczony do końca ostatniego PEŁNEGO bloku 30-dniowego, minus to,
+/// co już wypłacono w poprzednich oknach (kumulacja). NIE zdejmuje shares,
+/// NIE zamyka pozycji — kapitał zablokowany do end_ts (zwykły claim). Konta
+/// jak podzbiór Claim: bez principal_vault/reward_vault (wypłacamy tylko XNT)
+/// i BEZ close=owner (pozycja żyje).
+#[derive(Accounts)]
+pub struct ClaimGenesisWindow<'info> {
+    #[account(mut, constraint = owner.key() == user_position.owner @ AnlError::PositionOwnerMismatch)]
+    pub owner: Signer<'info>,
+
+    #[account(
+        mut,
+        seeds = [GLOBAL_CONFIG_SEED],
+        bump = global_config.bump,
+        constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
+    )]
+    pub global_config: Box<Account<'info, GlobalConfig>>,
+
+    #[account(
+        mut,
+        seeds = [POOL_SEED, &[pool_config.pool_type as u8]],
+        bump = pool_config.bump,
+        constraint = pool_config.pool_type == user_position.pool_type @ AnlError::InvalidVault,
+        constraint = pool_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
+    )]
+    pub pool_config: Box<Account<'info, PoolConfig>>,
+
+    #[account(
+        mut,
+        constraint = user_position.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion,
+        seeds = [
+            USER_POSITION_SEED,
+            owner.key().as_ref(),
+            &user_position.position_index.to_le_bytes()
+        ],
+        bump = user_position.bump
+    )]
+    pub user_position: Box<Account<'info, UserPosition>>,
+
+    /// CHECK: PDA-authority skarbców (seeds + bump).
+    #[account(seeds = [VAULT_AUTHORITY_SEED], bump = global_config.vault_authority_bump)]
+    pub vault_authority: UncheckedAccount<'info>,
+
+    #[account(address = global_config.xnt_mint @ AnlError::InvalidMint)]
+    pub xnt_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(mut, seeds = [XNT_VAULT_SEED], bump,
+        token::mint = xnt_mint, token::authority = vault_authority,
+        token::token_program = xnt_token_program)]
+    pub xnt_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        token::mint = xnt_mint,
+        token::authority = owner,
+        token::token_program = xnt_token_program
+    )]
+    pub owner_xnt: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    pub xnt_token_program: Program<'info, Token>,
+
+    /// CHECK: checkpoint ≤ prog_epoch (koniec ostatniego pełnego bloku).
+    /// PDA + łańcuch (next) weryfikowane w handlerze. None dozwolone tylko,
+    /// gdy pula nie miała fundingu ≤ prog_epoch.
+    pub xnt_checkpoint: Option<UncheckedAccount<'info>>,
+}
+
+/// Liczba dni w bloku okienkowym Genesis — z anl-math (reaguje na test-periods).
+pub use anl_math::GENESIS_WINDOW_DAYS;
+
+pub fn claim_genesis_window(ctx: Context<ClaimGenesisWindow>) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    let genesis_start_ts = ctx.accounts.global_config.genesis_start_ts;
+
+    require!(
+        ctx.accounts.user_position.status == PositionStatus::Active,
+        AnlError::PositionClosed
+    );
+    // Okna dotyczą WYŁĄCZNIE Genesis (Flexible wypłaca na end_ts przez claim).
+    require!(
+        ctx.accounts.user_position.pool_type == PoolType::Genesis,
+        AnlError::NotGenesisPool
+    );
+    // Przed end_ts — po zakończeniu okresu domyka zwykły claim (odejmie okna).
+    require!(
+        now < ctx.accounts.user_position.end_ts,
+        AnlError::PeriodAlreadyEnded
+    );
+
+    // Ile PEŁNYCH bloków 30-dniowych minęło od genesis protokołu.
+    let cur_epoch = epoch_of(now, genesis_start_ts).ok_or(AnlError::BeforeGenesis)?;
+    let full_blocks = cur_epoch / GENESIS_WINDOW_DAYS;
+    require!(full_blocks >= 1, AnlError::WindowNotReached);
+    // Próg = ostatnia epoka ostatniego pełnego bloku (koniec bloku).
+    let prog_epoch = full_blocks * GENESIS_WINDOW_DAYS - 1;
+
+    // Indeks-granica do prog_epoch (audyt #2: snapshot ostatniego fundingu ≤ prog).
+    let cap = cap_index_at(
+        &ctx.accounts.pool_config,
+        &ctx.accounts.user_position,
+        prog_epoch,
+        ctx.accounts.xnt_checkpoint.as_ref(),
+        ctx.program_id,
+    )?;
+
+    let shares = ctx.accounts.user_position.shares;
+    let debt = ctx.accounts.user_position.xnt_debt_index;
+    // Skumulowana należność do progu — BEZ zdejmowania shares (pozycja żyje).
+    let accrued_to_prog = ctx
+        .accounts
+        .pool_config
+        .accrued_to_cap(shares, debt, cap)
+        .map_err(AnlError::from)?;
+
+    // Do wypłaty = należność do progu MINUS już wypłacone w oknach (kumulacja).
+    let already = ctx.accounts.user_position.xnt_window_claimed;
+    let to_pay = accrued_to_prog
+        .checked_sub(already)
+        .ok_or(AnlError::MathOverflow)?;
+    require!(to_pay > 0, AnlError::NothingToClaim);
+    require!(
+        ctx.accounts.xnt_vault.amount >= to_pay,
+        AnlError::InsufficientXntVault
+    );
+
+    let bump = ctx.accounts.global_config.vault_authority_bump;
+    let seeds: &[&[u8]] = &[VAULT_AUTHORITY_SEED, &[bump]];
+    let signer: &[&[&[u8]]] = &[seeds];
+
+    // Wypłata XNT z XNT Vault (tylko XNT — principal/ANL zostają do końcowego claim).
+    token_interface::transfer_checked(
+        CpiContext::new_with_signer(
+            ctx.accounts.xnt_token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.xnt_vault.to_account_info(),
+                mint: ctx.accounts.xnt_mint.to_account_info(),
+                to: ctx.accounts.owner_xnt.to_account_info(),
+                authority: ctx.accounts.vault_authority.to_account_info(),
+            },
+            signer,
+        ),
+        to_pay,
+        ctx.accounts.xnt_mint.decimals,
+    )?;
+
+    // Kumulacja — NIE zdejmuj shares, NIE zamykaj pozycji.
+    let pos = &mut ctx.accounts.user_position;
+    pos.xnt_window_claimed = already
+        .checked_add(to_pay)
+        .ok_or(AnlError::MathOverflow)?;
+    pos.last_window_ts = now;
+
+    emit!(GenesisWindowClaimed {
+        owner: pos.owner,
+        position_index: pos.position_index,
+        xnt_paid: to_pay,
+        cumulative_claimed: pos.xnt_window_claimed,
+        timestamp: now,
+    });
+    Ok(())
+}
+
+#[event]
+pub struct GenesisWindowClaimed {
+    pub owner: Pubkey,
+    pub position_index: u64,
+    pub xnt_paid: u64,
+    pub cumulative_claimed: u64,
     pub timestamp: i64,
 }
 

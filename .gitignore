@@ -10,3 +10,4 @@ test-ledger/
 id.json
 .env
 .DS_Store
+scripts/
