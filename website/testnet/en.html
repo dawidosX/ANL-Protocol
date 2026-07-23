@@ -1418,7 +1418,27 @@ function decodePosition(data){
     xntAccrued: dv.getBigUint64(97, true),
     settled: data[105]===1,
     xntDebt: u128(106),
+    endEpoch: dv.getBigUint64(123, true),
+    xntWindowClaimed: dv.getBigUint64(131, true),
   };
+}
+const NO_EPOCH = 18446744073709551615n;
+const _capCache = new Map();
+// Indeks-granica: kontrakt liczy XNT WYLACZNIE do checkpointu end_epoch
+// (audyt #2). Funding po zakonczeniu pozycji NIE nalezy sie jej.
+async function capIndexAt(poolType, endEpoch, pool, debt){
+  if(pool.lastFunded === NO_EPOCH) return debt;      // nigdy nie fundowano
+  if(endEpoch >= pool.lastFunded) return pool.idx;    // pozycja obejmuje ostatni funding
+  const key = poolType+":"+endEpoch;
+  if(_capCache.has(key)) { const v=_capCache.get(key); return v===null? debt : v; }
+  const ck = await findCheckpoint(poolType, endEpoch);
+  if(!ck){ _capCache.set(key, null); return debt; }   // brak fundingu <= end_epoch
+  const info = await conn.getAccountInfo(ck);
+  if(!info){ _capCache.set(key, null); return debt; }
+  const dv = new DataView(info.data.buffer, info.data.byteOffset);
+  const idx = (dv.getBigUint64(18+8,true)<<64n) | dv.getBigUint64(18,true);
+  _capCache.set(key, idx);
+  return idx;
 }
 const XNT_PRECISION = 1_000_000_000_000n; // 1e12 — jak w kontrakcie (anl-math)
 const fmtXnt = (lam)=> (Number(lam)/1e9).toLocaleString("pl-PL",{maximumFractionDigits:4});
@@ -1431,10 +1451,25 @@ async function poolXntIndexes(){
     const dv=new DataView(info.data.buffer, info.data.byteOffset);
     return { idx: (dv.getBigUint64(29+8,true)<<64n) | dv.getBigUint64(29,true),
              shares: dv.getBigUint64(21,true),
+             lastFunded: dv.getBigUint64(61,true),
              und: dv.getBigUint64(45,true) }; };
   return [rd(infos[0]), rd(infos[1])]; // [Flexible, Genesis]
 }
 
+const DISC_WINDOW  = new Uint8Array([138,144,217,84,206,222,58,254]); // claim_genesis_window
+// Blok okienkowy Genesis: 3 dni na testnecie (build test-periods), 30 na mainnecie.
+const GENESIS_WINDOW_DAYS = 3n;
+// Zwraca prog_epoch (koniec ostatniego PELNEGO bloku) albo null gdy okno zamkniete.
+async function genesisWindowProg(){
+  try{
+    const cfg = await conn.getAccountInfo(globalConfig);
+    if(!cfg) return null;
+    const gts = new DataView(cfg.data.buffer, cfg.data.byteOffset).getBigInt64(106, true);
+    const ep  = (BigInt(Math.floor(Date.now()/1000)) - gts) / 86400n;
+    const blocks = ep / GENESIS_WINDOW_DAYS;
+    return blocks >= 1n ? blocks * GENESIS_WINDOW_DAYS - 1n : null;
+  }catch(e){ return null; }
+}
 const DISC_CLAIMED = [149,250,141,45,210,198,94,148];
 function decodeClaimed(b64){
   const buf = Uint8Array.from(atob(b64), function(c){return c.charCodeAt(0);});
@@ -1473,7 +1508,7 @@ async function loadHistory(){
   rows.sort(function(a,b){ return b.ts - a.ts; });
   const EXP = "https://explorer.x1.xyz/tx/";
   tb.innerHTML = rows.map(function(r){
-    const d = new Date(r.ts*1000).toLocaleDateString(LANG==="pl"?"pl-PL":"en-US",{dateStyle:"short"});
+    const d = new Date(r.ts*1000).toLocaleDateString((function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl"?"pl-PL":"en-US";}catch(e){return "en-US";}})(),{dateStyle:"short"});
     return "<tr><td>"+r.idx.toString()+"</td>"+
       "<td>"+fmtAnl(r.principal)+" ANL</td>"+
       "<td>"+fmtAnl(r.anl)+" ANL</td>"+
@@ -1488,6 +1523,7 @@ async function loadPositions(){
   const n = await nextIndex();
   if(n === 0n){ tb.innerHTML = '<tr><td colspan="10" class="mut">'+T("noPos")+'</td></tr>'; return; }
   const poolIdx = await poolXntIndexes();
+  const winProg = await genesisWindowProg();  // null = okno zamkniete
   let rows = "";
   let epochSum = 0n;
   for(let i=0n; i<n; i++){
@@ -1506,14 +1542,22 @@ async function loadPositions(){
     else { const h = Math.ceil((p.end-now)/3600); st = '<span class="hl">'+T("active")+(h>48? Math.ceil(h/24)+' '+T("days") : h+' h')+'</span>'
       + (p.pool===0
          ? '<button class="unbtn" onclick="anlUnstake('+i+','+p.pool+')">'+T("unstakeBtn")+'</button>'
-         : '<span class="lockg" title="'+T("lockedGT")+'">🔒</span>'); }
+         : '<span class="lockg" title="'+T("lockedGT")+'">🔒</span>'
+           + (winProg!==null ? '<button class="unbtn" onclick="anlClaimWindow('+i+')">'
+              + ((window.anlCurrentLang&&window.anlCurrentLang()==="pl")?"Odbierz XNT":"Claim XNT")
+              + '</button>' : '')); }
     let xntCell;
     if(p.status===1) xntCell = '<span class="mut">—</span>';
-    else if(p.settled) xntCell = fmtXnt(p.xntAccrued)+' XNT';
+    else if(p.settled){
+      const net = p.xntAccrued > p.xntWindowClaimed ? p.xntAccrued - p.xntWindowClaimed : 0n;
+      xntCell = fmtXnt(net)+' XNT';
+    }
     else {
       const pd = poolIdx[p.pool];
-      const delta = pd.idx > p.xntDebt ? pd.idx - p.xntDebt : 0n;
-      const total = delta * p.shares / XNT_PRECISION;
+      const cap = await capIndexAt(p.pool, p.endEpoch, pd, p.xntDebt);
+      const delta = cap > p.xntDebt ? cap - p.xntDebt : 0n;
+      let total = delta * p.shares / XNT_PRECISION;
+      if(total > p.xntWindowClaimed) total -= p.xntWindowClaimed; else total = 0n;
       epochSum += total;
       xntCell = fmtXnt(total)+' XNT';
     }
@@ -1628,6 +1672,51 @@ async function claimPosition(i, poolType){
     okFade();
   }
 }
+async function claimGenesisWindow(i){
+  if(!pubkey) return;
+  try{
+    const winProg = await genesisWindowProg();
+    if(winProg===null){
+      log("❌ "+((window.anlCurrentLang&&window.anlCurrentLang()==="pl")
+        ?"Okno wypłat jeszcze się nie otworzyło (potrzebny pełny blok)."
+        :"Payout window not open yet (a full block is required)."), "err");
+      return;
+    }
+    log((window.anlCurrentLang&&window.anlCurrentLang()==="pl"
+      ? "Odbieram XNT z okna — pozycja #" : "Claiming window XNT — position #")+i+"…");
+    const idx = new Uint8Array(8); new DataView(idx.buffer).setBigUint64(0, BigInt(i), true);
+    const poolConfig   = pda([enc("pool"), new Uint8Array([1])]);   // Genesis
+    const userPosition = pda([enc("position"), pubkey.toBuffer(), idx]);
+    const ckpt = await findCheckpoint(1, winProg);
+    const data = new Uint8Array(8); data.set(DISC_WINDOW, 0);
+    const AW=(pk,s=false,w=false)=>({pubkey:pk,isSigner:s,isWritable:w});
+    const keys = [
+      AW(pubkey,true,true), AW(globalConfig,false,true), AW(poolConfig,false,true),
+      AW(userPosition,false,true), AW(vaultAuthority), AW(XNT_MINT),
+      AW(xntVault,false,true), AW(ownerXntAta(pubkey),false,true), AW(TOKEN_LEGACY),
+    ];
+    if(ckpt) keys.push(AW(ckpt));
+    const tx = new Transaction();
+    const xntAta = ownerXntAta(pubkey);
+    const xntInfo = await conn.getAccountInfo(xntAta);
+    if(!xntInfo) tx.add(createAtaIx(pubkey, xntAta, XNT_MINT, TOKEN_LEGACY));
+    tx.add(new TransactionInstruction({programId:PROGRAM_ID, keys, data}));
+    tx.feePayer = pubkey;
+    const bh = await conn.getLatestBlockhash("finalized");
+    tx.recentBlockhash = bh.blockhash;
+    log(T("sending"));
+    const signature = await signAndSendViaX1(tx);
+    const conf = await conn.confirmTransaction({signature, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight}, "confirmed");
+    if(conf.value.err){ throw new Error("Transakcja odrzucona: "+JSON.stringify(conf.value.err)); }
+    log("✅ XNT OK — "+T("posWord")+" #"+i+". "+T("sig")+signature, "ok");
+    okFade();
+    await refresh();
+  }catch(e){
+    log("❌ "+friendlyErr(e), "err");
+    okFade();
+  }
+}
+window.anlClaimWindow = claimGenesisWindow;
 window.anlClaim = claimPosition;
 window.anlUnstake = unstakeEarly;
 
@@ -1807,16 +1896,64 @@ try{ var av=document.getElementById("availAnl"); if(av && !av.textContent) av.te
   const pool = await tok("GFXKXC4Fo7yr3uN9LTAWTH3fi3Tv4gZGfpXJR1m52rUo");
   if(pool!==null) set("stPool", fmtBig(pool)+" ANL");
   const xv = await tok("G1u7fJDP27vPD6gamLwZKzfdsFFFx7RBsGKR2cGHoXqA");
-  // XNT DISTRIBUTED = realnie rozdane (z indeksu pul), NIE saldo skarbca.
-  // Bufor undistributed (10K) czeka na fund_xnt — nie jest rozdany.
+  // XNT DISTRIBUTED = suma WYPRACOWANA (wszystkie fundingi, ktore weszly przez
+  // indeks). Nie maleje po wyplatach — w odroznieniu od salda skarbca.
+  // Podpis: ile wplacono w biezacej epoce + biezace saldo skarbca.
+  const _isPL = ()=>{ try{ return (window.anlCurrentLang&&window.anlCurrentLang())==="pl"; }catch(e){ return false; } };
+  const _fmtX = (v)=> (Number(v)/1e9).toLocaleString(_isPL()?"pl-PL":"en-US",{maximumFractionDigits:0});
   try{
-    const pi = await poolXntIndexes(); // [Flexible, Genesis] {idx, und, shares}
-    const undTot = pi[0].und + pi[1].und;             // bufor zarezerwowany
-    const distr = (xv!=null? BigInt(Math.round(xv*1e9)) : 0n) - undTot; // rozdane = skarbiec - bufor
-    const toXnt = (v)=> (Number(v)/1e9).toLocaleString("pl-PL",{maximumFractionDigits:0});
-    set("stXnt", (distr>0n? toXnt(distr):"0")+" XNT");
-    const sub=document.getElementById("stXntSub");
-    if(sub) sub.textContent = toXnt(undTot)+" XNT w puli do dystrybucji";
+    // 1) szybki wstepny odczyt: skarbiec minus bufor (natychmiast)
+    const pi = await poolXntIndexes();
+    const undTot = pi[0].und + pi[1].und;
+    const vault = xv!=null ? BigInt(Math.round(xv*1e9)) : 0n;
+    const quick = vault > undTot ? vault - undTot : 0n;
+    set("stXnt", _fmtX(quick)+" XNT");
+    // 2) doprecyzowanie z eventow XntFunded (suma wplat + dzisiejsza epoka)
+    (async function(){
+      try{
+        const cfgA = await conn.getAccountInfo(pda([enc("global_config")]));
+        if(!cfgA) return;
+        const gts = Number(new DataView(cfgA.data.buffer, cfgA.data.byteOffset).getBigInt64(106,true));
+        const curEp = Math.floor((Date.now()/1000 - gts)/86400);
+        const D_FUND = [101,12,39,116,69,138,216,241];
+        let total=0n, today=0n, before, pages=0;
+        while(pages < 3){
+          const sigs = await conn.getSignaturesForAddress(PROGRAM_ID, before?{limit:100,before}:{limit:100});
+          if(!sigs.length) break;
+          for(const s of sigs){
+            if(s.err) continue;
+            let tx; try{ tx = await conn.getTransaction(s.signature,{commitment:"confirmed",maxSupportedTransactionVersion:0}); }catch(_){ continue; }
+            const logs = (tx && tx.meta && tx.meta.logMessages) || [];
+            for(const l of logs){
+              const m = l.match(/^Program data: (.+)$/); if(!m) continue;
+              let b; try{ b = Uint8Array.from(atob(m[1]), function(c){return c.charCodeAt(0);}); }catch(_){ continue; }
+              if(b.length < 72) continue;
+              let ok=true; for(let i=0;i<8;i++) if(b[i]!==D_FUND[i]){ok=false;break;}
+              if(!ok) continue;
+              const dv2 = new DataView(b.buffer, b.byteOffset);
+              const net = dv2.getBigUint64(8, true);
+              const ts  = Number(dv2.getBigInt64(64, true));
+              total += net;
+              if(Math.floor((ts - gts)/86400) === curEp) today += net;
+            }
+          }
+          before = sigs[sigs.length-1].signature;
+          pages++;
+          if(sigs.length < 100) break;
+        }
+        if(total > 0n){
+          set("stXnt", _fmtX(total)+" XNT");
+          const sub2 = document.getElementById("stXntSub");
+          if(sub2) sub2.textContent = _isPL()
+            ? ("dziś: "+_fmtX(today)+" XNT · w skarbcu: "+_fmtX(vault)+" XNT")
+            : ("today: "+_fmtX(today)+" XNT · in vault: "+_fmtX(vault)+" XNT");
+        }
+      }catch(e){ console.log("[ANL] suma fundingow:", e.message); }
+    })();
+    const sub = document.getElementById("stXntSub");
+    if(sub && undTot > 0n) sub.textContent = _isPL()
+      ? (_fmtX(undTot)+" XNT w puli do dystrybucji")
+      : (_fmtX(undTot)+" XNT waiting for distribution");
   }catch(e){ if(xv!==null) set("stXnt", "0 XNT"); }
   try{ const profs = await conn.getProgramAccounts(PROGRAM_ID,
       {filters:[{memcmp:{offset:0,bytes:"j9SjDYAWesU"}},{memcmp:{offset:42,bytes:"1"}}], dataSlice:{offset:0,length:0}});
