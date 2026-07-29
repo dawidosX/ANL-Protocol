@@ -142,15 +142,19 @@ impl PoolConfig {
 
     /// Wariant A — wymusza zamknięcie doby, jeśli epoch jest nowszy niż doba
     /// koszyka. Wołane przez stake/settle PRZED zmianą total_shares.
+    /// Wariant A (B) — zwraca Some(domknieta_doba), gdy faktycznie domknela
+    /// koszyk. Wolajacy MUSI wtedy zapisac finalny index do checkpointu tej doby.
     pub fn roll_day_if_needed(
         &mut self,
         epoch: u64,
-    ) -> std::result::Result<(), anl_math::MathError> {
+    ) -> std::result::Result<Option<u64>, anl_math::MathError> {
         if self.current_day != epoch && self.current_day_basket > 0 {
+            let closed = self.current_day;
             self.close_day()?;
             self.current_day = epoch;
+            return Ok(Some(closed));
         }
-        Ok(())
+        Ok(None)
     }
 
     /// XNT należne pozycji przy bieżącym indeksie.
@@ -339,4 +343,95 @@ pub fn epoch_of(ts: i64, genesis_start_ts: i64) -> Option<u64> {
         return None;
     }
     Some(((ts - genesis_start_ts) as u64) / (anl_math::SECONDS_PER_DAY as u64))
+}
+
+#[cfg(test)]
+mod wariant_a_tests {
+    use super::*;
+    use crate::constants::NO_EPOCH;
+
+    fn empty_pool(pool_type: PoolType) -> PoolConfig {
+        PoolConfig {
+            version: ACCOUNT_VERSION,
+            pool_type,
+            status: PoolStatus::Active,
+            xnt_share_bps: 6500,
+            total_staked: 0,
+            total_shares: 0,
+            xnt_reward_index: 0,
+            xnt_undistributed: 0,
+            position_count: 0,
+            last_funded_epoch: NO_EPOCH,
+            first_funded_epoch: NO_EPOCH,
+            bump: 0,
+            current_day_basket: 0,
+            current_day: 0,
+            reserved: [0; 32],
+        }
+    }
+
+    fn pending(pool: &PoolConfig, shares: u64, debt: u128) -> u64 {
+        ((pool.xnt_reward_index - debt) * (shares as u128) / anl_math::PRECISION) as u64
+    }
+
+    #[test]
+    fn test_podzial_wg_finalnych_shares() {
+        let mut pool = empty_pool(PoolType::Genesis);
+        pool.total_shares = 1_000_000;
+        let debt1: u128 = pool.xnt_reward_index;
+        pool.current_day = 0;
+        pool.add_to_basket(10_000_000_000, 0).unwrap();
+        let debt2: u128 = pool.xnt_reward_index;
+        pool.total_shares += 1_000_000;
+        pool.roll_day_if_needed(1).unwrap();
+        let xnt1 = pending(&pool, 1_000_000, debt1);
+        let xnt2 = pending(&pool, 1_000_000, debt2);
+        assert_eq!(xnt1, 5_000_000_000, "#1 powinien dostac 5 XNT");
+        assert_eq!(xnt2, 5_000_000_000, "#2 powinien dostac 5 XNT");
+    }
+
+    #[test]
+    fn test_kumulacja_przez_dwie_doby() {
+        let mut pool = empty_pool(PoolType::Genesis);
+        pool.total_shares = 1_000_000;
+        let debt: u128 = pool.xnt_reward_index;
+        pool.current_day = 0;
+        pool.add_to_basket(6_000_000_000, 0).unwrap();
+        pool.add_to_basket(4_000_000_000, 1).unwrap();
+        pool.roll_day_if_needed(2).unwrap();
+        let xnt = pending(&pool, 1_000_000, debt);
+        assert_eq!(xnt, 10_000_000_000, "pozycja przez 2 doby dostaje 10 XNT");
+    }
+
+    #[test]
+    fn test_pusta_pula_koszyk_do_bufora() {
+        let mut pool = empty_pool(PoolType::Genesis);
+        pool.current_day = 0;
+        pool.add_to_basket(10_000_000_000, 0).unwrap();
+        pool.roll_day_if_needed(1).unwrap();
+        assert_eq!(pool.xnt_undistributed, 10_000_000_000, "pusta pula -> bufor");
+        assert_eq!(pool.xnt_reward_index, 0, "index nie rosnie przy pustej puli");
+        let debt: u128 = pool.xnt_reward_index;
+        pool.total_shares = 1_000_000;
+        pool.add_to_basket(5_000_000_000, 1).unwrap();
+        pool.roll_day_if_needed(2).unwrap();
+        let xnt = pending(&pool, 1_000_000, debt);
+        assert_eq!(xnt, 15_000_000_000, "staker dostaje bufor 10 + koszyk 5 = 15 XNT");
+    }
+
+    #[test]
+    fn test_pozny_staker_nie_lapie_zamknietej_doby() {
+        let mut pool = empty_pool(PoolType::Genesis);
+        pool.total_shares = 1_000_000;
+        let debt1: u128 = pool.xnt_reward_index;
+        pool.current_day = 0;
+        pool.add_to_basket(10_000_000_000, 0).unwrap();
+        pool.roll_day_if_needed(1).unwrap();
+        let debt2: u128 = pool.xnt_reward_index;
+        pool.total_shares += 1_000_000;
+        let xnt1 = pending(&pool, 1_000_000, debt1);
+        let xnt2 = pending(&pool, 1_000_000, debt2);
+        assert_eq!(xnt1, 10_000_000_000, "#1 dostaje cale 10 (byl sam w dobie 0)");
+        assert_eq!(xnt2, 0, "#2 nie lapie doby 0 (wszedl w dobie 1)");
+    }
 }

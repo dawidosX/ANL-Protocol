@@ -226,6 +226,29 @@ fn roll_checkpoint<'info>(
     Ok(())
 }
 
+/// Wariant A (Sposob 2): zapisuje finalny index do checkpointu domknietej doby.
+/// Wolane po add_to_basket, gdy pool.xnt_reward_index zawiera juz domkniecie
+/// poprzedniej doby. prev to checkpoint tej domknietej doby (Option — None gdy
+/// brak poprzedniej doby, placeholder gdy last_funded_epoch=NO_EPOCH). Zapis
+/// tylko gdy owner == program_id (realny checkpoint, nie placeholder/None).
+fn write_final_index<'info>(
+    prev: Option<&UncheckedAccount<'info>>,
+    final_index: u128,
+    program_id: &Pubkey,
+) -> Result<()> {
+    let Some(prev_ai) = prev else {
+        return Ok(());
+    };
+    let info = prev_ai.to_account_info();
+    if *info.owner != *program_id {
+        return Ok(());
+    }
+    let mut ck = XntCheckpoint::try_deserialize(&mut &info.data.borrow()[..])?;
+    ck.index = final_index;
+    ck.try_serialize(&mut &mut info.data.borrow_mut()[..])?;
+    Ok(())
+}
+
 pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
     require!(amount > 0, AnlError::ZeroAmount);
     // epoka fundingu MUSI odpowiadać zegarowi — brak przypisań wstecz/przód
@@ -299,7 +322,21 @@ pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
         .add_to_basket(flexible_part, epoch)
         .map_err(AnlError::from)?;
 
-    // snapshot: indeks puli po WSZYSTKICH fundingach tej epoki
+    // Wariant A (Sposob 2): po add_to_basket index puli zawiera juz domkniecie
+    // POPRZEDNIEJ doby (E). Zapisz ten finalny index do checkpointu doby E
+    // (prev_ckpt) — to jest cap dla pozycji konczacych sie w dobie E.
+    write_final_index(
+        ctx.accounts.genesis_prev_ckpt.as_ref(),
+        ctx.accounts.genesis_pool.xnt_reward_index,
+        ctx.program_id,
+    )?;
+    write_final_index(
+        ctx.accounts.flexible_prev_ckpt.as_ref(),
+        ctx.accounts.flexible_pool.xnt_reward_index,
+        ctx.program_id,
+    )?;
+
+    // snapshot: indeks puli po domknieciu poprzednich dob (baza biezacej doby)
     ctx.accounts.genesis_ckpt.index = ctx.accounts.genesis_pool.xnt_reward_index;
     ctx.accounts.flexible_ckpt.index = ctx.accounts.flexible_pool.xnt_reward_index;
     ctx.accounts.genesis_pool.last_funded_epoch = epoch;
@@ -367,5 +404,72 @@ pub fn set_operator(ctx: Context<SetOperator>, new_operator: Pubkey) -> Result<(
 pub struct OperatorChanged {
     pub old_operator: Pubkey,
     pub new_operator: Pubkey,
+    pub timestamp: i64,
+}
+
+/// Wariant A (Sposob 2): PUBLICZNE domkniecie doby. Rozdziela koszyk dnia
+/// (podnosi index o koszyk/total_shares) i zapisuje finalny index do checkpointu
+/// tej doby. Ktokolwiek moze wywolac (deterministyczne) — zwykle bot o ~2:00.
+/// Domyka JEDNA dobe (pool.current_day), tylko jesli juz minela.
+/// Idempotentne: jesli koszyk pusty (juz domkniete) — no-op.
+pub fn close_day(ctx: Context<CloseDay>, epoch: u64) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    let cur_epoch = epoch_of(now, ctx.accounts.global_config.genesis_start_ts)
+        .ok_or(AnlError::BeforeGenesis)?;
+    require!(epoch < cur_epoch, AnlError::EpochMismatch);
+    let pool = &mut ctx.accounts.pool_config;
+    require!(pool.current_day == epoch, AnlError::EpochMismatch);
+    if pool.current_day_basket == 0 {
+        return Ok(());
+    }
+    pool.close_day().map_err(AnlError::from)?;
+    pool.current_day = cur_epoch;
+    let final_index = pool.xnt_reward_index;
+    let info = ctx.accounts.day_ckpt.to_account_info();
+    let mut ck = XntCheckpoint::try_deserialize(&mut &info.data.borrow()[..])?;
+    require!(
+        ck.version == ACCOUNT_VERSION && ck.epoch == epoch && ck.pool_type == pool.pool_type,
+        AnlError::CheckpointMismatch
+    );
+    ck.index = final_index;
+    ck.try_serialize(&mut &mut info.data.borrow_mut()[..])?;
+    emit!(DayClosed {
+        pool_type: pool.pool_type as u8,
+        epoch,
+        index: final_index,
+        timestamp: now,
+    });
+    Ok(())
+}
+
+#[derive(Accounts)]
+#[instruction(epoch: u64)]
+pub struct CloseDay<'info> {
+    pub caller: Signer<'info>,
+
+    #[account(seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
+        constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
+    pub global_config: Box<Account<'info, GlobalConfig>>,
+
+    #[account(
+        mut,
+        seeds = [POOL_SEED, &[pool_config.pool_type as u8]],
+        bump = pool_config.bump,
+        constraint = pool_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
+    )]
+    pub pool_config: Box<Account<'info, PoolConfig>>,
+
+    /// CHECK: checkpoint domykanej doby; PDA + dane weryfikowane w handlerze.
+    #[account(mut,
+        seeds = [XNT_CKPT_SEED, &[pool_config.pool_type as u8], &epoch.to_le_bytes()],
+        bump)]
+    pub day_ckpt: UncheckedAccount<'info>,
+}
+
+#[event]
+pub struct DayClosed {
+    pub pool_type: u8,
+    pub epoch: u64,
+    pub index: u128,
     pub timestamp: i64,
 }

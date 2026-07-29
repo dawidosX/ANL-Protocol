@@ -125,6 +125,15 @@ pub fn settle_expired(ctx: Context<SettleExpired>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     require!(now >= pos.end_ts, AnlError::PeriodNotEnded);
 
+    // Wariant A (Sposob 2): doba end_epoch pozycji MUSI byc domknieta, inaczej
+    // checkpoint ma index sprzed rozdzielenia koszyka → cap za maly. Niedomknieta
+    // = koszyk doby end_epoch wciaz wisi. Wtedy odmawiamy — najpierw close_day.
+    let pool_ref = &ctx.accounts.pool_config;
+    require!(
+        !(pool_ref.current_day == pos.end_epoch && pool_ref.current_day_basket > 0),
+        AnlError::DayNotClosed
+    );
+
     let frozen = ctx
         .accounts
         .pool_config

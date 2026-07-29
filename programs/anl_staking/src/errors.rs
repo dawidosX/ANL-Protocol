@@ -88,6 +88,8 @@ pub enum AnlError {
     WindowNotReached,
     #[msg("Genesis window claim is only for Genesis positions")]
     NotGenesisPool,
+    #[msg("Position's end-of-stake day is not yet closed; call close_day first")]
+    DayNotClosed,
 }
 
 impl From<anl_math::MathError> for AnlError {

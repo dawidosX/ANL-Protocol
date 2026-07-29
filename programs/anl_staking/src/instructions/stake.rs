@@ -80,6 +80,12 @@ pub struct Stake<'info> {
     pub user_position: Box<Account<'info, UserPosition>>,
 
     pub anl_token_program: Program<'info, Token2022>,
+    /// CHECK: Wariant A (B) — checkpoint doby domykanej przez ten stake (jesli
+    /// pierwszy stake nowej doby domyka poprzednia z niepustym koszykiem).
+    /// Opcjonalne: wymagane TYLKO gdy stake faktycznie domyka dobe. PDA i dane
+    /// weryfikowane w handlerze.
+    #[account(mut)]
+    pub prev_day_ckpt: Option<UncheckedAccount<'info>>,
     pub system_program: Program<'info, System>,
 }
 
@@ -154,8 +160,42 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
     // Koszyk poprzednich dób dzieli się BEZ tej pozycji; debt_index poniżej
     // = index z końca poprzedniej doby → pozycja łapie CAŁĄ dobę wejścia.
     let cur_epoch = epoch_of(now, cfg.genesis_start_ts).ok_or(AnlError::BeforeGenesis)?;
+    let program_id = *ctx.program_id;
     let pool = &mut ctx.accounts.pool_config;
-    pool.roll_day_if_needed(cur_epoch).map_err(AnlError::from)?;
+    // Wariant A (B): roll_day_if_needed zwraca Some(domknieta_doba), gdy
+    // faktycznie domknela koszyk. Wtedy zapisujemy finalny index do checkpointu
+    // tej doby (spojnosc cap) przez konto prev_day_ckpt.
+    let closed = pool.roll_day_if_needed(cur_epoch).map_err(AnlError::from)?;
+    let closed_info = if let Some(closed_epoch) = closed {
+        let final_index = pool.xnt_reward_index;
+        let pool_type = pool.pool_type;
+        let ckpt = ctx
+            .accounts
+            .prev_day_ckpt
+            .as_ref()
+            .ok_or(AnlError::CheckpointRequired)?;
+        let info = ckpt.to_account_info();
+        require_keys_eq!(*info.owner, program_id, AnlError::CheckpointMismatch);
+        let (pda, _) = Pubkey::find_program_address(
+            &[XNT_CKPT_SEED, &[pool_type as u8], &closed_epoch.to_le_bytes()],
+            &program_id,
+        );
+        require_keys_eq!(info.key(), pda, AnlError::CheckpointMismatch);
+        let mut ck = XntCheckpoint::try_deserialize(&mut &info.data.borrow()[..])?;
+        require!(
+            ck.version == ACCOUNT_VERSION
+                && ck.epoch == closed_epoch
+                && ck.pool_type == pool_type,
+            AnlError::CheckpointMismatch
+        );
+        ck.index = final_index;
+        ck.try_serialize(&mut &mut info.data.borrow_mut()[..])?;
+        Some(())
+    } else {
+        None
+    };
+    let _ = closed_info;
+    let pool = &mut ctx.accounts.pool_config;
     pool.total_staked = pool
         .total_staked
         .checked_add(net)

@@ -530,6 +530,7 @@ impl Env {
                 user_profile: self.profile_pda(&user.pubkey()),
                 user_position: position,
                 anl_token_program: spl_token_2022::id(),
+                prev_day_ckpt: None,
                 system_program: solana_sdk::system_program::id(),
             }
             .to_account_metas(None),

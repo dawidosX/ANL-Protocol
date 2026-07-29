@@ -95,6 +95,11 @@ pub mod anl_staking {
         instructions::fund::fund_xnt(ctx, amount, epoch)
     }
 
+    /// Wariant A (Sposob 2): publiczne domkniecie doby (bot o ~2:00).
+    pub fn close_day(ctx: Context<CloseDay>, epoch: u64) -> Result<()> {
+        instructions::fund::close_day(ctx, epoch)
+    }
+
     /// Gorący klucz bota dziennego — tylko funding, ustawiany przez authority.
     pub fn set_operator(ctx: Context<SetOperator>, new_operator: Pubkey) -> Result<()> {
         instructions::fund::set_operator(ctx, new_operator)
