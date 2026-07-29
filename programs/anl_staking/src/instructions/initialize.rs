@@ -113,7 +113,8 @@ pub fn initialize_handler(
     cfg.operator = ctx.accounts.authority.key();
     cfg.bump = ctx.bumps.global_config;
     cfg.vault_authority_bump = ctx.bumps.vault_authority;
-    cfg.reserved = [0; 24];
+    cfg.total_xnt_funded = 0;
+    cfg.reserved = [0; 16];
 
     emit!(ProtocolInitialized {
         authority: cfg.authority,

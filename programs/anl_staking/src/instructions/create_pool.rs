@@ -45,7 +45,7 @@ pub fn create_pool_handler(ctx: Context<CreatePool>, pool_type: PoolType) -> Res
     pool.bump = ctx.bumps.pool_config;
     pool.last_funded_epoch = NO_EPOCH;
     pool.first_funded_epoch = NO_EPOCH;
-    pool.reserved = [0; 48];
+    pool.reserved = [0; 32];
 
     emit!(PoolCreated {
         pool_type: pool_type as u8,

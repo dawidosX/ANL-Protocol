@@ -12,7 +12,7 @@ anl_staking = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
 # UWAGA: testnetowy Program ID jest EFEMERYCZNY (resety środowiska);
 # źródłem prawdy jest declare_id! w lib.rs pod feature network-testnet.
 [programs.testnet]
-anl_staking = "6jiCawqJg5NPR26wCov15tD3HtjKVk1Ao252ZJbZYj1w"
+anl_staking = "49vhBowGFDHoX9te8MmvFjFyyKQyFsDZCPmd8uA635XB"
 
 # Mainnet: placeholder bez keypaira — do ceremonii Program ID
 [programs.mainnet]

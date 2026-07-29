@@ -97,7 +97,7 @@ pub struct FundXnt<'info> {
         || funder.key() == global_config.operator @ AnlError::InvalidAuthority)]
     pub funder: Signer<'info>,
 
-    #[account(seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
+    #[account(mut, seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
         constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
     pub global_config: Box<Account<'info, GlobalConfig>>,
 
@@ -256,7 +256,17 @@ pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
         .ok_or(AnlError::MathOverflow)?;
 
     // WP §8: podział dziennej puli 65/35 — suma części zawsze równa całości.
-    let (genesis_part, flexible_part) = anl_math::split_xnt(net);
+    let g_empty = ctx.accounts.genesis_pool.total_shares == 0;
+    let f_empty = ctx.accounts.flexible_pool.total_shares == 0;
+    let (genesis_part, flexible_part) = if g_empty && f_empty {
+        anl_math::split_xnt(net)
+    } else if f_empty {
+        (net, 0)
+    } else if g_empty {
+        (0, net)
+    } else {
+        anl_math::split_xnt(net)
+    };
 
     let g_bump = ctx.bumps.genesis_ckpt;
     let f_bump = ctx.bumps.flexible_ckpt;
@@ -277,13 +287,16 @@ pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
         ctx.program_id,
     )?;
 
+    // Wariant A: XNT do KOSZYKA bieżącej doby (add_to_basket sam zamyka
+    // poprzednią dobę gdy epoch to nowa doba — wtedy index rośnie o koszyk
+    // poprzedniej doby / total_shares z jej końca).
     ctx.accounts
         .genesis_pool
-        .fund_xnt_part(genesis_part)
+        .add_to_basket(genesis_part, epoch)
         .map_err(AnlError::from)?;
     ctx.accounts
         .flexible_pool
-        .fund_xnt_part(flexible_part)
+        .add_to_basket(flexible_part, epoch)
         .map_err(AnlError::from)?;
 
     // snapshot: indeks puli po WSZYSTKICH fundingach tej epoki
@@ -291,6 +304,15 @@ pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
     ctx.accounts.flexible_ckpt.index = ctx.accounts.flexible_pool.xnt_reward_index;
     ctx.accounts.genesis_pool.last_funded_epoch = epoch;
     ctx.accounts.flexible_pool.last_funded_epoch = epoch;
+
+    // Licznik skumulowany — źródło prawdy dla metryki "XNT rozdane" bez
+    // skanowania historii. saturating_add: nigdy nie panikuje (u64 nie przepełni
+    // się realnie, ale zabezpieczamy inwariant).
+    ctx.accounts.global_config.total_xnt_funded = ctx
+        .accounts
+        .global_config
+        .total_xnt_funded
+        .saturating_add(net);
 
     emit!(XntFunded {
         amount_net: net,

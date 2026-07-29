@@ -38,6 +38,9 @@ a{color:inherit;text-decoration:none}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.reveal{opacity:1;transform:none;transition:none}*{animation-duration:.01ms!important}}
 
 /* nav */
+@media(max-width:1100px){.nav-in{gap:16px}.nav-in a{font-size:14px}}
+@media(max-width:940px){.nav-in{gap:10px;height:auto;min-height:60px;flex-wrap:wrap;padding-top:8px;padding-bottom:8px}.nav-in a[href^="#"]{display:none}}
+@media(max-width:940px){nav{position:sticky}}
 nav{position:fixed;inset-inline:0;top:0;z-index:50;border-bottom:1px solid var(--edge);background:color-mix(in srgb,var(--bg) 72%,transparent);backdrop-filter:blur(16px)}
 .nav-in{display:flex;align-items:center;gap:30px;height:72px}
 .logo{display:flex;align-items:center;gap:10px}
@@ -461,8 +464,8 @@ nav .btn-gold{white-space:nowrap}
 
   <div class="stats" aria-label="Statystyki protokołu">
     <div class="glass sc reveal"><div class="lab" data-i18n="sl1">Total Value Locked <span class="mock">LIVE</span></div><b id="stTvl">—</b><span class="d">on-chain · live</span><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,20 15,17 30,19 45,12 60,14 75,8 100,4" fill="none" stroke="#FFB11A" stroke-width="1.8"/></svg></div>
-    <div class="glass sc reveal"><div class="lab" data-i18n="sl2">ANL Locked (pula)</div><b id="stPool">—</b><span class="d" data-i18n="sd2">zadeklarowane na program</span><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,13 100,13" fill="none" stroke="#FFB11A" stroke-width="1.4" stroke-dasharray="3 4"/></svg></div>
-    <div class="glass sc reveal"><div class="lab" data-i18n="sl3">XNT Distributed <span class="mock">LIVE</span></div><b id="stXnt">—</b><span class="d" id="stXntSub" data-i18n="sd3">naliczanie dzienne · wypłata z pozycją</span><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,14 100,14" fill="none" stroke="#7A3BFF" stroke-width="1.4" stroke-dasharray="3 4"/></svg></div>
+    <div class="glass sc reveal"><div class="lab" data-i18n="sl2">ANL Locked (pula)</div><b id="stPool">—</b><span class="d" data-i18n="sd2">zadeklarowane na program</span><div id="stPoolSub" style="font-size:11.5px;color:var(--mut,#8b8b8b);margin-top:4px;line-height:1.5"></div><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,13 100,13" fill="none" stroke="#FFB11A" stroke-width="1.4" stroke-dasharray="3 4"/></svg></div>
+    <div class="glass sc reveal"><div class="lab" data-i18n="sl3">XNT w skarbcu <span class="mock">LIVE</span></div><b id="stXnt">—</b><span class="d" id="stXntSub" data-i18n="sd3">naliczanie dzienne · wypłata z pozycją</span><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,14 100,14" fill="none" stroke="#7A3BFF" stroke-width="1.4" stroke-dasharray="3 4"/></svg></div>
     <div class="glass sc reveal"><div class="lab" data-i18n="sl4">Active stakes <span class="mock">LIVE</span></div><b id="stStakers">—</b><span class="d">on-chain · live</span><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,22 20,18 40,19 60,13 80,10 100,6" fill="none" stroke="#7A3BFF" stroke-width="1.8"/></svg></div>
     <div class="glass sc reveal"><div class="lab" data-i18n="sl5">APY Genesis (okno)</div><b id="stApy">—</b><span class="d" id="stApyD">—</span><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,10 100,10" fill="none" stroke="#30D158" stroke-width="1.6"/></svg></div>
     <div class="glass sc reveal"><div class="lab" data-i18n="sl6">Validator Self-Stake <span class="mock">LIVE</span></div><b id="statSelfStake">—</b><span class="d" data-i18n="sd6">stake własny zespołu · on-chain</span><svg viewBox="0 0 100 26" preserveAspectRatio="none"><polyline class="spark" points="0,22 25,18 50,14 75,10 100,5" fill="none" stroke="#30D158" stroke-width="1.8"/></svg></div>
@@ -502,6 +505,30 @@ nav .btn-gold{white-space:nowrap}
       <thead data-dp="thead"></thead>
       <tbody id="positions"><tr><td colspan="8" class="mut" data-dp="connectFirst">…</td></tr></tbody>
     </table></div>
+    <div id="walletStats" style="display:none;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+      <div style="flex:1;min-width:150px;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 15px">
+        <div class="lbl" data-i18n="wsStaked" style="margin-bottom:5px">Zastakowane łącznie</div>
+        <div id="wsStaked" style="font-size:19px;font-weight:700;color:var(--ink)">—</div>
+        <div id="wsStakedSub" style="font-size:12px;color:var(--mut);margin-top:2px"></div>
+      </div>
+      <div style="flex:1;min-width:150px;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 15px">
+        <div class="lbl" data-i18n="wsAnlPend" style="margin-bottom:5px">Nagroda ANL do odbioru</div>
+        <div id="wsAnlPend" style="font-size:19px;font-weight:700;color:var(--ink)">—</div>
+      </div>
+      <div style="flex:1;min-width:150px;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 15px">
+        <div class="lbl" data-i18n="wsXntPend" style="margin-bottom:5px">XNT do odbioru</div>
+        <div id="wsXntPend" style="font-size:19px;font-weight:700;color:var(--ink)">—</div>
+      </div>
+      <div style="flex:1;min-width:150px;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 15px">
+        <div class="lbl" data-i18n="wsAnlClaimed" style="margin-bottom:5px">Odebrane ANL</div>
+        <div id="wsAnlClaimed" style="font-size:19px;font-weight:700;color:var(--ink)">—</div>
+      </div>
+      <div style="flex:1;min-width:150px;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 15px">
+        <div class="lbl" data-i18n="wsXntClaimed" style="margin-bottom:5px">Odebrane XNT</div>
+        <div id="wsXntClaimed" style="font-size:19px;font-weight:700;color:var(--ink)">—</div>
+        <div id="wsXntClaimedSub" style="font-size:12px;color:var(--mut);margin-top:2px"></div>
+      </div>
+    </div>
     <div id="xntSummary" style="display:none;gap:12px;margin-top:14px;flex-wrap:wrap">
       <div style="flex:1;min-width:200px;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px 15px">
         <div class="lbl" data-dp="xntReservedLbl" style="margin-bottom:5px">XNT zarezerwowany do dystrybucji</div>
@@ -518,7 +545,7 @@ nav .btn-gold{white-space:nowrap}
       <summary style="cursor:pointer;color:var(--mut);font-size:13px;padding:8px 0" data-dp="histTitle">Historia odebranych stakingów</summary>
       <div style="overflow-x:auto;margin-top:8px"><table>
         <thead><tr>
-          <th data-dp="hIdx">#</th><th data-dp="hPrincipal">Kapitał</th>
+          <th data-dp="hIdx">#</th><th data-dp="hType">Typ</th><th data-dp="hPrincipal">Kapitał</th>
           <th data-dp="hAnl">ANL</th><th data-dp="hXnt">XNT</th>
           <th data-dp="hDate">Data</th><th data-dp="hTx">Tx</th>
         </tr></thead>
@@ -926,6 +953,7 @@ nav .btn-gold{white-space:nowrap}
 
   /* ====== i18n ====== */
   var EN = {
+    wsStaked:'Total staked', wsAnlPend:'ANL reward pending', wsXntPend:'XNT pending', wsAnlClaimed:'ANL claimed', wsXntClaimed:'XNT claimed', hType:'Type',
     n1:'Staking',n2:'Rewards',nV:'Validator',n3:'Protocol',n4:'Security',n5:'Roadmap',n6:'FAQ',
     h1:'Stake <span class="gtext">ANL</span>.<br>Earn <span class="gtext">ANL</span> <span style="color:var(--steel)">+</span> <span class="vtext">XNT</span>.',
     sub:'ANL Staking Protocol lets you stake ANL tokens with a dual reward system: fixed APY paid in <b>ANL</b> plus a share of 100% of the rewards generated by the dedicated <b>XNT</b> validator.',
@@ -933,7 +961,7 @@ nav .btn-gold{white-space:nowrap}
     pAudit:'🛡 6 audit rounds — code & history public',
     demoBar:'DEMO VERSION — figures marked MOCK are samples · protocol in development, launch per roadmap · <a href="/whitepaper-en.html" style="color:#fff;text-decoration:underline">Whitepaper</a>',
     sl1:'Total Value Locked <span class="mock">LIVE</span>',sl2:'ANL Locked (pool)',
-    sl3:'XNT Distributed <span class="mock">LIVE</span>',sl4:'Active stakes <span class="mock">LIVE</span>',
+    sl3:'XNT in vault <span class="mock">LIVE</span>',sl4:'Active stakes <span class="mock">LIVE</span>',
     sl5:'Genesis APY (window)',sl6:'Validator Stake <span class="mock">LIVE</span>',
     sd2:'committed to the program',sd3:'daily accrual · paid with your position',sd5:'day 12/30 · switch at 02:00 UTC',sd6:'team self-stake · on-chain',
     howH:'<div class="kick">Protocol</div><h2>How it works</h2>',
@@ -1426,6 +1454,14 @@ const NO_EPOCH = 18446744073709551615n;
 const _capCache = new Map();
 // Indeks-granica: kontrakt liczy XNT WYLACZNIE do checkpointu end_epoch
 // (audyt #2). Funding po zakonczeniu pozycji NIE nalezy sie jej.
+async function windowPayout(p, pool, winProg){
+  // ile realnie wyplaci claim_genesis_window: cap do prog_epoch - juz odebrane oknem
+  if(winProg===null || p.pool!==1) return 0n;
+  const cap = await capIndexAt(1, winProg, pool, p.xntDebt);
+  const delta = cap > p.xntDebt ? cap - p.xntDebt : 0n;
+  let total = delta * p.shares / XNT_PRECISION;
+  return total > p.xntWindowClaimed ? total - p.xntWindowClaimed : 0n;
+}
 async function capIndexAt(poolType, endEpoch, pool, debt){
   if(pool.lastFunded === NO_EPOCH) return debt;      // nigdy nie fundowano
   if(endEpoch >= pool.lastFunded) return pool.idx;    // pozycja obejmuje ostatni funding
@@ -1482,7 +1518,20 @@ function decodeClaimed(b64){
   const anl = dv.getBigUint64(o,true); o+=8;
   const xnt = dv.getBigUint64(o,true); o+=8;
   const ts = dv.getBigInt64(o,true);
-  return { owner:owner.toBase58(), idx, principal, anl, xnt, ts:Number(ts) };
+  return { owner:owner.toBase58(), idx, principal, anl, xnt, ts:Number(ts), kind:"end" };
+}
+const DISC_WINCLAIMED = [46,16,40,193,173,203,189,63]; // GenesisWindowClaimed
+function decodeWindow(b64){
+  const buf = Uint8Array.from(atob(b64), function(c){return c.charCodeAt(0);});
+  for(let i=0;i<8;i++) if(buf[i]!==DISC_WINCLAIMED[i]) return null;
+  const dv = new DataView(buf.buffer, buf.byteOffset);
+  let o=8;
+  const owner = new PublicKey(buf.subarray(o,o+32)); o+=32;
+  const idx = dv.getBigUint64(o,true); o+=8;
+  const xntPaid = dv.getBigUint64(o,true); o+=8;
+  const cumulative = dv.getBigUint64(o,true); o+=8;
+  const ts = dv.getBigInt64(o,true);
+  return { owner:owner.toBase58(), idx, principal:0n, anl:0n, xnt:xntPaid, ts:Number(ts), kind:"window" };
 }
 async function loadHistory(){
   if(!pubkey) return;
@@ -1496,7 +1545,8 @@ async function loadHistory(){
     for(const l of logs){
       const m = l.match(/^Program data: (.+)$/);
       if(!m) continue;
-      let ev; try{ ev = decodeClaimed(m[1]); }catch(_){ ev=null; }
+      let ev=null;
+      try{ ev = decodeClaimed(m[1]) || decodeWindow(m[1]); }catch(_){ ev=null; }
       if(ev && ev.owner===me){
         rows.push({ ...ev, sig:s.signature });
       }
@@ -1509,14 +1559,42 @@ async function loadHistory(){
   const EXP = "https://explorer.x1.xyz/tx/";
   tb.innerHTML = rows.map(function(r){
     const d = new Date(r.ts*1000).toLocaleDateString((function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl"?"pl-PL":"en-US";}catch(e){return "en-US";}})(),{dateStyle:"short"});
+    const _pl = (function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl";}catch(e){return false;}})();
+    const typ = r.kind==="window" ? (_pl?"okno":"window") : (_pl?"końcowy":"final");
+    const prc = r.kind==="window" ? "—" : fmtAnl(r.principal)+" ANL";
+    const anlC = r.kind==="window" ? "—" : fmtAnl(r.anl)+" ANL";
     return "<tr><td>"+r.idx.toString()+"</td>"+
-      "<td>"+fmtAnl(r.principal)+" ANL</td>"+
-      "<td>"+fmtAnl(r.anl)+" ANL</td>"+
+      "<td>"+typ+"</td>"+
+      "<td>"+prc+"</td>"+
+      "<td>"+anlC+"</td>"+
       "<td>"+fmtXnt(r.xnt)+" XNT</td>"+
       "<td>"+d+"</td>"+
       "<td><a href=\""+EXP+r.sig+"\" target=\"_blank\" rel=\"noopener\" style=\"color:var(--amber)\">"+r.sig.slice(0,6)+"…</a></td></tr>";
   }).join("");
   box.style.display="block";
+}
+async function loadClaimedTotals(){
+  if(!pubkey) return;
+  const setTxt = (id, v)=>{ const e=document.getElementById(id); if(e) e.textContent = v; };
+  const me = pubkey.toBase58();
+  const sigs = await conn.getSignaturesForAddress(PROGRAM_ID, {limit:100});
+  let anlClaimed=0n, xntEnd=0n, xntWindow=0n;
+  for(const s of sigs){
+    if(s.err) continue;
+    let tx; try{ tx = await conn.getTransaction(s.signature,{commitment:"confirmed",maxSupportedTransactionVersion:0}); }catch(_){ continue; }
+    for(const l of ((tx&&tx.meta&&tx.meta.logMessages)||[])){
+      const m=l.match(/^Program data: (.+)$/); if(!m) continue;
+      let ev=null; try{ ev=decodeClaimed(m[1]); }catch(_){}
+      if(ev && ev.owner===me){ anlClaimed+=ev.anl; xntEnd+=ev.xnt; continue; }
+      let w=null; try{ w=decodeWindow(m[1]); }catch(_){}
+      if(w && w.owner===me){ xntWindow+=w.xnt; }
+    }
+  }
+  const _pl=(function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl";}catch(e){return false;}})();
+  setTxt("wsAnlClaimed", fmtAnl(anlClaimed)+" ANL");
+  setTxt("wsXntClaimed", fmtXnt(xntEnd+xntWindow)+" XNT");
+  const sub=$("wsXntClaimedSub");
+  if(sub && (xntWindow>0n)) sub.textContent = (_pl?"w tym z okien: ":"from windows: ")+fmtXnt(xntWindow)+" XNT";
 }
 async function loadPositions(){
   const tb = $("positions");
@@ -1526,12 +1604,15 @@ async function loadPositions(){
   const winProg = await genesisWindowProg();  // null = okno zamkniete
   let rows = "";
   let epochSum = 0n;
+  let sumStaked=0n, sumAnlPend=0n, sumXntPend=0n, nActive=0;
   for(let i=0n; i<n; i++){
     const idx = new Uint8Array(8); new DataView(idx.buffer).setBigUint64(0, i, true);
     const pos = pda([enc("position"), pubkey.toBuffer(), idx]);
     const info = await conn.getAccountInfo(pos);
     if(!info) continue;
     const p = decodePosition(info.data);
+    if(p.status!==1){ sumStaked += p.amount; sumAnlPend += p.reward; nActive++; }
+    const winPay = (p.status!==1 && p.pool===1 && winProg!==null) ? await windowPayout(p, poolIdx[1], winProg) : 0n;
     const now = Date.now()/1000;
     const endD = new Date(p.end*1000).toLocaleString("pl-PL",{dateStyle:"short",timeStyle:"short"});
     const startD = new Date(p.start*1000).toLocaleDateString("pl-PL",{dateStyle:"short"});
@@ -1543,9 +1624,14 @@ async function loadPositions(){
       + (p.pool===0
          ? '<button class="unbtn" onclick="anlUnstake('+i+','+p.pool+')">'+T("unstakeBtn")+'</button>'
          : '<span class="lockg" title="'+T("lockedGT")+'">🔒</span>'
-           + (winProg!==null ? '<button class="unbtn" onclick="anlClaimWindow('+i+')">'
-              + ((window.anlCurrentLang&&window.anlCurrentLang()==="pl")?"Odbierz XNT":"Claim XNT")
-              + '</button>' : '')); }
+           + (winProg!==null ? (function(){
+                var pay = winPay;  // policzone wyzej
+                var lbl = (window.anlCurrentLang&&window.anlCurrentLang()==="pl")?"Odbierz XNT":"Claim XNT";
+                if(pay>0n) return '<button class="unbtn" onclick="anlClaimWindow('+i+')">'+lbl+'</button>';
+                return '<button class="unbtn" disabled style="opacity:.4;cursor:not-allowed" title="'
+                  + ((window.anlCurrentLang&&window.anlCurrentLang()==="pl")?"Brak nowego XNT do odbioru w tym oknie":"No new XNT to claim this window")
+                  + '">'+lbl+'</button>';
+              })() : '')); }
     let xntCell;
     if(p.status===1) xntCell = '<span class="mut">—</span>';
     else if(p.settled){
@@ -1573,6 +1659,17 @@ async function loadPositions(){
   setTxt("xntReserved", fmtXnt(undF+undG)+" XNT");
   setTxt("xntReservedSub", fmtXnt(undG)+" Genesis / "+fmtXnt(undF)+" Flexible");
   setTxt("xntEpoch", fmtXnt(epochSum)+" XNT");
+  // panel podsumowania portfela
+  (function(){
+    const _pl=(function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl";}catch(e){return false;}})();
+    setTxt("wsStaked", fmtAnl(sumStaked)+" ANL");
+    setTxt("wsStakedSub", nActive+" "+(_pl?"aktywnych pozycji":"active positions"));
+    setTxt("wsAnlPend", fmtAnl(sumAnlPend)+" ANL");
+    setTxt("wsXntPend", fmtXnt(epochSum)+" XNT");
+    const box=$("walletStats"); if(box) box.style.display="flex";
+  })();
+  // odebrane — z historii (async, nie blokuje)
+  loadClaimedTotals().catch(function(e){ console.log("[ANL] staty odebrane:", e.message); });
   setTxt("xntEpochSub", epochSum>0n ? T("xntEpochOn") : T("xntEpochOff"));
   const box=$("xntSummary"); if(box) box.style.display = "flex";
 }
@@ -1844,7 +1941,7 @@ const DPT = {
      sending:"Wysłano, czekam na potwierdzenie…", posWord:"pozycja", sig:"Sygnatura: ",
      unstakeBtn:"Zerwij", unstaking:"Zrywam pozycję",
      xntReservedLbl:"XNT zarezerwowany do dystrybucji", xntEpochLbl:"XNT bieżącej epoki", xntEpochOn:"naliczony pozycjom", xntEpochOff:"brak fund_xnt w tej epoce",
-     histTitle:"Historia odebranych stakingów", hIdx:"#", hPrincipal:"Kapitał", hAnl:"ANL", hXnt:"XNT", hDate:"Data", hTx:"Tx",
+     histTitle:"Historia odebranych stakingów", wsStaked:"Zastakowane łącznie", wsAnlPend:"Nagroda ANL do odbioru", wsXntPend:"XNT do odbioru", wsAnlClaimed:"Odebrane ANL", wsXntClaimed:"Odebrane XNT", hIdx:"#", hType:"Typ",  hType:"Type", hPrincipal:"Kapitał", hAnl:"ANL", hXnt:"XNT", hDate:"Data", hTx:"Tx",
      claimBtn:"Odbierz", claiming:"Odbieram pozycję", claimConfirm:"Odebrać tę pozycję? Otrzymasz kapitał + ANL + XNT jedną transakcją, a pozycja zostanie zamknięta.",
      discHint:"Kliknij, aby odłączyć portfel", connectFirstT:"Połącz portfel, aby zobaczyć pozycje.",
      xntPending:"do rozdzielenia", xntDaily:"XNT/dzień (szac.)", avail:"dostępne: ",
@@ -1859,7 +1956,7 @@ const DPT = {
      sending:"Sent, waiting for confirmation…", posWord:"position", sig:"Signature: ",
      unstakeBtn:"Unstake", unstaking:"Unstaking position",
      xntReservedLbl:"XNT reserved for distribution", xntEpochLbl:"XNT this epoch", xntEpochOn:"accrued to positions", xntEpochOff:"no fund_xnt this epoch",
-     histTitle:"Claimed stakes history", hIdx:"#", hPrincipal:"Principal", hAnl:"ANL", hXnt:"XNT", hDate:"Date", hTx:"Tx",
+     histTitle:"Claimed stakes history", wsStaked:"Total staked", wsAnlPend:"ANL reward pending", wsXntPend:"XNT pending", wsAnlClaimed:"ANL claimed", wsXntClaimed:"XNT claimed", hIdx:"#", hPrincipal:"Principal", hAnl:"ANL", hXnt:"XNT", hDate:"Date", hTx:"Tx",
      claimBtn:"Claim", claiming:"Claiming position", claimConfirm:"Claim this position? You will receive principal + ANL + XNT in one transaction, and the position will be closed.",
      discHint:"Click to disconnect the wallet", connectFirstT:"Connect a wallet to see your positions.",
      xntPending:"pending split", xntDaily:"XNT/day (est.)", avail:"available: ",
@@ -1893,68 +1990,41 @@ try{ var av=document.getElementById("availAnl"); if(av && !av.textContent) av.te
       return Math.floor(b.value.uiAmount);}catch(e){return null;} }
   const tvl = await tok("CCzzuNmyD7dUnHaG4XrsXoiqeyEBuhGfJjg8AudPbDcB");
   if(tvl!==null) set("stTvl", fmtBig(tvl)+" ANL");
-  const pool = await tok("GFXKXC4Fo7yr3uN9LTAWTH3fi3Tv4gZGfpXJR1m52rUo");
-  if(pool!==null) set("stPool", fmtBig(pool)+" ANL");
+  const poolBal = await tok("GFXKXC4Fo7yr3uN9LTAWTH3fi3Tv4gZGfpXJR1m52rUo"); // saldo reward_vault = ZOSTALO
+  set("stPool", "200M ANL");  // deklarowana pula (stala)
+  (async function(){
+    try{
+      const isPL=(function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl";}catch(e){return false;}})();
+      // zostalo = saldo reward_vault (maleje przy wyplatach)
+      let left = (typeof poolBal!=="undefined" && poolBal!=null) ? poolBal : null;
+      if(left===null){
+        try{ const ra=await conn.getAccountInfo(pda([enc("reward_vault")])); if(ra) left=Number(ra.data.readBigUInt64LE(64))/1e9; }catch(_){}
+      }
+      // zablokowane = anl_reward_reserved z global_config @114
+      let reserved=null;
+      try{ const gcA=await conn.getAccountInfo(pda([enc("global_config")])); if(gcA) reserved=Number(gcA.data.readBigUInt64LE(114))/1e9; }catch(_){}
+      const fmt=(n)=> n>=1e6 ? (n/1e6).toLocaleString(isPL?"pl-PL":"en-US",{maximumFractionDigits:2})+"M" : Math.round(n).toLocaleString(isPL?"pl-PL":"en-US");
+      const el=document.getElementById("stPoolSub");
+      if(el){
+        const l1 = left!=null ? ((isPL?"zostało: ":"remaining: ")+fmt(left)+" ANL") : "";
+        const l2 = reserved!=null ? ((isPL?"zablokowane: ":"locked: ")+fmt(reserved)+" ANL") : "";
+        el.innerHTML = [l1,l2].filter(Boolean).join("<br>");
+      }
+    }catch(e){ console.log("[ANL] pool sub:", e.message); }
+  })();
   const xv = await tok("G1u7fJDP27vPD6gamLwZKzfdsFFFx7RBsGKR2cGHoXqA");
-  // XNT DISTRIBUTED = suma WYPRACOWANA (wszystkie fundingi, ktore weszly przez
-  // indeks). Nie maleje po wyplatach — w odroznieniu od salda skarbca.
-  // Podpis: ile wplacono w biezacej epoce + biezace saldo skarbca.
+  // XNT W SKARBCU = saldo xnt_vault (jeden pewny odczyt konta, bez skanu historii).
+  // Metoda dziala tez przy zamknietym kontrakcie na mainnecie. Suma "rozdane"
+  // wymaga licznika w kontrakcie (total_xnt_funded) — dodany przy restarcie.
   const _isPL = ()=>{ try{ return (window.anlCurrentLang&&window.anlCurrentLang())==="pl"; }catch(e){ return false; } };
-  const _fmtX = (v)=> (Number(v)/1e9).toLocaleString(_isPL()?"pl-PL":"en-US",{maximumFractionDigits:0});
+  const _fmtX = (v)=> (Number(v)).toLocaleString(_isPL()?"pl-PL":"en-US",{maximumFractionDigits:2});
   try{
-    // 1) szybki wstepny odczyt: skarbiec minus bufor (natychmiast)
-    const pi = await poolXntIndexes();
-    const undTot = pi[0].und + pi[1].und;
-    const vault = xv!=null ? BigInt(Math.round(xv*1e9)) : 0n;
-    const quick = vault > undTot ? vault - undTot : 0n;
-    set("stXnt", _fmtX(quick)+" XNT");
-    // 2) doprecyzowanie z eventow XntFunded (suma wplat + dzisiejsza epoka)
-    (async function(){
-      try{
-        const cfgA = await conn.getAccountInfo(pda([enc("global_config")]));
-        if(!cfgA) return;
-        const gts = Number(new DataView(cfgA.data.buffer, cfgA.data.byteOffset).getBigInt64(106,true));
-        const curEp = Math.floor((Date.now()/1000 - gts)/86400);
-        const D_FUND = [101,12,39,116,69,138,216,241];
-        let total=0n, today=0n, before, pages=0;
-        while(pages < 3){
-          const sigs = await conn.getSignaturesForAddress(PROGRAM_ID, before?{limit:100,before}:{limit:100});
-          if(!sigs.length) break;
-          for(const s of sigs){
-            if(s.err) continue;
-            let tx; try{ tx = await conn.getTransaction(s.signature,{commitment:"confirmed",maxSupportedTransactionVersion:0}); }catch(_){ continue; }
-            const logs = (tx && tx.meta && tx.meta.logMessages) || [];
-            for(const l of logs){
-              const m = l.match(/^Program data: (.+)$/); if(!m) continue;
-              let b; try{ b = Uint8Array.from(atob(m[1]), function(c){return c.charCodeAt(0);}); }catch(_){ continue; }
-              if(b.length < 72) continue;
-              let ok=true; for(let i=0;i<8;i++) if(b[i]!==D_FUND[i]){ok=false;break;}
-              if(!ok) continue;
-              const dv2 = new DataView(b.buffer, b.byteOffset);
-              const net = dv2.getBigUint64(8, true);
-              const ts  = Number(dv2.getBigInt64(64, true));
-              total += net;
-              if(Math.floor((ts - gts)/86400) === curEp) today += net;
-            }
-          }
-          before = sigs[sigs.length-1].signature;
-          pages++;
-          if(sigs.length < 100) break;
-        }
-        if(total > 0n){
-          set("stXnt", _fmtX(total)+" XNT");
-          const sub2 = document.getElementById("stXntSub");
-          if(sub2) sub2.textContent = _isPL()
-            ? ("dziś: "+_fmtX(today)+" XNT · w skarbcu: "+_fmtX(vault)+" XNT")
-            : ("today: "+_fmtX(today)+" XNT · in vault: "+_fmtX(vault)+" XNT");
-        }
-      }catch(e){ console.log("[ANL] suma fundingow:", e.message); }
-    })();
-    const sub = document.getElementById("stXntSub");
-    if(sub && undTot > 0n) sub.textContent = _isPL()
-      ? (_fmtX(undTot)+" XNT w puli do dystrybucji")
-      : (_fmtX(undTot)+" XNT waiting for distribution");
-  }catch(e){ if(xv!==null) set("stXnt", "0 XNT"); }
+    if(xv!==null){
+      set("stXnt", _fmtX(xv)+" XNT");
+      const sub = document.getElementById("stXntSub");
+      if(sub) sub.textContent = _isPL() ? "w skarbcu nagród · on-chain" : "in reward vault · on-chain";
+    }
+  }catch(e){ if(xv!==null) set("stXnt", _fmtX(xv)+" XNT"); }
   try{ const profs = await conn.getProgramAccounts(PROGRAM_ID,
       {filters:[{memcmp:{offset:0,bytes:"j9SjDYAWesU"}},{memcmp:{offset:42,bytes:"1"}}], dataSlice:{offset:0,length:0}});
     set("stStakers", String(profs.length)); }catch(e){}

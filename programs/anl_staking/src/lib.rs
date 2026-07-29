@@ -31,7 +31,7 @@ use state::PoolType;
 declare_id!("CvvG4xQq1w4gYRSidZZ3CzcGcGzaD9LprYjh9XEoMbWC");
 #[cfg(feature = "network-testnet")]
 // Testnet X1 — keypair z 19.07.2026 (po rotacji higienicznej), poza repo.
-declare_id!("6jiCawqJg5NPR26wCov15tD3HtjKVk1Ao252ZJbZYj1w");
+declare_id!("49vhBowGFDHoX9te8MmvFjFyyKQyFsDZCPmd8uA635XB");
 #[cfg(not(any(feature = "network-mainnet", feature = "network-testnet")))]
 // DEV-ONLY: lokalne testy i IDE; nie odpowiada żadnemu wdrożonemu adresowi.
 declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");

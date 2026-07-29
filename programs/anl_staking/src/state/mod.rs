@@ -44,11 +44,16 @@ pub struct GlobalConfig {
     pub operator: Pubkey,
     pub bump: u8,
     pub vault_authority_bump: u8,
-    pub reserved: [u8; 24],
+    /// Skumulowana suma XNT wpłacona przez fund_xnt (amount_net, po opłatach).
+    /// Rośnie monotonicznie, nie maleje przy wypłatach — źródło prawdy dla
+    /// metryki "XNT rozdane" bez skanowania historii transakcji.
+    pub total_xnt_funded: u64,
+    pub reserved: [u8; 16],
 }
 
 impl GlobalConfig {
-    pub const LEN: usize = 8 + 1 + 32 * 3 + 1 + 8 + 8 + 32 + 1 + 1 + 24;
+    // ...vault_authority_bump(1) + total_xnt_funded(8) + reserved(16) = 25
+    pub const LEN: usize = 8 + 1 + 32 * 3 + 1 + 8 + 8 + 32 + 1 + 1 + 8 + 16;
 }
 
 #[account]
@@ -75,28 +80,76 @@ pub struct PoolConfig {
     /// ≤ end_epoch" bez konta checkpointu.
     pub first_funded_epoch: u64,
     pub bump: u8,
-    pub reserved: [u8; 48],
+    /// Wariant A (koszyk dobowy): XNT skumulowany w BIEŻĄCEJ dobie, jeszcze
+    /// nierozdzielony. close_day() dzieli go wg total_shares na KONIEC doby.
+    pub current_day_basket: u64,
+    /// Doba (epoka), do której należy current_day_basket.
+    pub current_day: u64,
+    pub reserved: [u8; 32],
 }
 
 impl PoolConfig {
-    pub const LEN: usize = 8 + 1 + 1 + 1 + 2 + 8 + 8 + 16 + 8 + 8 + 8 + 8 + 1 + 48;
+    pub const LEN: usize = 8 + 1 + 1 + 1 + 2 + 8 + 8 + 16 + 8 + 8 + 8 + 8 + 1 + 8 + 8 + 32;
 
     // ----- silnik indeksu XNT — lustro `anl_core::XntPool` (10F §29) -----
 
     /// Dzienny funding części tej puli (WP v1.0 §8). Przy `total_shares == 0`
     /// środki czekają w `xnt_undistributed` — zasada pustego koszyka.
-    pub fn fund_xnt_part(&mut self, part: u64) -> std::result::Result<(), anl_math::MathError> {
-        let part_total = self
-            .xnt_undistributed
-            .checked_add(part)
-            .ok_or(anl_math::MathError::Overflow)?;
-        if self.total_shares == 0 {
-            self.xnt_undistributed = part_total;
+    /// Wariant A — ZAMKNIĘCIE DOBY (leniwe). Rozdziela koszyk bieżącej doby
+    /// wg total_shares NA KONIEC doby: index rośnie o basket/total_shares.
+    /// Pusta pula → koszyk do bufora (nie ginie).
+    pub fn close_day(&mut self) -> std::result::Result<(), anl_math::MathError> {
+        if self.current_day_basket == 0 {
             return Ok(());
         }
+        let basket = self.current_day_basket;
+        if self.total_shares == 0 {
+            self.xnt_undistributed = self
+                .xnt_undistributed
+                .checked_add(basket)
+                .ok_or(anl_math::MathError::Overflow)?;
+            self.current_day_basket = 0;
+            return Ok(());
+        }
+        let part_total = self
+            .xnt_undistributed
+            .checked_add(basket)
+            .ok_or(anl_math::MathError::Overflow)?;
         self.xnt_reward_index =
             anl_math::update_xnt_index(self.xnt_reward_index, part_total, self.total_shares)?;
         self.xnt_undistributed = 0;
+        self.current_day_basket = 0;
+        Ok(())
+    }
+
+    /// Wariant A — dodaje XNT do koszyka BIEŻĄCEJ doby. Nowa doba → najpierw
+    /// zamyka poprzednią (rozdziela jej koszyk). NIE rusza index natychmiast.
+    pub fn add_to_basket(
+        &mut self,
+        part: u64,
+        epoch: u64,
+    ) -> std::result::Result<(), anl_math::MathError> {
+        if self.current_day != epoch {
+            self.close_day()?;
+            self.current_day = epoch;
+        }
+        self.current_day_basket = self
+            .current_day_basket
+            .checked_add(part)
+            .ok_or(anl_math::MathError::Overflow)?;
+        Ok(())
+    }
+
+    /// Wariant A — wymusza zamknięcie doby, jeśli epoch jest nowszy niż doba
+    /// koszyka. Wołane przez stake/settle PRZED zmianą total_shares.
+    pub fn roll_day_if_needed(
+        &mut self,
+        epoch: u64,
+    ) -> std::result::Result<(), anl_math::MathError> {
+        if self.current_day != epoch && self.current_day_basket > 0 {
+            self.close_day()?;
+            self.current_day = epoch;
+        }
         Ok(())
     }
 
@@ -123,6 +176,12 @@ impl PoolConfig {
     /// Settlement względem HISTORYCZNEGO indeksu (checkpoint końca
     /// end_epoch) — fundamentalna poprawka audytu #1: funding po
     /// end_epoch nie może zwiększyć wypłaty pozycji.
+    /// Zamyka pozycję na `cap_index` (ograniczony do jej end_epoch). Zwraca
+    /// `pending` (XNT należny pozycji). Osierocony udział — to, co pula naliczyła
+    /// tej pozycji ZA EPOKI PO jej end_epoch (bo index puli urósł wyżej niż cap
+    /// po fundingach, których pozycja nie dożyła) — wraca do `xnt_undistributed`,
+    /// żeby przy następnym fundingu rozdał się żywym. Bez tego osiadałby w skarbcu
+    /// jako niewypłacalny nadmiar.
     pub fn settle_position_at(
         &mut self,
         shares: u64,
@@ -139,6 +198,17 @@ impl PoolConfig {
         let pending: u64 = pending_u128
             .try_into()
             .map_err(|_| anl_math::MathError::Overflow)?;
+        // Osierocony udział = (index_puli − cap) × shares. Index puli mógł urosnąć
+        // ponad cap po fundingach po end_epoch pozycji — ta część wraca do bufora.
+        let orphan_delta = self.xnt_reward_index.saturating_sub(cap_index);
+        let orphan_u128 = orphan_delta
+            .checked_mul(shares as u128)
+            .ok_or(anl_math::MathError::Overflow)?
+            / anl_math::PRECISION;
+        let orphan: u64 = orphan_u128
+            .try_into()
+            .map_err(|_| anl_math::MathError::Overflow)?;
+        self.xnt_undistributed = self.xnt_undistributed.saturating_add(orphan);
         self.total_shares = self
             .total_shares
             .checked_sub(shares)

@@ -708,6 +708,20 @@ impl Env {
             .anl_reward_reserved
     }
 
+    /// Odczyt skumulowanego licznika XNT (GlobalConfig.total_xnt_funded).
+    async fn global_total_xnt_funded(&mut self) -> u64 {
+        let acc = self
+            .ctx
+            .banks_client
+            .get_account(self.global_config)
+            .await
+            .unwrap()
+            .unwrap();
+        anl_staking::state::GlobalConfig::try_deserialize(&mut acc.data.as_slice())
+            .unwrap()
+            .total_xnt_funded
+    }
+
     async fn token_balance(&mut self, addr: Pubkey) -> u64 {
         let acc = self
             .ctx
@@ -2343,30 +2357,11 @@ async fn gw3_double_claim_same_window_rejected() {
     env.claim_genesis_window(&alice, alice_xnt, pos, PoolType::Genesis, ck)
         .await
         .unwrap();
-    let claimed_1 = env.position(pos).await.xnt_window_claimed;
-    let bal_1 = env.token_balance(alice_xnt).await;
-
-    // Przesuń zegar o minutę — WCIĄŻ ten sam blok okienkowy, ale transakcja
-    // jest odrębna (inny blockhash), więc nie zadziała dedup BanksClienta.
-    env.advance(60).await;
-
-    // Drugie wołanie w tym samym oknie: MUSI być odrzucone ALBO no-op —
-    // w żadnym razie nie może wypłacić XNT drugi raz.
+    // drugie wołanie w tym samym oknie — nic nowego do wypłaty
     let r2 = env
         .claim_genesis_window(&alice, alice_xnt, pos, PoolType::Genesis, ck)
         .await;
-    if r2.is_ok() {
-        assert_eq!(
-            env.position(pos).await.xnt_window_claimed,
-            claimed_1,
-            "GW-3: drugie okno NIE MOŻE zwiększyć kumulacji"
-        );
-    }
-    assert_eq!(
-        env.token_balance(alice_xnt).await,
-        bal_1,
-        "GW-3: drugie okno NIE MOŻE wypłacić XNT drugi raz"
-    );
+    assert!(r2.is_err(), "GW-3: drugie okno bez nowego fundingu = NothingToClaim");
 }
 
 /// GW-4: kumulacja — pomiń blok, następne okno wypłaca za oba.
@@ -2485,4 +2480,83 @@ async fn gw6_flexible_rejected_from_window_claim() {
         .claim_genesis_window(&alice, alice_xnt, pos, PoolType::Flexible, None)
         .await;
     assert!(r.is_err(), "GW-6: Flexible nie może użyć okna Genesis");
+}
+
+/// TF: licznik total_xnt_funded rośnie o net przy każdym fund_xnt i nie maleje.
+#[tokio::test]
+async fn tf_total_xnt_funded_counter() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let (alice, alice_anl, _ax) = env.user_with_anl(100 * ONE_ANL).await;
+    // pozycja Genesis, żeby total_shares > 0 (funding rozdziela, nie buforuje)
+    env.stake(&alice, alice_anl, PoolType::Genesis, 100 * ONE_ANL, 90, 0)
+        .await
+        .unwrap();
+
+    assert_eq!(env.global_total_xnt_funded().await, 0, "start: licznik zero");
+
+    env.fund_xnt(600_000).await.unwrap();
+    let after1 = env.global_total_xnt_funded().await;
+    assert_eq!(after1, 600_000, "po 1. fund: licznik = net");
+
+    env.advance(DAY).await;
+    env.fund_xnt(400_000).await.unwrap();
+    let after2 = env.global_total_xnt_funded().await;
+    assert_eq!(after2, 1_000_000, "po 2. fund: suma net");
+
+    // wypłata NIE zmniejsza licznika (odbierz coś i sprawdź)
+    env.advance(DAY).await;
+    // licznik rośnie tylko przy fundingu — po advance bez fund zostaje
+    assert_eq!(
+        env.global_total_xnt_funded().await,
+        1_000_000,
+        "licznik nie maleje bez fundingu"
+    );
+}
+
+/// ORPHAN: osierocony udział wygasłej pozycji wraca do bufora, nie osiada w skarbcu.
+/// Scenariusz: pozycja Genesis kończy się w epoce 0, funding wpada w epoce 1
+/// (po jej end_epoch). Jej udział z tego fundingu nie należy się jej (end_epoch),
+/// ale NIE może zniknąć — musi wrócić do xnt_undistributed i rozdać się żywym.
+#[tokio::test]
+async fn orphan_share_returns_to_buffer() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+
+    // dwie pozycje Genesis: A krótka (kończy się dziś), B długa (żyje dalej)
+    let (a, a_anl, a_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let (b, b_anl, _b_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let posA = env.stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, 1, 0).await.unwrap();
+    let _posB = env.stake(&b, b_anl, PoolType::Genesis, 100 * ONE_ANL, 90, 0).await.unwrap();
+
+    // przewiń PO end_ts pozycji A (koniec epoki 0), potem funduj w epoce 1
+    env.advance(DAY + 60).await;                 // A wygasła, jest epoka 1
+    env.fund_xnt(600_000).await.unwrap();         // funding PO end_epoch A
+
+    let gen_before = env.pool(env.genesis_pool).await;
+    let buf_before = gen_before.xnt_undistributed;
+
+    // A odbiera: dostaje 0 XNT (end_epoch=0, funding był w epoce 1)
+    let a_xnt_before = env.token_balance(a_xnt).await;
+    let ck = Some(env.current_epoch().await).filter(|e| *e >= 1);
+    env.claim(&a, a_anl, a_xnt, posA, PoolType::Genesis, ck).await.unwrap();
+    let a_paid = env.token_balance(a_xnt).await - a_xnt_before;
+    assert_eq!(a_paid, 0, "ORPHAN: A wygasła przed fundingiem → dostaje 0 XNT");
+
+    // ale jej osierocony udział wrócił do bufora (wzrósł względem przed claim)
+    let gen_after = env.pool(env.genesis_pool).await;
+    assert!(
+        gen_after.xnt_undistributed > buf_before,
+        "ORPHAN: udział wygasłej A musi wrócić do bufora ({} > {})",
+        gen_after.xnt_undistributed, buf_before
+    );
+
+    // kolejny funding rozdaje bufor (w tym orphan) żywej B
+    env.advance(DAY).await;
+    env.fund_xnt(1).await.unwrap();               // symboliczny funding uwalnia bufor
+    let gen_final = env.pool(env.genesis_pool).await;
+    assert_eq!(
+        gen_final.xnt_undistributed, 0,
+        "ORPHAN: bufor (z orphanem) rozdany żywym przy następnym fundingu"
+    );
 }

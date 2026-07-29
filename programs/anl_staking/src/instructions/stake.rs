@@ -150,7 +150,12 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
     cfg.anl_reward_reserved = new_reserved;
 
     // ---- księgowanie puli i pozycji ----
+    // Wariant A: ZAMKNIJ poprzednią dobę PRZED dodaniem shares tej pozycji.
+    // Koszyk poprzednich dób dzieli się BEZ tej pozycji; debt_index poniżej
+    // = index z końca poprzedniej doby → pozycja łapie CAŁĄ dobę wejścia.
+    let cur_epoch = epoch_of(now, cfg.genesis_start_ts).ok_or(AnlError::BeforeGenesis)?;
     let pool = &mut ctx.accounts.pool_config;
+    pool.roll_day_if_needed(cur_epoch).map_err(AnlError::from)?;
     pool.total_staked = pool
         .total_staked
         .checked_add(net)
