@@ -12,3 +12,8 @@ id.json
 .DS_Store
 scripts/
 website/testnet/*_01.html
+
+Cargo.lock.DZIALAJACY
+patch_d1.py
+*.bak-przed-blad2
+website/testnet/index-49vhBow.html
