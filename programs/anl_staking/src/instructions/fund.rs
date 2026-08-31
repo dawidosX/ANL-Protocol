@@ -88,6 +88,59 @@ pub struct RewardsFunded {
     pub timestamp: i64,
 }
 
+// ------------------------------------------------------------ fund_capy
+#[derive(Accounts)]
+pub struct FundCapy<'info> {
+    #[account(mut)]
+    pub funder: Signer<'info>,
+
+    #[account(seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
+        constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
+    pub global_config: Box<Account<'info, GlobalConfig>>,
+
+    /// CHECK: PDA-authority skarbcow.
+    #[account(seeds = [VAULT_AUTHORITY_SEED], bump = global_config.vault_authority_bump)]
+    pub vault_authority: UncheckedAccount<'info>,
+
+    #[account(address = global_config.capy_mint @ AnlError::InvalidMint)]
+    pub capy_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(mut, token::mint = capy_mint, token::authority = funder,
+        token::token_program = capy_token_program)]
+    pub funder_capy: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(mut, seeds = [CAPY_VAULT_SEED], bump = global_config.capy_vault_bump,
+        token::mint = capy_mint, token::authority = vault_authority,
+        token::token_program = capy_token_program)]
+    pub capy_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    pub capy_token_program: Program<'info, Token2022>,
+}
+
+pub fn fund_capy(ctx: Context<FundCapy>, amount: u64) -> Result<()> {
+    require!(amount > 0, AnlError::ZeroAmount);
+    let before = ctx.accounts.capy_vault.amount;
+    token_interface::transfer_checked(
+        CpiContext::new(ctx.accounts.capy_token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.funder_capy.to_account_info(),
+                mint: ctx.accounts.capy_mint.to_account_info(),
+                to: ctx.accounts.capy_vault.to_account_info(),
+                authority: ctx.accounts.funder.to_account_info(),
+            }),
+        amount, ctx.accounts.capy_mint.decimals)?;
+    ctx.accounts.capy_vault.reload()?;
+    let net = ctx.accounts.capy_vault.amount.checked_sub(before)
+        .ok_or(AnlError::MathOverflow)?;
+    emit!(CapyFunded { amount_net: net, vault_balance: ctx.accounts.capy_vault.amount,
+        timestamp: Clock::get()?.unix_timestamp });
+    Ok(())
+}
+
+#[event]
+pub struct CapyFunded { pub amount_net: u64, pub vault_balance: u64, pub timestamp: i64 }
+
+
 // ------------------------------------------------------------ fund_xnt
 
 #[derive(Accounts)]
@@ -233,17 +286,35 @@ fn roll_checkpoint<'info>(
 /// tylko gdy owner == program_id (realny checkpoint, nie placeholder/None).
 fn write_final_index<'info>(
     prev: Option<&UncheckedAccount<'info>>,
+    pool_type: PoolType,
+    prev_epoch: u64,
     final_index: u128,
     program_id: &Pubkey,
 ) -> Result<()> {
     let Some(prev_ai) = prev else {
         return Ok(());
     };
+    // Audyt M-02: pierwszy funding puli (albo placeholder) — brak domknietej doby.
+    if prev_epoch == NO_EPOCH {
+        return Ok(());
+    }
     let info = prev_ai.to_account_info();
     if *info.owner != *program_id {
         return Ok(());
     }
+    // Audyt M-02: pelna walidacja PDA jak w roll_checkpoint — checkpoint musi byc
+    // dokladnie [XNT_CKPT_SEED, pool_type, prev_epoch]. Wczesniej sprawdzany byl
+    // TYLKO owner, co pozwalalo nadpisac index DOWOLNEGO checkpointu.
+    let (pda, _) = Pubkey::find_program_address(
+        &[XNT_CKPT_SEED, &[pool_type as u8], &prev_epoch.to_le_bytes()],
+        program_id,
+    );
+    require_keys_eq!(info.key(), pda, AnlError::CheckpointMismatch);
     let mut ck = XntCheckpoint::try_deserialize(&mut &info.data.borrow()[..])?;
+    require!(
+        ck.version == ACCOUNT_VERSION && ck.epoch == prev_epoch && ck.pool_type == pool_type,
+        AnlError::CheckpointMismatch
+    );
     ck.index = final_index;
     ck.try_serialize(&mut &mut info.data.borrow_mut()[..])?;
     Ok(())
@@ -325,13 +396,20 @@ pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
     // Wariant A (Sposob 2): po add_to_basket index puli zawiera juz domkniecie
     // POPRZEDNIEJ doby (E). Zapisz ten finalny index do checkpointu doby E
     // (prev_ckpt) — to jest cap dla pozycji konczacych sie w dobie E.
+    // UWAGA (M-02): wywolania MUSZA byc PRZED nadpisaniem last_funded_epoch = epoch
+    // ponizej — write_final_index waliduje PDA wzgledem STAREJ wartosci
+    // last_funded_epoch (epoki domykanej doby). Nie zmieniac kolejnosci.
     write_final_index(
         ctx.accounts.genesis_prev_ckpt.as_ref(),
+        PoolType::Genesis,
+        ctx.accounts.genesis_pool.last_funded_epoch,
         ctx.accounts.genesis_pool.xnt_reward_index,
         ctx.program_id,
     )?;
     write_final_index(
         ctx.accounts.flexible_prev_ckpt.as_ref(),
+        PoolType::Flexible,
+        ctx.accounts.flexible_pool.last_funded_epoch,
         ctx.accounts.flexible_pool.xnt_reward_index,
         ctx.program_id,
     )?;

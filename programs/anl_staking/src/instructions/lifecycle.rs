@@ -125,12 +125,14 @@ pub fn settle_expired(ctx: Context<SettleExpired>) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     require!(now >= pos.end_ts, AnlError::PeriodNotEnded);
 
-    // Wariant A (Sposob 2): doba end_epoch pozycji MUSI byc domknieta, inaczej
-    // checkpoint ma index sprzed rozdzielenia koszyka → cap za maly. Niedomknieta
-    // = koszyk doby end_epoch wciaz wisi. Wtedy odmawiamy — najpierw close_day.
+    // Wariant A (Sposob 2): doba ostatniego fundingu <= end_epoch MUSI byc
+    // domknieta, inaczej jej checkpoint ma index sprzed rozdzielenia koszyka
+    // → cap za maly. Audyt N-01 (fix): guard odrzuca KAZDY wiszacy koszyk z doby
+    // <= end_epoch, nie tylko current_day == end_epoch. Liveness: close_day jest
+    // permissionless — kazdy moze domknac dobe i ponowic settle.
     let pool_ref = &ctx.accounts.pool_config;
     require!(
-        !(pool_ref.current_day == pos.end_epoch && pool_ref.current_day_basket > 0),
+        pool_ref.current_day_basket == 0 || pool_ref.current_day > pos.end_epoch,
         AnlError::DayNotClosed
     );
 
@@ -236,6 +238,14 @@ pub struct Claim<'info> {
     pub anl_token_program: Program<'info, Token2022>,
     pub xnt_token_program: Program<'info, Token>,
 
+    // --- CAPY v3: tylko ODCZYT salda + naliczenie do profilu (BEZ transferu) ---
+    #[account(mut, seeds = [CAPY_VAULT_SEED], bump = global_config.capy_vault_bump)]
+    pub capy_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(mut, seeds = [USER_PROFILE_SEED, owner.key().as_ref()],
+        bump = user_profile.bump)]
+    pub user_profile: Box<Account<'info, UserProfile>>,
+
     /// CHECK: jak w SettleExpired — checkpoint końca end_epoch pozycji.
     pub xnt_checkpoint: Option<UncheckedAccount<'info>>,
 }
@@ -256,6 +266,17 @@ pub fn claim(ctx: Context<Claim>) -> Result<()> {
     // Audyt #2: XNT liczone WYŁĄCZNIE do checkpointu końca end_epoch —
     // funding po epoce końca pozycji nigdy nie zwiększa jej wypłaty.
     if !ctx.accounts.user_position.settled {
+        // Audyt M-01/N-01 (fix): identyczny guard jak w settle_expired —
+        // niedomkniety koszyk z doby <= end_epoch = nieaktualny cap i TRWALA
+        // niedoplata XNT (pozycja zamykana). Odmawiamy — user czeka na close_day.
+        {
+            let pool_ref = &ctx.accounts.pool_config;
+            require!(
+                pool_ref.current_day_basket == 0
+                    || pool_ref.current_day > ctx.accounts.user_position.end_epoch,
+                AnlError::DayNotClosed
+            );
+        }
         let cap = settlement_cap_index(
             &ctx.accounts.pool_config,
             &ctx.accounts.user_position,
@@ -337,6 +358,25 @@ pub fn claim(ctx: Context<Claim>) -> Result<()> {
             ctx.accounts.xnt_mint.decimals,
         )?;
     }
+    // 2b) CAPY v3: NALICZ pending_capy (BEZ transferu - CAPY poza core claim).
+    //     available = vault - capy_reserved (brak podw. liczenia already-obiecanego)
+    //     entitlement = anl_reward * available / remaining_anl
+    let total_anl_paid = ctx.accounts.global_config.total_anl_paid;
+    let capy_reserved = ctx.accounts.global_config.capy_reserved;
+    let remaining_anl = ANL_REWARD_POOL.checked_sub(total_anl_paid as u128).unwrap_or(0);
+    let capy_entitlement: u64 = if remaining_anl == 0 || anl_reward == 0 {
+        0
+    } else {
+        let vault_bal = ctx.accounts.capy_vault.amount as u128;
+        let reserved = capy_reserved as u128;
+        let available = vault_bal.saturating_sub(reserved);
+        let full = (anl_reward as u128)
+            .checked_mul(available).ok_or(AnlError::MathOverflow)?
+            .checked_div(remaining_anl).ok_or(AnlError::MathOverflow)?;
+        let capped = core::cmp::min(full, available);
+        u64::try_from(capped).map_err(|_| AnlError::MathOverflow)?
+    };
+
     // 3) principal z Principal Vault (I: nigdy ze skarbca nagród)
     token_interface::transfer_checked(
         CpiContext::new_with_signer(
@@ -359,6 +399,25 @@ pub fn claim(ctx: Context<Claim>) -> Result<()> {
         .anl_reward_reserved
         .checked_sub(anl_reward)
         .ok_or(AnlError::MathOverflow)?;
+    // CAPY v3: zaksieguj naliczone CAPY (total_anl_paid + reserved + pending)
+    cfg.total_anl_paid = cfg.total_anl_paid
+        .checked_add(anl_reward).ok_or(AnlError::MathOverflow)?;
+    // Tripwire (v3.1): MIEKKI czujnik. Gdyby invariant sie zlamal, NIE blokuj
+    // core claim (ANL/XNT/principal userow) - tylko alarm. Immutable: zaden
+    // bezpiecznik nie moze uwiezic srodkow userow.
+    if (cfg.total_anl_paid as u128) > ANL_REWARD_POOL {
+        emit!(InvariantAlarm {
+            kind: 1, value: cfg.total_anl_paid,
+            limit_hi: (ANL_REWARD_POOL >> 64) as u64, limit_lo: ANL_REWARD_POOL as u64,
+            timestamp: now,
+        });
+    }
+    if capy_entitlement > 0 {
+        cfg.capy_reserved = cfg.capy_reserved
+            .checked_add(capy_entitlement).ok_or(AnlError::MathOverflow)?;
+        ctx.accounts.user_profile.pending_capy = ctx.accounts.user_profile.pending_capy
+            .checked_add(capy_entitlement).ok_or(AnlError::MathOverflow)?;
+    }
     let pool = &mut ctx.accounts.pool_config;
     pool.total_staked = pool
         .total_staked
@@ -376,6 +435,7 @@ pub fn claim(ctx: Context<Claim>) -> Result<()> {
         principal: amount,
         anl_reward,
         xnt_reward: xnt_accrued,
+        capy_reward: capy_entitlement,
         timestamp: now,
     });
     Ok(())
@@ -388,6 +448,17 @@ pub struct PositionClaimed {
     pub principal: u64,
     pub anl_reward: u64,
     pub xnt_reward: u64,
+    pub capy_reward: u64,
+    pub timestamp: i64,
+}
+
+/// Alarm ksiegowy (miekki czujnik v3.1) - nie blokuje operacji.
+#[event]
+pub struct InvariantAlarm {
+    pub kind: u8,
+    pub value: u64,
+    pub limit_hi: u64,
+    pub limit_lo: u64,
     pub timestamp: i64,
 }
 
@@ -706,5 +777,96 @@ pub struct PositionUnstakedEarly {
     pub principal_returned: u64,
     pub anl_reward_forfeited: u64,
     pub xnt_forfeited: u64,
+    pub timestamp: i64,
+}
+
+// ============================================================================
+// claim_capy (v3) - OSOBNA instrukcja: fizyczny transfer naliczonego CAPY.
+// Oddzielona od core claim -> awaria CAPY (frozen/hook) NIE dotyka ANL/XNT.
+// Jak faila, cala claim_capy sie cofa, pending_capy zostaje (retry pozniej).
+// ============================================================================
+#[derive(Accounts)]
+pub struct ClaimCapy<'info> {
+    #[account(mut)]
+    pub owner: Signer<'info>,
+
+    #[account(mut, seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
+        constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
+    pub global_config: Box<Account<'info, GlobalConfig>>,
+
+    /// CHECK: PDA-authority skarbcow.
+    #[account(seeds = [VAULT_AUTHORITY_SEED], bump = global_config.vault_authority_bump)]
+    pub vault_authority: UncheckedAccount<'info>,
+
+    #[account(mut, seeds = [USER_PROFILE_SEED, owner.key().as_ref()],
+        bump = user_profile.bump,
+        constraint = user_profile.owner == owner.key() @ AnlError::PositionOwnerMismatch)]
+    pub user_profile: Box<Account<'info, UserProfile>>,
+
+    #[account(address = global_config.capy_mint @ AnlError::InvalidMint)]
+    pub capy_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(mut, seeds = [CAPY_VAULT_SEED], bump = global_config.capy_vault_bump,
+        token::mint = capy_mint, token::authority = vault_authority,
+        token::token_program = capy_token_program)]
+    pub capy_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(mut, token::mint = capy_mint, token::authority = owner,
+        token::token_program = capy_token_program)]
+    pub owner_capy: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    pub capy_token_program: Program<'info, Token2022>,
+}
+
+pub fn claim_capy(ctx: Context<ClaimCapy>) -> Result<()> {
+    let pending = ctx.accounts.user_profile.pending_capy;
+    require!(pending > 0, AnlError::ZeroAmount);
+
+    // guard: nie wyplac wiecej niz jest fizycznie w skarbcu
+    let vault_bal = ctx.accounts.capy_vault.amount;
+    let to_pay = core::cmp::min(pending, vault_bal);
+    require!(to_pay > 0, AnlError::ZeroAmount);
+
+    let bump = ctx.accounts.global_config.vault_authority_bump;
+    let seeds: &[&[u8]] = &[VAULT_AUTHORITY_SEED, &[bump]];
+    let signer: &[&[&[u8]]] = &[seeds];
+
+    // transfer CAPY (normalny ? - jak faila, cala instrukcja sie cofa,
+    // pending_capy NIE zmienione, ANL/XNT juz dawno bezpieczne)
+    token_interface::transfer_checked(
+        CpiContext::new_with_signer(
+            ctx.accounts.capy_token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.capy_vault.to_account_info(),
+                mint: ctx.accounts.capy_mint.to_account_info(),
+                to: ctx.accounts.owner_capy.to_account_info(),
+                authority: ctx.accounts.vault_authority.to_account_info(),
+            },
+            signer,
+        ),
+        to_pay,
+        ctx.accounts.capy_mint.decimals,
+    )?;
+
+    // ksiegowanie PO udanym transferze
+    ctx.accounts.user_profile.pending_capy = ctx.accounts.user_profile.pending_capy
+        .checked_sub(to_pay).ok_or(AnlError::MathOverflow)?;
+    ctx.accounts.global_config.capy_reserved = ctx.accounts.global_config.capy_reserved
+        .checked_sub(to_pay).ok_or(AnlError::MathOverflow)?;
+
+    emit!(CapyClaimed {
+        owner: ctx.accounts.owner.key(),
+        amount: to_pay,
+        pending_remaining: ctx.accounts.user_profile.pending_capy,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+    Ok(())
+}
+
+#[event]
+pub struct CapyClaimed {
+    pub owner: Pubkey,
+    pub amount: u64,
+    pub pending_remaining: u64,
     pub timestamp: i64,
 }
