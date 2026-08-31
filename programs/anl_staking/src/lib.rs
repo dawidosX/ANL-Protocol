@@ -28,13 +28,13 @@ use state::PoolType;
 #[cfg(feature = "network-mainnet")]
 // PLACEHOLDER bez istniejącego keypaira — artefakt mainnet kompiluje się,
 // ale jest NIEWDRAŻALNY do czasu ceremonii mainnetowego Program ID.
-declare_id!("CvvG4xQq1w4gYRSidZZ3CzcGcGzaD9LprYjh9XEoMbWC");
+declare_id!("4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM");
 #[cfg(feature = "network-testnet")]
 // Testnet X1 — keypair z 19.07.2026 (po rotacji higienicznej), poza repo.
-declare_id!("49vhBowGFDHoX9te8MmvFjFyyKQyFsDZCPmd8uA635XB");
+declare_id!("4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM");
 #[cfg(not(any(feature = "network-mainnet", feature = "network-testnet")))]
 // DEV-ONLY: lokalne testy i IDE; nie odpowiada żadnemu wdrożonemu adresowi.
-declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
+declare_id!("4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM");
 
 #[program]
 pub mod anl_staking {
@@ -64,6 +64,10 @@ pub mod anl_staking {
         instructions::initialize::init_xnt_vault_handler(ctx)
     }
 
+    pub fn init_capy_vault(ctx: Context<InitCapyVault>) -> Result<()> {
+        instructions::initialize::init_capy_vault_handler(ctx)
+    }
+
     /// TC-010…016. Dokładnie jedna pula per typ (PDA wyklucza duplikaty).
     pub fn create_pool(ctx: Context<CreatePool>, pool_type: PoolType) -> Result<()> {
         instructions::create_pool::create_pool_handler(ctx, pool_type)
@@ -90,6 +94,10 @@ pub mod anl_staking {
         instructions::fund::fund_rewards(ctx, amount)
     }
 
+    pub fn fund_capy(ctx: Context<FundCapy>, amount: u64) -> Result<()> {
+        instructions::fund::fund_capy(ctx, amount)
+    }
+
     /// WP §8: dzienny wpływ XNT z walidatora; podział 65/35 do indeksów koszyków.
     pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
         instructions::fund::fund_xnt(ctx, amount, epoch)
@@ -113,6 +121,10 @@ pub mod anl_staking {
     /// WP §7: po end_ts — ANL + XNT + principal w jednej transakcji, pozycja zamknięta.
     pub fn claim(ctx: Context<Claim>) -> Result<()> {
         instructions::lifecycle::claim(ctx)
+    }
+
+    pub fn claim_capy(ctx: Context<ClaimCapy>) -> Result<()> {
+        instructions::lifecycle::claim_capy(ctx)
     }
 
     /// WP okna Genesis: przed end_ts — okienkowa wypłata XNT (co pełne 30 dni

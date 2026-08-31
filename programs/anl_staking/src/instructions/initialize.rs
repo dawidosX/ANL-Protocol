@@ -254,6 +254,73 @@ pub fn init_xnt_vault_handler(ctx: Context<InitXntVault>) -> Result<()> {
     Ok(())
 }
 
+
+// ============================================================================
+// init_capy_vault - skarbiec CAPY (Token-2022). Audyt: decimals==9 +
+// walidacja rozszerzen (odrzuc PermanentDelegate/TransferFee/TransferHook).
+// ============================================================================
+#[derive(Accounts)]
+pub struct InitCapyVault<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    #[account(mut, seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
+        has_one = authority @ AnlError::InvalidAuthority,
+        constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
+    pub global_config: Box<Account<'info, GlobalConfig>>,
+
+    /// CHECK: PDA-authority skarbcow.
+    #[account(seeds = [VAULT_AUTHORITY_SEED], bump = global_config.vault_authority_bump)]
+    pub vault_authority: UncheckedAccount<'info>,
+
+    pub capy_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(init, payer = authority, seeds = [CAPY_VAULT_SEED], bump,
+        token::mint = capy_mint, token::authority = vault_authority,
+        token::token_program = capy_token_program)]
+    pub capy_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    pub capy_token_program: Program<'info, Token2022>,
+    pub system_program: Program<'info, System>,
+}
+
+pub fn init_capy_vault_handler(ctx: Context<InitCapyVault>) -> Result<()> {
+    // decimals == 9 (skala jak ANL)
+    require!(ctx.accounts.capy_mint.decimals == 9, AnlError::InvalidMint);
+
+    // Walidacja Token-2022 (audyt v3.1): ALLOWLIST - tylko jawnie bezpieczne
+    // rozszerzenia; cokolwiek innego (w tym przyszle) -> odrzut. + freeze==None.
+    {
+        let mint_ai = ctx.accounts.capy_mint.to_account_info();
+        let data = mint_ai.try_borrow_data()?;
+        let state = StateWithExtensions::<MintState>::unpack(&data)
+            .map_err(|_| AnlError::InvalidMint)?;
+        let exts = state.get_extension_types().map_err(|_| AnlError::InvalidMint)?;
+        for e in exts {
+            let dozwolone = matches!(e,
+                ExtensionType::MetadataPointer | ExtensionType::TokenMetadata);
+            if !dozwolone {
+                msg!("CAPY mint: niedozwolone rozszerzenie {:?} (allowlist)", e);
+                return err!(AnlError::InvalidMint);
+            }
+        }
+        // freeze_authority: bazowe pole mintu (audyt HIGH). Aktywna -> partner
+        // moze zamrozic vault -> claim_capy blokowany na zawsze. Wymagamy None.
+        if state.base.freeze_authority.is_some() {
+            msg!("CAPY mint ma aktywna freeze_authority - odrzucone");
+            return err!(AnlError::InvalidMint);
+        }
+        // (Droga B) mint_authority NIE sprawdzane - CAPY z natury moze miec
+        // otwarty mint (partner); nie zagraza skarbcowi (dodruk != oproznienie).
+    }
+
+    let cfg = &mut ctx.accounts.global_config;
+    cfg.capy_mint = ctx.accounts.capy_mint.key();
+    cfg.capy_vault_bump = ctx.bumps.capy_vault;
+    msg!("capy_vault: {} capy_mint: {}", ctx.accounts.capy_vault.key(), cfg.capy_mint);
+    Ok(())
+}
+
 #[event]
 pub struct ProtocolInitialized {
     pub authority: Pubkey,

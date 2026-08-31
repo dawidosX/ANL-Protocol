@@ -48,12 +48,19 @@ pub struct GlobalConfig {
     /// Rośnie monotonicznie, nie maleje przy wypłatach — źródło prawdy dla
     /// metryki "XNT rozdane" bez skanowania historii transakcji.
     pub total_xnt_funded: u64,
+    /// CAPY (v3) - Token-2022, trzecia waluta (rozdzielony claim).
+    pub capy_mint: Pubkey,
+    pub capy_vault_bump: u8,
+    /// Suma wyplaconych nagrod ANL (monotoniczna, tylko udany claim).
+    pub total_anl_paid: u64,
+    /// Suma naliczonego, niewyplaconego CAPY (pending userow).
+    pub capy_reserved: u64,
     pub reserved: [u8; 16],
 }
 
 impl GlobalConfig {
     // ...vault_authority_bump(1) + total_xnt_funded(8) + reserved(16) = 25
-    pub const LEN: usize = 8 + 1 + 32 * 3 + 1 + 8 + 8 + 32 + 1 + 1 + 8 + 16;
+    pub const LEN: usize = 8 + 1 + 32 * 3 + 1 + 8 + 8 + 32 + 1 + 1 + 8 + 32 + 1 + 8 + 8 + 16;
 }
 
 #[account]
@@ -308,11 +315,13 @@ pub struct UserProfile {
     pub owner: Pubkey,
     pub next_position_index: u64,
     pub bump: u8,
+    /// CAPY (v3): naliczone, nieodebrane CAPY. Przezywa close pozycji.
+    pub pending_capy: u64,
     pub reserved: [u8; 7],
 }
 
 impl UserProfile {
-    pub const LEN: usize = 8 + 32 + 8 + 1 + 7;
+    pub const LEN: usize = 8 + 32 + 8 + 1 + 8 + 7;
 }
 
 /// Snapshot indeksu puli po epoce, w której wystąpił funding.

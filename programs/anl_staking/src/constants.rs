@@ -6,6 +6,7 @@ pub const POOL_SEED: &[u8] = b"pool";
 pub const PRINCIPAL_VAULT_SEED: &[u8] = b"principal_vault";
 pub const REWARD_VAULT_SEED: &[u8] = b"reward_vault";
 pub const XNT_VAULT_SEED: &[u8] = b"xnt_vault";
+pub const CAPY_VAULT_SEED: &[u8] = b"capy_vault";
 pub const USER_PROFILE_SEED: &[u8] = b"profile";
 pub const USER_POSITION_SEED: &[u8] = b"position";
 
@@ -31,3 +32,8 @@ pub const EXPECTED_XNT_MINT: anchor_lang::prelude::Pubkey =
         6, 155, 136, 87, 254, 171, 129, 132, 251, 104, 127, 99, 70, 24, 192, 53, 218, 196, 57, 220,
         26, 235, 59, 85, 152, 160, 240, 0, 0, 0, 0, 1,
     ]); // So11111111111111111111111111111111111111112
+
+/// CAPY: calkowita planowana pula nagrod ANL w jednostkach bazowych (200M x 10^9).
+/// remaining_anl = ANL_REWARD_POOL - total_anl_paid
+/// entitlement = anl_reward * available_capy / remaining_anl
+pub const ANL_REWARD_POOL: u128 = 200_000_000_000_000_000;
