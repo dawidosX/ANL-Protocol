@@ -63,8 +63,17 @@ fn settlement_cap_index(
     ckpt: Option<&UncheckedAccount>,
     program_id: &Pubkey,
 ) -> Result<u128> {
-    // Settlement końcowy liczy XNT do końca end_epoch pozycji.
-    cap_index_at(pool, pos, pos.end_epoch, ckpt, program_id)
+    // Settlement liczy XNT do OSTATNIEJ DOMKNIETEJ doby <= end_epoch.
+    // Gdy pozycja odbiera sie w biezacej (trwajacej) dobie, ta doba jej nie
+    // przysluguje — user rezygnuje z niepelnej biezacej doby i odbiera OD RAZU.
+    // Strona przekazuje checkpoint doby `target` (ostatniej domknietej).
+    let last_closed = if pool.current_day_basket > 0 {
+        pool.current_day.saturating_sub(1)
+    } else {
+        pool.current_day
+    };
+    let target = pos.end_epoch.min(last_closed);
+    cap_index_at(pool, pos, target, ckpt, program_id)
 }
 
 /// Indeks-granica dla DOWOLNEJ epoki docelowej `target_epoch` (audyt #2:
@@ -130,11 +139,8 @@ pub fn settle_expired(ctx: Context<SettleExpired>) -> Result<()> {
     // → cap za maly. Audyt N-01 (fix): guard odrzuca KAZDY wiszacy koszyk z doby
     // <= end_epoch, nie tylko current_day == end_epoch. Liveness: close_day jest
     // permissionless — kazdy moze domknac dobe i ponowic settle.
-    let pool_ref = &ctx.accounts.pool_config;
-    require!(
-        pool_ref.current_day_basket == 0 || pool_ref.current_day > pos.end_epoch,
-        AnlError::DayNotClosed
-    );
+    // Guard DayNotClosed usuniety: cap liczony do ostatniej domknietej doby,
+    // wiec odbior w niedomknietej dobie jest bezpieczny (biezaca doba pominieta).
 
     let frozen = ctx
         .accounts
@@ -269,14 +275,7 @@ pub fn claim(ctx: Context<Claim>) -> Result<()> {
         // Audyt M-01/N-01 (fix): identyczny guard jak w settle_expired —
         // niedomkniety koszyk z doby <= end_epoch = nieaktualny cap i TRWALA
         // niedoplata XNT (pozycja zamykana). Odmawiamy — user czeka na close_day.
-        {
-            let pool_ref = &ctx.accounts.pool_config;
-            require!(
-                pool_ref.current_day_basket == 0
-                    || pool_ref.current_day > ctx.accounts.user_position.end_epoch,
-                AnlError::DayNotClosed
-            );
-        }
+        // Guard DayNotClosed usuniety — cap liczy do ostatniej domknietej doby.
         let cap = settlement_cap_index(
             &ctx.accounts.pool_config,
             &ctx.accounts.user_position,
