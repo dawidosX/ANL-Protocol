@@ -1605,13 +1605,13 @@ async function loadHistory(){
   if(rows.length===0){ box.style.display="none"; return; }
   rows.sort(function(a,b){ return b.ts - a.ts; });
   const EXP = "https://explorer.x1.xyz/tx/";
-  tb.innerHTML = rows.map(function(r){
+  tb.innerHTML = rows.map(function(r,i){
     const d = new Date(r.ts*1000).toLocaleDateString((function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl"?"pl-PL":"en-US";}catch(e){return "en-US";}})(),{dateStyle:"short"});
     const _pl = (function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl";}catch(e){return false;}})();
     const typ = r.kind==="window" ? (_pl?"okno":"window") : (_pl?"końcowy":"final");
     const prc = r.kind==="window" ? "—" : fmtAnl(r.principal)+" ANL";
     const anlC = r.kind==="window" ? "—" : fmtAnl(r.anl)+" ANL";
-    return "<tr><td>"+r.idx.toString()+"</td>"+
+    return "<tr><td>"+(i+1)+"</td>"+
       "<td>"+typ+"</td>"+
       "<td>"+prc+"</td>"+
       "<td>"+anlC+"</td>"+
@@ -1620,6 +1620,16 @@ async function loadHistory(){
       "<td>"+d+"</td>"+
       "<td><a href=\""+EXP+r.sig+"\" target=\"_blank\" rel=\"noopener\" style=\"color:var(--amber)\">"+r.sig.slice(0,6)+"…</a></td></tr>";
   }).join("");
+  // suma nagrod (tylko nagrody: ANL reward + XNT + CAPY, BEZ principal)
+  var _plS=(function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl";}catch(e){return false;}})();
+  var sumAnl=0n,sumXnt=0n,sumCapy=0n;
+  rows.forEach(function(r){ if(r.kind!=="window"){sumAnl+=r.anl;} sumXnt+=r.xnt; sumCapy+=(r.capy||0n); });
+  tb.innerHTML += '<tr style="border-top:2px solid var(--edge);font-weight:700">'+
+    '<td colspan="3">'+(_plS?"Suma nagr\u00f3d":"Total rewards")+'</td>'+
+    '<td>'+fmtAnl(sumAnl)+' ANL</td>'+
+    '<td>'+fmtXnt(sumXnt)+' XNT</td>'+
+    '<td>'+fmtAnl(sumCapy)+' CAPY</td>'+
+    '<td colspan="2"></td></tr>';
   box.style.display="block";
 }
 async function loadClaimedTotals(){
