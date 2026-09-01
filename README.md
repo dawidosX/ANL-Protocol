@@ -1,150 +1,120 @@
-# ANL Staking Protocol — Smart Contract (X1 Network)
+# XNMiner m=10000+ — DAWIDOS.X1 · ANL Protocol (Tony.x1 build)
 
-[![CI](https://github.com/dawidosX/ANL-Protocol/actions/workflows/ci.yml/badge.svg)](https://github.com/dawidosX/ANL-Protocol/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+> **Wersja:** v5.0.0-m10000
+> **Data:** 2026-08-28
+> **Cel:** Kopanie pod aktualny diff sieci XenBlocks (min m=10000), auto-follow.
 
-On-chain program in Rust + Anchor 0.29. Implementation of **[White Paper v1.0](docs/ANL_White_Paper_EN.pdf)**
-([wersja polska](docs/ANL_White_Paper_PL.pdf) · [polski README](README.pl.md))
-— model: daily XNT, user-declared periods, all-or-nothing rewards.
-Target network: **X1 Network (x1.xyz)** — a Solana fork.
+Sieć XenBlocks podniosła minimalne difficulty na **m=10000** (oscyluje 10000-16000 wg liczby minerów, nigdy niżej). Stary tryb harvest m=100 przestał działać (bloki m=100 nie wchodzą on-chain). Ten build produkuje pod **aktualny diff sieci** (auto-follow), żeby bloki były akceptowane.
 
-## Model (WP v1.0)
+---
 
-- **Both programs** (Genesis / Flexible): the participant declares the period, **7..=3650 days**.
-- **Genesis windows** (from public launch): days **0–30 → 20%**, **31–90 → 15%**,
-  **from 91 → 8%**. Flexible: always 8%. Immutable APY — the rate from the moment of opening.
-- The **ANL reward** is known upfront and **reserved** at stake time
-  (`GlobalConfig.anl_reward_reserved`) — a stake without coverage in the Reward Vault
-  is rejected (`RewardCoverageExceeded`, WP §11).
-- **Daily XNT**: `fund_xnt` splits validator revenue **65% Genesis / 35% Flexible**
-  and advances basket indices (`acc-per-share`, PRECISION 1e12). Empty basket →
-  the share waits in `xnt_undistributed` and enters at the next funding.
-- **Period end**: the ANL reward stops at the exact `end_ts`; XNT uses daily epoch granularity and includes the full `end_epoch` (see WP §8.1). `settle_expired`
-  (permissionless) freezes the position's XNT and removes its shares from the basket.
-- **`claim`** (after `end_ts`): ANL reward + accrued XNT + principal in **one
-  transaction**; the position account is closed (rent returns to the owner).
-- **`unstake_early`** (before `end_ts`): principal returns in full; **all rewards are
-  forfeited** — the ANL reservation is released (tokens never left the Reward Vault),
-  accrued XNT returns to the basket's `xnt_undistributed`.
+## Szybki start
 
-## Status: Phase 1 + Phase 2 ✅ (integration-tested)
-
-| Module | Scope | Tests |
-|---|---|---|
-| `crates/anl-math` | APY windows (31/91), period rewards, XNT index, 65/35 split, dust; +10 property-based (proptest) | **34/34** |
-| `core/` | reference model: declared periods, `settle`, `forfeit`, WP examples | **34/34** |
-| `initialize` | GlobalConfig + VaultAuthority + 3 vaults; ANL=Token-2022, XNT=SPL | TC-001…006 |
-| `create_pool` | exactly 2 pools, 65/35 XNT shares | TC-010…016 |
-| `pause` / `resume` | emergency brake | TC-100…105 |
-| `stake` | actual received, Immutable APY, 7..=3650-day period, reward reservation | ✅ integ. |
-| `fund_rewards` / `fund_xnt(amount, epoch)` | NET deposits; 65/35 split; epoch checkpoint | ✅ integ. |
-| `settle_expired` | permissionless; XNT from checkpoint ≤ `end_epoch` (audit #1 ✅) | ✅ integ. |
-| `claim` | ANL+XNT+principal in 1 tx, reservation release, account close | ✅ integ. |
-| `unstake_early` | full principal back; ANL (reservation) and XNT (undistributed) forfeited | ✅ integ. |
-
-## Operations (daily bot) — IMPORTANT
-
-After audit #1 the `end_epoch` boundary is enforced by the CONTRACT (epoch
-checkpoints) — funding of a later epoch can never increase a position's
-payout, regardless of operation ordering. The daily bot still runs
-1) `settle_expired`, 2) `fund_xnt` (minimises index dilution from unsettled
-matured positions). `fund_xnt` takes `epoch == epoch_of(now)` plus checkpoint
-accounts (current + previous on the first funding of a new epoch).
-
-Pausing (`pause`) blocks `stake`; the exit paths (`claim`, `unstake_early`,
-`settle_expired`) always work — a user is never trapped.
-
-## Test build — the `test-periods` feature
-
-For the testing phase (X1 testnet), time parameters are shortened at **compile time**:
-
-| Parameter | Production | `test-periods` |
-|---|---|---|
-| Min. position period | 7 days | **1 day** |
-| Genesis Window 1 (20%) | days 0–30 | **days 0–2** |
-| Genesis Window 2 (15%) | days 31–90 | **days 3–8** |
-| Genesis Window 3 (8%) | from day 91 | **from day 9** |
-
+### 1. Zależności
 ```bash
-cargo test -p anl-math --features test-periods
-scripts/build-testnet.sh        # the ONLY path to a TESTNET artifact
+sudo apt-get update
+sudo apt-get install -y build-essential cmake libcurl4-openssl-dev nlohmann-json3-dev
+# lub: ./install-deps.sh
 ```
 
-**Never deploy a `test-periods` build to mainnet.** This is enforced in
-compile time, not by procedure: the crate defines the network features
-`network-mainnet` / `network-testnet`, and `compile_error!` rejects both
-`network-mainnet`+`test-periods` and any build selecting two networks at
-once. CI's release-guards job proves both negative cases on every push.
-Release artifacts are produced **exclusively** by `scripts/build-mainnet.sh`
-and `scripts/build-testnet.sh` — both refuse a dirty tree
-(`git status --porcelain`) and emit a manifest (HEAD, features, sha256 of
-the binary, rustc version). Deploying a locally built artifact that
-bypasses these scripts is prohibited. Additionally, the feature is not in
-`default`, and `initialize` logs a warning `msg!` in every test build.
-
-## Building
-
+### 2. Build
 ```bash
-cargo test -p anl-math          # math (34: 24 unit + 10 property)
-cd core && cargo test           # reference model (36: 34 unit + 2 property)
-scripts/build-testnet.sh        # TESTNET release artifact + manifest
-scripts/build-mainnet.sh        # MAINNET release artifact + manifest
-anchor keys sync                # proper Program ID (deploy phase)
+./build.sh
+# wynik: build/xnminer-cuda (albo podobny binary w build/)
 ```
 
-**Release policy:** deployable artifacts come **only** from the two
-`scripts/build-*.sh` scripts (clean-tree gate + manifest). A plain
-`anchor build` is fine for local development, but its output must never
-be deployed. The full evidence run (fmt, clippy `-D warnings`, all test
-suites, negative feature-guard builds, audit/deny) is
-`scripts/audit-evidence.sh` — fail-closed, bound to `git rev-parse HEAD`.
+### 3. Config — wybierz właściwy
 
-Toolchain: **Rust ≥ 1.80** (verified on 1.89). `Cargo.lock` generated
-on 1.89 — the old rustc 1.75 pins have been removed.
-
-
-> **XNT semantics — epoch, not second.** The XNT stream settles in daily epoch units: `end_epoch = epoch_of(end_ts − 1)`. A position earns XNT for every epoch in which any second of its period is active (including the full end epoch); funding of an epoch `> end_epoch` never increases the payout. The ANL reward accrues to the exact `end_ts`. This is the intended model (WP §8.1) — not a doc↔code mismatch.
-
-## Integration tests (solana-program-test)
-
+**Na vast.ai / cloud (port 80 często blokowany):**
 ```bash
-cargo test -p anl_staking --features test-periods --test integration   # 4/4
+cp miner.ini.vast miner.ini
 ```
 
-In-process, with real CPIs into Token-2022 and SPL Token, clock driven via the sysvar.
-Scenarios: full 2-user cycle with daily XNT (2:1 proportions, settle freezes accrual,
-claim = ANL+XNT+principal in 1 tx, account closed) · early exit (100% principal back,
-forfeiture into the basket pool, redistribution at the next funding, PeriodNotEnded /
-PeriodAlreadyEnded guards) · Immutable-APY windows + reward coverage + validations +
-pause (stake blocked, claim works). The suite reads constants from anl-math — it runs
-identically in both build variants.
+**Na W1-W4 / HiveOS produkcja (port 80 działa):**
+```bash
+cp miner.ini.prod miner.ini
+# dostosuj worker= i device_id= per karta (0-7)
+```
 
+### 4. Start
+```bash
+./start-miner.sh
+# lub: nohup ./build/xnminer-cuda miner.ini > /tmp/miner.log 2>&1 &
+```
 
-## Security — audit #1 (18 Jul 2026)
+---
 
-The contract went through a preliminary security audit. Findings status and fixes:
-**[docs/AUDIT-RESPONSE.md](docs/AUDIT-RESPONSE.md)**. In short: an **operator** role
-(funding-only hot key, `set_operator` from the multisig), a Token-2022 mint-extension
-gate in `initialize`, `version` checks in every instruction, full vault constraints,
-and a hard production-constants guard test. **Open: #1** (XNT expiry buckets) — must
-be closed before any immutable deployment.
+## KLUCZOWE — różnica vast vs produkcja
 
-## Phase 3 (next)
+| Parametr | vast (miner.ini.vast) | produkcja (miner.ini.prod) |
+|----------|----------------------|---------------------------|
+| `memory_cost` | 10000 | 10000 |
+| `force_mine_memory_cost` | 0 (auto-follow) | 0 (auto-follow) |
+| `match_drain_enabled` | **false** | **true** |
 
-Full-cycle integration testing on the X1 testnet (Volume 10B), 24h+ fuzzing,
-AI audit, a 100,000 ANL pilot (launch in pause), dashboard.
+### Dlaczego match_drain różny?
 
-## Security
+**Na vast: `match_drain_enabled = false`** — vast blokuje port 80, więc `/difficulty` pada (HTTP 000). Miner używa wtedy lastblock (port 4445) jako źródła diff. Ale match-drain z lastblock=10000 == bag_target=10000 → **parkowałby GPU** myśląc że jest okno. Objaw: GPU 0-24%, found=1 na 147M hashy. **Dlatego OFF na vast.**
 
-The protocol has undergone **four rounds of security review** with every
-finding fixed and independently re-verified — the full trail (findings,
-fixes, file:line evidence, verdicts, and the immutable-mainnet Definition
-of Done) lives in **[docs/SECURITY-AUDITS.md](docs/SECURITY-AUDITS.md)**,
-with the original reviewer reports archived under `docs/audits/`.
-Status: closed-testnet phase; the program is **not yet deployed** to any
-public network. Found something? Please open a private security advisory
-on GitHub rather than a public issue.
+**Na produkcji: `match_drain_enabled = true`** — zakładamy że port 80 działa na HiveOS. Jeśli na W1-W4 też port 80 pada → ustaw `false`.
 
-## License
+---
 
-Licensed under the [Apache License, Version 2.0](LICENSE).
+## Weryfikacja (co sprawdzić po starcie)
+
+| Pole dashboardu | Oczekiwane | Znaczenie |
+|-----------------|-----------|-----------|
+| Network | `m=10000`+ (nie "last-good") | Auto-follow działa |
+| Mining | `m=10000` (bez "Fix") | Kopie aktualny diff |
+| Window | "Mining" (nie "waiting for match") | Nie parkuje |
+| Speed | ~25-55 kH/s (NIE MH/s) | Normalne dla m=10000 (Argon2 wolniejszy) |
+| Blocks | found rośnie **I accept rośnie** | KLUCZOWE — bloki wchodzą |
+
+**Kryterium sukcesu:** `accept` rośnie w ciągu 1h (choćby 1-2 bloki).
+
+---
+
+## Wydajność — czego się spodziewać
+
+m=10000 to 100× więcej pamięci Argon2 niż m=100 → hashrate spada drastycznie:
+- **m=100 (stary):** ~2.95 MH/s
+- **m=10000 (nowy):** ~25-55 kH/s
+
+To normalne i nieuniknione (fizyka Argon2). ALE bloki teraz WCHODZĄ (accept rośnie), więc realny dochód rośnie mimo mniejszej liczby hashy.
+
+**VRAM przy m=10000:**
+- RTX 5090 (32GB): batch ~1920, dużo zapasu
+- RTX 3060 (12GB): batch ~590, budżet ~5.8GB — OK, ale sprawdź że nie OOM
+
+---
+
+## Fallback diff (gdy /difficulty pada)
+
+Auto-follow działa nawet bez portu 80:
+1. Próba `/difficulty` (port 80)
+2. Fallback: HTTPS leaderboard
+3. Fallback: `lastblock` (port 4445) — osobny poller
+
+Więc na vast (bez portu 80) miner i tak zna aktualny diff.
+
+---
+
+## Rozwiązywanie problemów
+
+**GPU 0% / "waiting for match":** match_drain parkuje → ustaw `match_drain_enabled = false`.
+
+**Speed w MH/s zamiast kH/s:** miner dalej na m=100 → sprawdź `memory_cost=10000` i `force_mine_memory_cost=0`.
+
+**accept nie rośnie po 1h:** sprawdź czy Network pokazuje live diff (nie "last-good"); sprawdź logi submitu.
+
+**OOM na RTX 3060:** zmniejsz `max_lanes` (np. 4) albo `parallelism`.
+
+---
+
+## Dashboard JSON (opcjonalny)
+
+Jeśli chcesz webowy dashboard — zobacz `PATCH-dashboard-json.md` (dodaje eksport `data/status.json` co 4s). Wymaga edycji `src/monitoring/dashboard.cpp` + rebuild.
+
+---
+
+*Build: Tony.x1 & DAWIDOS.X1 · ANL Protocol · logika m=10000 przez KIMI*
