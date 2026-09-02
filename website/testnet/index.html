@@ -2112,6 +2112,14 @@ async function stake(){
     const signature = await signAndSendViaX1(tx);
     await conn.confirmTransaction({signature, blockhash: bh.blockhash, lastValidBlockHeight: bh.lastValidBlockHeight}, "confirmed");
     log(`✅ STAKE OK — ${T("posWord")} #${index}. ${T("sig")}${signature}`, "ok");
+    // wyzeruj pole kwoty po udanym stake (zgloszenie testera)
+    try {
+      $("amtManual").value = "";
+      $("amtRange").value = "0";
+      $("amount").value = "0";
+      if($("amtVal")) $("amtVal").value = "";
+      anlAmtSlide("0");
+    } catch(e){}
     okFade();
     await refresh();
   }catch(e){
