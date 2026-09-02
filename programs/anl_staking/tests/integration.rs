@@ -1433,7 +1433,14 @@ async fn atak_a2_claim_cudzej_pozycji() {
     let (ofiara, ofiara_anl, _ofiara_xnt) = env.user_with_anl(100 * ONE_ANL).await;
     let (napastnik, napastnik_anl, napastnik_xnt) = env.user_with_anl(1 * ONE_ANL).await;
     let pos_ofiary = env
-        .stake(&ofiara, ofiara_anl, PoolType::Genesis, 100 * ONE_ANL, days, 0)
+        .stake(
+            &ofiara,
+            ofiara_anl,
+            PoolType::Genesis,
+            100 * ONE_ANL,
+            days,
+            0,
+        )
         .await
         .unwrap();
     env.advance((days as i64) * DAY + DAY).await;
@@ -1664,7 +1671,9 @@ async fn atak_c1_stake_tuz_przed_fundingiem() {
         "C1: pozycja wchodząca późno startuje z aktualnym debt_index — zero XNT za przeszłe fundingi"
     );
     // Zatem pending na wejściu == 0.
-    let pending = g.pending_xnt(pos_late.shares, pos_late.xnt_debt_index).unwrap();
+    let pending = g
+        .pending_xnt(pos_late.shares, pos_late.xnt_debt_index)
+        .unwrap();
     assert_eq!(pending, 0, "C1: brak naliczonego XNT tuż po wejściu");
 }
 
@@ -1673,8 +1682,23 @@ async fn atak_c1_stake_tuz_przed_fundingiem() {
 #[tokio::test]
 async fn atak_c2_split_bez_utraty_lamportow() {
     // Czysto matematyczny atak — nie potrzebuje łańcucha.
-    for net in [1u64, 2, 3, 7, 99, 100, 101, 999, 1_000, 1_001, 65_535,
-                1_000_000, 1_000_003, u64::MAX / 2, u64::MAX - 1] {
+    for net in [
+        1u64,
+        2,
+        3,
+        7,
+        99,
+        100,
+        101,
+        999,
+        1_000,
+        1_001,
+        65_535,
+        1_000_000,
+        1_000_003,
+        u64::MAX / 2,
+        u64::MAX - 1,
+    ] {
         let (g, f) = anl_math::split_xnt(net);
         assert_eq!(
             (g as u128) + (f as u128),
@@ -1701,8 +1725,22 @@ async fn atak_c3_fund_xnt_przez_obcego() {
     // Napastnik: własny keypair + własne konto XNT z zapasem.
     let napastnik = Keypair::new();
     airdrop(&mut env.ctx, &napastnik.pubkey(), 10_000_000_000).await;
-    let atk_xnt = create_token_account(&mut env.ctx, &napastnik.pubkey(), &env.xnt_mint, spl_token::id()).await;
-    mint_to(&mut env.ctx, &env.xnt_mint, &atk_xnt, &env.authority, 1_000, spl_token::id()).await;
+    let atk_xnt = create_token_account(
+        &mut env.ctx,
+        &napastnik.pubkey(),
+        &env.xnt_mint,
+        spl_token::id(),
+    )
+    .await;
+    mint_to(
+        &mut env.ctx,
+        &env.xnt_mint,
+        &atk_xnt,
+        &env.authority,
+        1_000,
+        spl_token::id(),
+    )
+    .await;
 
     let epoch = env.current_epoch().await;
     let ix = Instruction {
@@ -1724,7 +1762,11 @@ async fn atak_c3_fund_xnt_przez_obcego() {
             system_program: solana_sdk::system_program::id(),
         }
         .to_account_metas(None),
-        data: anl_staking::instruction::FundXnt { amount: 1_000, epoch }.data(),
+        data: anl_staking::instruction::FundXnt {
+            amount: 1_000,
+            epoch,
+        }
+        .data(),
     };
     let res = env.send_as(&napastnik, &[ix], &[&napastnik]).await;
     assert!(
@@ -1746,8 +1788,14 @@ async fn atak_c4_funding_pusty_koszyk() {
     let g = env.pool(env.genesis_pool).await;
     let f = env.pool(env.flexible_pool).await;
     // Indeks zostaje 0 (nic nie rozdzielono), XNT czeka jako undistributed.
-    assert_eq!(g.xnt_reward_index, 0, "C4: pusty koszyk Genesis — indeks nie rośnie");
-    assert_eq!(f.xnt_reward_index, 0, "C4: pusty koszyk Flexible — indeks nie rośnie");
+    assert_eq!(
+        g.xnt_reward_index, 0,
+        "C4: pusty koszyk Genesis — indeks nie rośnie"
+    );
+    assert_eq!(
+        f.xnt_reward_index, 0,
+        "C4: pusty koszyk Flexible — indeks nie rośnie"
+    );
     assert_eq!(
         g.xnt_undistributed + f.xnt_undistributed,
         1_000,
@@ -1772,8 +1820,22 @@ async fn atak_c5_funding_stara_epoka() {
     env.fund_xnt(1_000).await.unwrap();
 
     // Atak: próba fundingu z epoką 0 (przeszłość), ręcznie zbudowana.
-    let src = create_token_account(&mut env.ctx, &env.authority.pubkey(), &env.xnt_mint, spl_token::id()).await;
-    mint_to(&mut env.ctx, &env.xnt_mint, &src, &env.authority, 1_000, spl_token::id()).await;
+    let src = create_token_account(
+        &mut env.ctx,
+        &env.authority.pubkey(),
+        &env.xnt_mint,
+        spl_token::id(),
+    )
+    .await;
+    mint_to(
+        &mut env.ctx,
+        &env.xnt_mint,
+        &src,
+        &env.authority,
+        1_000,
+        spl_token::id(),
+    )
+    .await;
     let stara_epoka = 0u64;
     let ix = Instruction {
         program_id: env.program_id,
@@ -1794,7 +1856,11 @@ async fn atak_c5_funding_stara_epoka() {
             system_program: solana_sdk::system_program::id(),
         }
         .to_account_metas(None),
-        data: anl_staking::instruction::FundXnt { amount: 1_000, epoch: stara_epoka }.data(),
+        data: anl_staking::instruction::FundXnt {
+            amount: 1_000,
+            epoch: stara_epoka,
+        }
+        .data(),
     };
     let res = env.send(&[ix], &[]).await;
     assert!(
@@ -2131,9 +2197,7 @@ async fn atak_f2_podstawiony_checkpoint_na_settle() {
     );
 
     // Dowód pozytywny: settle z POPRAWNYM (ostatnim ≤ end_epoch) checkpointem przechodzi.
-    env.settle(pos, PoolType::Genesis, Some(ep2))
-        .await
-        .unwrap();
+    env.settle(pos, PoolType::Genesis, Some(ep2)).await.unwrap();
 }
 
 // GRUPA G — rozszerzenia z audytu GPT (2026-07-21)
@@ -2250,9 +2314,7 @@ async fn atak_g3_double_settle_po_dojrzeniu() {
     env.advance((days as i64) * DAY + DAY).await;
 
     // Pierwszy settle — legalny, nalicza XNT wg checkpointu ep0.
-    env.settle(pos, PoolType::Genesis, Some(ep0))
-        .await
-        .unwrap();
+    env.settle(pos, PoolType::Genesis, Some(ep0)).await.unwrap();
 
     // Odczyt stanu pozycji po pierwszym settle: naliczone XNT + flaga settled.
     let pos_po_1 = env.position(pos).await;
@@ -2297,7 +2359,10 @@ async fn gw1_window_not_reached_before_first_block() {
     let r = env
         .claim_genesis_window(&alice, alice_xnt, pos, PoolType::Genesis, None)
         .await;
-    assert!(r.is_err(), "GW-1: przed pełnym blokiem okno musi być zamknięte");
+    assert!(
+        r.is_err(),
+        "GW-1: przed pełnym blokiem okno musi być zamknięte"
+    );
 }
 
 /// GW-2: po pierwszym pełnym bloku → wypłaca XNT naliczony do progu, pozycja żyje.
@@ -2331,7 +2396,11 @@ async fn gw2_first_window_pays_and_keeps_position() {
     assert!(paid > 0, "GW-2: pierwsze okno musi wypłacić XNT");
     // pozycja NADAL aktywna, kapitał nietknięty, shares zostają
     let p = env.position(pos).await;
-    assert_eq!(p.status, PositionStatus::Active, "GW-2: pozycja żyje po oknie");
+    assert_eq!(
+        p.status,
+        PositionStatus::Active,
+        "GW-2: pozycja żyje po oknie"
+    );
     assert_eq!(p.amount, 100 * ONE_ANL, "GW-2: kapitał zablokowany");
     assert_eq!(p.xnt_window_claimed, paid, "GW-2: kumulacja zapisana");
 }
@@ -2362,7 +2431,10 @@ async fn gw3_double_claim_same_window_rejected() {
     let r2 = env
         .claim_genesis_window(&alice, alice_xnt, pos, PoolType::Genesis, ck)
         .await;
-    assert!(r2.is_err(), "GW-3: drugie okno bez nowego fundingu = NothingToClaim");
+    assert!(
+        r2.is_err(),
+        "GW-3: drugie okno bez nowego fundingu = NothingToClaim"
+    );
 }
 
 /// GW-4: kumulacja — pomiń blok, następne okno wypłaca za oba.
@@ -2397,7 +2469,8 @@ async fn gw4_cumulation_across_skipped_block() {
     assert!(
         paid >= expected_min,
         "GW-4: kumulacja musi objąć oba bloki (paid={} exp>={})",
-        paid, expected_min
+        paid,
+        expected_min
     );
 }
 
@@ -2447,7 +2520,8 @@ async fn gw5_final_claim_subtracts_window_claimed() {
     assert!(
         total_paid <= expected_total + 10 && total_paid + 10 >= expected_total,
         "GW-5: suma okno+końcówka ≈ całość ({} vs {}), bez podwójnej wypłaty",
-        total_paid, expected_total
+        total_paid,
+        expected_total
     );
     // pozycja zamknięta po końcowym claim (konto usunięte, close=owner)
     assert!(
@@ -2494,7 +2568,11 @@ async fn tf_total_xnt_funded_counter() {
         .await
         .unwrap();
 
-    assert_eq!(env.global_total_xnt_funded().await, 0, "start: licznik zero");
+    assert_eq!(
+        env.global_total_xnt_funded().await,
+        0,
+        "start: licznik zero"
+    );
 
     env.fund_xnt(600_000).await.unwrap();
     let after1 = env.global_total_xnt_funded().await;
@@ -2527,12 +2605,18 @@ async fn orphan_share_returns_to_buffer() {
     // dwie pozycje Genesis: A krótka (kończy się dziś), B długa (żyje dalej)
     let (a, a_anl, a_xnt) = env.user_with_anl(100 * ONE_ANL).await;
     let (b, b_anl, _b_xnt) = env.user_with_anl(100 * ONE_ANL).await;
-    let posA = env.stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, 1, 0).await.unwrap();
-    let _posB = env.stake(&b, b_anl, PoolType::Genesis, 100 * ONE_ANL, 90, 0).await.unwrap();
+    let posA = env
+        .stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, 1, 0)
+        .await
+        .unwrap();
+    let _posB = env
+        .stake(&b, b_anl, PoolType::Genesis, 100 * ONE_ANL, 90, 0)
+        .await
+        .unwrap();
 
     // przewiń PO end_ts pozycji A (koniec epoki 0), potem funduj w epoce 1
-    env.advance(DAY + 60).await;                 // A wygasła, jest epoka 1
-    env.fund_xnt(600_000).await.unwrap();         // funding PO end_epoch A
+    env.advance(DAY + 60).await; // A wygasła, jest epoka 1
+    env.fund_xnt(600_000).await.unwrap(); // funding PO end_epoch A
 
     let gen_before = env.pool(env.genesis_pool).await;
     let buf_before = gen_before.xnt_undistributed;
@@ -2540,21 +2624,27 @@ async fn orphan_share_returns_to_buffer() {
     // A odbiera: dostaje 0 XNT (end_epoch=0, funding był w epoce 1)
     let a_xnt_before = env.token_balance(a_xnt).await;
     let ck = Some(env.current_epoch().await).filter(|e| *e >= 1);
-    env.claim(&a, a_anl, a_xnt, posA, PoolType::Genesis, ck).await.unwrap();
+    env.claim(&a, a_anl, a_xnt, posA, PoolType::Genesis, ck)
+        .await
+        .unwrap();
     let a_paid = env.token_balance(a_xnt).await - a_xnt_before;
-    assert_eq!(a_paid, 0, "ORPHAN: A wygasła przed fundingiem → dostaje 0 XNT");
+    assert_eq!(
+        a_paid, 0,
+        "ORPHAN: A wygasła przed fundingiem → dostaje 0 XNT"
+    );
 
     // ale jej osierocony udział wrócił do bufora (wzrósł względem przed claim)
     let gen_after = env.pool(env.genesis_pool).await;
     assert!(
         gen_after.xnt_undistributed > buf_before,
         "ORPHAN: udział wygasłej A musi wrócić do bufora ({} > {})",
-        gen_after.xnt_undistributed, buf_before
+        gen_after.xnt_undistributed,
+        buf_before
     );
 
     // kolejny funding rozdaje bufor (w tym orphan) żywej B
     env.advance(DAY).await;
-    env.fund_xnt(1).await.unwrap();               // symboliczny funding uwalnia bufor
+    env.fund_xnt(1).await.unwrap(); // symboliczny funding uwalnia bufor
     let gen_final = env.pool(env.genesis_pool).await;
     assert_eq!(
         gen_final.xnt_undistributed, 0,

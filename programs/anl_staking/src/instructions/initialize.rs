@@ -22,10 +22,6 @@ use crate::constants::*;
 use crate::errors::AnlError;
 use crate::state::*;
 
-// ============================================================================
-// ETAP 1: initialize — GlobalConfig + walidacja mintów (bez tworzenia vaultów)
-// ============================================================================
-
 #[derive(Accounts)]
 pub struct Initialize<'info> {
     #[account(mut)]
@@ -64,7 +60,6 @@ pub fn initialize_handler(
 ) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
 
-    // Twarda kotwica minta XNT (wrapped native). W buildzie testowym wyłączona.
     #[cfg(not(feature = "test-periods"))]
     require_keys_eq!(
         ctx.accounts.xnt_mint.key(),
@@ -72,7 +67,6 @@ pub fn initialize_handler(
         AnlError::InvalidXntMint
     );
 
-    // ---- Audyt pkt 4: allowlista rozszerzeń Token-2022 minta ANL ----
     {
         let ai = ctx.accounts.anl_mint.to_account_info();
         let data = ai.try_borrow_data()?;
@@ -126,12 +120,6 @@ pub fn initialize_handler(
     });
     Ok(())
 }
-
-// ============================================================================
-// ETAP 2: trzy osobne instrukcje, każda tworzy JEDEN vault (mała ramka stosu).
-// Rozdzielone, bo trzy `init` Token-2022/SPL w jednej instrukcji przepełniają
-// stos SBF. Każda wymaga istniejącego GlobalConfig + tej samej authority.
-// ============================================================================
 
 /// Wspólne konta bazowe dla init pojedynczego vaulta ANL (principal/reward).
 #[derive(Accounts)]
@@ -254,11 +242,6 @@ pub fn init_xnt_vault_handler(ctx: Context<InitXntVault>) -> Result<()> {
     Ok(())
 }
 
-
-// ============================================================================
-// init_capy_vault - skarbiec CAPY (Token-2022). Audyt: decimals==9 +
-// walidacja rozszerzen (odrzuc PermanentDelegate/TransferFee/TransferHook).
-// ============================================================================
 #[derive(Accounts)]
 pub struct InitCapyVault<'info> {
     #[account(mut)]
@@ -285,39 +268,40 @@ pub struct InitCapyVault<'info> {
 }
 
 pub fn init_capy_vault_handler(ctx: Context<InitCapyVault>) -> Result<()> {
-    // decimals == 9 (skala jak ANL)
     require!(ctx.accounts.capy_mint.decimals == 9, AnlError::InvalidMint);
 
-    // Walidacja Token-2022 (audyt v3.1): ALLOWLIST - tylko jawnie bezpieczne
-    // rozszerzenia; cokolwiek innego (w tym przyszle) -> odrzut. + freeze==None.
     {
         let mint_ai = ctx.accounts.capy_mint.to_account_info();
         let data = mint_ai.try_borrow_data()?;
-        let state = StateWithExtensions::<MintState>::unpack(&data)
+        let state =
+            StateWithExtensions::<MintState>::unpack(&data).map_err(|_| AnlError::InvalidMint)?;
+        let exts = state
+            .get_extension_types()
             .map_err(|_| AnlError::InvalidMint)?;
-        let exts = state.get_extension_types().map_err(|_| AnlError::InvalidMint)?;
         for e in exts {
-            let dozwolone = matches!(e,
-                ExtensionType::MetadataPointer | ExtensionType::TokenMetadata);
+            let dozwolone = matches!(
+                e,
+                ExtensionType::MetadataPointer | ExtensionType::TokenMetadata
+            );
             if !dozwolone {
                 msg!("CAPY mint: niedozwolone rozszerzenie {:?} (allowlist)", e);
                 return err!(AnlError::InvalidMint);
             }
         }
-        // freeze_authority: bazowe pole mintu (audyt HIGH). Aktywna -> partner
-        // moze zamrozic vault -> claim_capy blokowany na zawsze. Wymagamy None.
         if state.base.freeze_authority.is_some() {
             msg!("CAPY mint ma aktywna freeze_authority - odrzucone");
             return err!(AnlError::InvalidMint);
         }
-        // (Droga B) mint_authority NIE sprawdzane - CAPY z natury moze miec
-        // otwarty mint (partner); nie zagraza skarbcowi (dodruk != oproznienie).
     }
 
     let cfg = &mut ctx.accounts.global_config;
     cfg.capy_mint = ctx.accounts.capy_mint.key();
     cfg.capy_vault_bump = ctx.bumps.capy_vault;
-    msg!("capy_vault: {} capy_mint: {}", ctx.accounts.capy_vault.key(), cfg.capy_mint);
+    msg!(
+        "capy_vault: {} capy_mint: {}",
+        ctx.accounts.capy_vault.key(),
+        cfg.capy_mint
+    );
     Ok(())
 }
 

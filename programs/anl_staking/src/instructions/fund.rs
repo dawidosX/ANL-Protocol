@@ -15,8 +15,6 @@ use crate::constants::*;
 use crate::errors::AnlError;
 use crate::state::*;
 
-// ------------------------------------------------------------ fund_rewards
-
 #[derive(Accounts)]
 pub struct FundRewards<'info> {
     #[account(mut, constraint = funder.key() == global_config.authority
@@ -88,7 +86,6 @@ pub struct RewardsFunded {
     pub timestamp: i64,
 }
 
-// ------------------------------------------------------------ fund_capy
 #[derive(Accounts)]
 pub struct FundCapy<'info> {
     #[account(mut)]
@@ -121,27 +118,39 @@ pub fn fund_capy(ctx: Context<FundCapy>, amount: u64) -> Result<()> {
     require!(amount > 0, AnlError::ZeroAmount);
     let before = ctx.accounts.capy_vault.amount;
     token_interface::transfer_checked(
-        CpiContext::new(ctx.accounts.capy_token_program.to_account_info(),
+        CpiContext::new(
+            ctx.accounts.capy_token_program.to_account_info(),
             TransferChecked {
                 from: ctx.accounts.funder_capy.to_account_info(),
                 mint: ctx.accounts.capy_mint.to_account_info(),
                 to: ctx.accounts.capy_vault.to_account_info(),
                 authority: ctx.accounts.funder.to_account_info(),
-            }),
-        amount, ctx.accounts.capy_mint.decimals)?;
+            },
+        ),
+        amount,
+        ctx.accounts.capy_mint.decimals,
+    )?;
     ctx.accounts.capy_vault.reload()?;
-    let net = ctx.accounts.capy_vault.amount.checked_sub(before)
+    let net = ctx
+        .accounts
+        .capy_vault
+        .amount
+        .checked_sub(before)
         .ok_or(AnlError::MathOverflow)?;
-    emit!(CapyFunded { amount_net: net, vault_balance: ctx.accounts.capy_vault.amount,
-        timestamp: Clock::get()?.unix_timestamp });
+    emit!(CapyFunded {
+        amount_net: net,
+        vault_balance: ctx.accounts.capy_vault.amount,
+        timestamp: Clock::get()?.unix_timestamp
+    });
     Ok(())
 }
 
 #[event]
-pub struct CapyFunded { pub amount_net: u64, pub vault_balance: u64, pub timestamp: i64 }
-
-
-// ------------------------------------------------------------ fund_xnt
+pub struct CapyFunded {
+    pub amount_net: u64,
+    pub vault_balance: u64,
+    pub timestamp: i64,
+}
 
 #[derive(Accounts)]
 #[instruction(amount: u64, epoch: u64)]
@@ -231,14 +240,12 @@ fn roll_checkpoint<'info>(
     program_id: &Pubkey,
 ) -> Result<()> {
     if pool.last_funded_epoch == epoch {
-        // dopłata w ramach tej samej epoki — checkpoint już istnieje
         require!(
             cur.version == ACCOUNT_VERSION && cur.epoch == epoch && cur.pool_type == pool.pool_type,
             AnlError::CheckpointMismatch
         );
         return Ok(());
     }
-    // funding NIE może być przypisany wstecz — epoka tylko rośnie
     require!(
         pool.last_funded_epoch == NO_EPOCH || epoch > pool.last_funded_epoch,
         AnlError::EpochMismatch
@@ -269,7 +276,6 @@ fn roll_checkpoint<'info>(
         ck.next_funded_epoch = epoch;
         ck.try_serialize(&mut &mut info.data.borrow_mut()[..])?;
     }
-    // świeży checkpoint bieżącej epoki
     cur.version = ACCOUNT_VERSION;
     cur.pool_type = pool.pool_type;
     cur.epoch = epoch;
@@ -294,7 +300,6 @@ fn write_final_index<'info>(
     let Some(prev_ai) = prev else {
         return Ok(());
     };
-    // Audyt M-02: pierwszy funding puli (albo placeholder) — brak domknietej doby.
     if prev_epoch == NO_EPOCH {
         return Ok(());
     }
@@ -302,9 +307,6 @@ fn write_final_index<'info>(
     if *info.owner != *program_id {
         return Ok(());
     }
-    // Audyt M-02: pelna walidacja PDA jak w roll_checkpoint — checkpoint musi byc
-    // dokladnie [XNT_CKPT_SEED, pool_type, prev_epoch]. Wczesniej sprawdzany byl
-    // TYLKO owner, co pozwalalo nadpisac index DOWOLNEGO checkpointu.
     let (pda, _) = Pubkey::find_program_address(
         &[XNT_CKPT_SEED, &[pool_type as u8], &prev_epoch.to_le_bytes()],
         program_id,
@@ -322,7 +324,6 @@ fn write_final_index<'info>(
 
 pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
     require!(amount > 0, AnlError::ZeroAmount);
-    // epoka fundingu MUSI odpowiadać zegarowi — brak przypisań wstecz/przód
     let now = Clock::get()?.unix_timestamp;
     let cur_epoch = epoch_of(now, ctx.accounts.global_config.genesis_start_ts)
         .ok_or(AnlError::BeforeGenesis)?;
@@ -349,7 +350,6 @@ pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
         .checked_sub(before)
         .ok_or(AnlError::MathOverflow)?;
 
-    // WP §8: podział dziennej puli 65/35 — suma części zawsze równa całości.
     let g_empty = ctx.accounts.genesis_pool.total_shares == 0;
     let f_empty = ctx.accounts.flexible_pool.total_shares == 0;
     let (genesis_part, flexible_part) = if g_empty && f_empty {
@@ -381,9 +381,6 @@ pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
         ctx.program_id,
     )?;
 
-    // Wariant A: XNT do KOSZYKA bieżącej doby (add_to_basket sam zamyka
-    // poprzednią dobę gdy epoch to nowa doba — wtedy index rośnie o koszyk
-    // poprzedniej doby / total_shares z jej końca).
     ctx.accounts
         .genesis_pool
         .add_to_basket(genesis_part, epoch)
@@ -393,12 +390,6 @@ pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
         .add_to_basket(flexible_part, epoch)
         .map_err(AnlError::from)?;
 
-    // Wariant A (Sposob 2): po add_to_basket index puli zawiera juz domkniecie
-    // POPRZEDNIEJ doby (E). Zapisz ten finalny index do checkpointu doby E
-    // (prev_ckpt) — to jest cap dla pozycji konczacych sie w dobie E.
-    // UWAGA (M-02): wywolania MUSZA byc PRZED nadpisaniem last_funded_epoch = epoch
-    // ponizej — write_final_index waliduje PDA wzgledem STAREJ wartosci
-    // last_funded_epoch (epoki domykanej doby). Nie zmieniac kolejnosci.
     write_final_index(
         ctx.accounts.genesis_prev_ckpt.as_ref(),
         PoolType::Genesis,
@@ -414,15 +405,11 @@ pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
         ctx.program_id,
     )?;
 
-    // snapshot: indeks puli po domknieciu poprzednich dob (baza biezacej doby)
     ctx.accounts.genesis_ckpt.index = ctx.accounts.genesis_pool.xnt_reward_index;
     ctx.accounts.flexible_ckpt.index = ctx.accounts.flexible_pool.xnt_reward_index;
     ctx.accounts.genesis_pool.last_funded_epoch = epoch;
     ctx.accounts.flexible_pool.last_funded_epoch = epoch;
 
-    // Licznik skumulowany — źródło prawdy dla metryki "XNT rozdane" bez
-    // skanowania historii. saturating_add: nigdy nie panikuje (u64 nie przepełni
-    // się realnie, ale zabezpieczamy inwariant).
     ctx.accounts.global_config.total_xnt_funded = ctx
         .accounts
         .global_config
@@ -449,8 +436,6 @@ pub struct XntFunded {
     pub flexible_index: u128,
     pub timestamp: i64,
 }
-
-// ------------------------------------------------------------ set_operator
 
 #[derive(Accounts)]
 pub struct SetOperator<'info> {

@@ -9,7 +9,7 @@
 pub const PRECISION: u128 = 1_000_000_000_000;
 pub const BPS_DENOMINATOR: u128 = 10_000;
 pub const SECONDS_PER_DAY: i64 = 86_400;
-pub const SECONDS_PER_YEAR: i64 = 365 * SECONDS_PER_DAY; // D-3
+pub const SECONDS_PER_YEAR: i64 = 365 * SECONDS_PER_DAY;
 
 pub const APY_FLEXIBLE_BPS: u16 = 800;
 pub const APY_GENESIS_W1_BPS: u16 = 2_000;
@@ -48,7 +48,7 @@ pub const GENESIS_WINDOW_DAYS: u64 = 30;
 #[cfg(feature = "test-periods")]
 pub const GENESIS_WINDOW_DAYS: u64 = 3;
 
-pub const XNT_SHARE_GENESIS_BPS: u128 = 6_500; // Flexible = reszta (35%)
+pub const XNT_SHARE_GENESIS_BPS: u128 = 6_500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MathError {
@@ -141,13 +141,13 @@ pub fn period_end_ts(start_ts: i64, period_seconds: i64) -> MathResult<i64> {
 mod tests {
     use super::*;
 
-    const ONE_ANL: u64 = 1_000_000_000; // decimals = 9
+    const ONE_ANL: u64 = 1_000_000_000;
     const MILLION_ANL: u64 = 1_000_000 * ONE_ANL;
 
     #[test]
     fn tc_040_window_one_gives_20_percent() {
         assert_eq!(genesis_apy_bps(0).unwrap(), 2_000);
-        assert_eq!(genesis_apy_bps(WINDOW_1_END - 1).unwrap(), 2_000); // koniec dnia 30
+        assert_eq!(genesis_apy_bps(WINDOW_1_END - 1).unwrap(), 2_000);
     }
 
     #[test]
@@ -211,7 +211,6 @@ mod tests {
 
     #[test]
     fn flexible_1m_anl_at_8_percent_for_100_days() {
-        // 1 000 000 × 8% × 100/365 = 21 917,808219178… ANL (floor w bazowych jednostkach)
         let r = period_reward(MILLION_ANL, 800, 100 * SECONDS_PER_DAY).unwrap();
         assert_eq!(r, 21_917_808_219_178);
     }
@@ -221,7 +220,6 @@ mod tests {
         let r90 = period_reward(MILLION_ANL, 2_000, 90 * SECONDS_PER_DAY).unwrap();
         let r365 = period_reward(MILLION_ANL, 2_000, 365 * SECONDS_PER_DAY).unwrap();
         assert!(r90 < r365);
-        // 90-dniowa nagroda × (365/90) ≈ roczna (z dokładnością floor)
         assert!((r90 as u128 * 365 / 90).abs_diff(r365 as u128) <= 365);
     }
 
@@ -236,10 +234,8 @@ mod tests {
 
     #[test]
     fn tc_127_max_amount_checked_not_panicking() {
-        // realny maks: u64::MAX przy 20% za 1 rok = MAX/5 — mieści się w u64
         let r = period_reward(u64::MAX, 2_000, SECONDS_PER_YEAR).unwrap();
         assert_eq!(r, u64::MAX / 5);
-        // wynik ponad zakres u64 (20% × 10 lat = 2× principal) → kontrolowany błąd, nie panic
         assert_eq!(
             period_reward(u64::MAX, 2_000, 10 * SECONDS_PER_YEAR),
             Err(MathError::Overflow)
@@ -295,7 +291,7 @@ mod tests {
     #[test]
     fn tc_124_late_staker_gets_nothing_from_earlier_funding() {
         let idx1 = update_xnt_index(0, 1_000, 100).unwrap();
-        let b_debt = idx1; // B wchodzi po pierwszym fundingu
+        let b_debt = idx1;
         let idx2 = update_xnt_index(idx1, 900, 300).unwrap();
         assert_eq!(pending_xnt(200, idx2, b_debt).unwrap(), 600);
     }
@@ -304,7 +300,7 @@ mod tests {
     fn tc_126_index_dust_never_creates_tokens() {
         let idx = update_xnt_index(0, 10, 3).unwrap();
         let total: u64 = (0..3).map(|_| pending_xnt(1, idx, 0).unwrap()).sum();
-        assert_eq!(total, 9); // 1 jednostka dust zostaje w vaulcie, nigdy > 10
+        assert_eq!(total, 9);
     }
 
     #[test]
@@ -345,7 +341,6 @@ mod tests {
 
     #[test]
     fn wp_example_genesis_60_days_window1() {
-        // WP §5: 100 000 ANL × 20% × 60/365 ≈ 3 288 ANL (floor)
         let r = period_reward(100_000 * ONE_ANL, 2_000, 60 * SECONDS_PER_DAY).unwrap();
         assert_eq!(r, 3_287_671_232_876);
     }

@@ -104,10 +104,8 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
     let elapsed = now
         .checked_sub(cfg.genesis_start_ts)
         .ok_or(AnlError::MathOverflow)?;
-    // Przed publicznym startem nie ma stakingu (T0 okien, D-11).
     require!(elapsed >= 0, AnlError::NotStarted);
 
-    // ---- transfer principalu: actual received (sekcja 9) ----
     let before = ctx.accounts.principal_vault.amount;
     token_interface::transfer_checked(
         CpiContext::new(
@@ -131,7 +129,6 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
         .ok_or(AnlError::MathOverflow)?;
     require!(net >= MIN_STAKE_AMOUNT, AnlError::BelowMinimumStake);
 
-    // ---- Immutable APY wg programu i okna wejścia (WP §5/§6) ----
     let apy_bps = match ctx.accounts.pool_config.pool_type {
         PoolType::Genesis => anl_math::genesis_apy_bps(elapsed).map_err(AnlError::from)?,
         PoolType::Flexible => anl_math::APY_FLEXIBLE_BPS,
@@ -143,7 +140,6 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
     let end_ts = anl_math::period_end_ts(now, period_secs).map_err(AnlError::from)?;
     let anl_reward = anl_math::period_reward(net, apy_bps, period_secs).map_err(AnlError::from)?;
 
-    // ---- pokrycie nagrody w Reward Vault (WP §11) ----
     let cfg = &mut ctx.accounts.global_config;
     let new_reserved = cfg
         .anl_reward_reserved
@@ -155,16 +151,9 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
     );
     cfg.anl_reward_reserved = new_reserved;
 
-    // ---- księgowanie puli i pozycji ----
-    // Wariant A: ZAMKNIJ poprzednią dobę PRZED dodaniem shares tej pozycji.
-    // Koszyk poprzednich dób dzieli się BEZ tej pozycji; debt_index poniżej
-    // = index z końca poprzedniej doby → pozycja łapie CAŁĄ dobę wejścia.
     let cur_epoch = epoch_of(now, cfg.genesis_start_ts).ok_or(AnlError::BeforeGenesis)?;
     let program_id = *ctx.program_id;
     let pool = &mut ctx.accounts.pool_config;
-    // Wariant A (B): roll_day_if_needed zwraca Some(domknieta_doba), gdy
-    // faktycznie domknela koszyk. Wtedy zapisujemy finalny index do checkpointu
-    // tej doby (spojnosc cap) przez konto prev_day_ckpt.
     let closed = pool.roll_day_if_needed(cur_epoch).map_err(AnlError::from)?;
     let closed_info = if let Some(closed_epoch) = closed {
         let final_index = pool.xnt_reward_index;
@@ -177,15 +166,17 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
         let info = ckpt.to_account_info();
         require_keys_eq!(*info.owner, program_id, AnlError::CheckpointMismatch);
         let (pda, _) = Pubkey::find_program_address(
-            &[XNT_CKPT_SEED, &[pool_type as u8], &closed_epoch.to_le_bytes()],
+            &[
+                XNT_CKPT_SEED,
+                &[pool_type as u8],
+                &closed_epoch.to_le_bytes(),
+            ],
             &program_id,
         );
         require_keys_eq!(info.key(), pda, AnlError::CheckpointMismatch);
         let mut ck = XntCheckpoint::try_deserialize(&mut &info.data.borrow()[..])?;
         require!(
-            ck.version == ACCOUNT_VERSION
-                && ck.epoch == closed_epoch
-                && ck.pool_type == pool_type,
+            ck.version == ACCOUNT_VERSION && ck.epoch == closed_epoch && ck.pool_type == pool_type,
             AnlError::CheckpointMismatch
         );
         ck.index = final_index;
@@ -227,7 +218,7 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
     pos.status = PositionStatus::Active;
     pos.position_index = position_index;
     pos.amount = net;
-    pos.shares = net; // 1:1 (sekcja 6.1)
+    pos.shares = net;
     pos.apy_bps = apy_bps;
     pos.declared_days = declared_days;
     pos.start_ts = now;
@@ -235,7 +226,7 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
     pos.anl_reward = anl_reward;
     pos.xnt_accrued = 0;
     pos.settled = false;
-    pos.xnt_debt_index = pool.xnt_reward_index; // TC-121/124: zero historii
+    pos.xnt_debt_index = pool.xnt_reward_index;
     pos.bump = ctx.bumps.user_position;
     pos.end_epoch = epoch_of(pos.end_ts.saturating_sub(1), cfg.genesis_start_ts)
         .ok_or(AnlError::BeforeGenesis)?;

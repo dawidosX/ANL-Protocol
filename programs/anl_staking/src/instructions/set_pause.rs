@@ -19,7 +19,7 @@ pub struct SetPause<'info> {
 
 pub fn pause(ctx: Context<SetPause>) -> Result<()> {
     let cfg = &mut ctx.accounts.global_config;
-    require!(!cfg.paused, AnlError::AlreadyPaused); // TC-102: odrzucenie, nie idempotencja
+    require!(!cfg.paused, AnlError::AlreadyPaused);
     cfg.paused = true;
     emit!(PauseChanged {
         paused: true,
@@ -30,7 +30,7 @@ pub fn pause(ctx: Context<SetPause>) -> Result<()> {
 
 pub fn resume(ctx: Context<SetPause>) -> Result<()> {
     let cfg = &mut ctx.accounts.global_config;
-    require!(cfg.paused, AnlError::NotPaused); // TC-105
+    require!(cfg.paused, AnlError::NotPaused);
     cfg.paused = false;
     emit!(PauseChanged {
         paused: false,

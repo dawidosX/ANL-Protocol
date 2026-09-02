@@ -59,7 +59,6 @@ pub struct GlobalConfig {
 }
 
 impl GlobalConfig {
-    // ...vault_authority_bump(1) + total_xnt_funded(8) + reserved(16) = 25
     pub const LEN: usize = 8 + 1 + 32 * 3 + 1 + 8 + 8 + 32 + 1 + 1 + 8 + 32 + 1 + 8 + 8 + 16;
 }
 
@@ -97,8 +96,6 @@ pub struct PoolConfig {
 
 impl PoolConfig {
     pub const LEN: usize = 8 + 1 + 1 + 1 + 2 + 8 + 8 + 16 + 8 + 8 + 8 + 8 + 1 + 8 + 8 + 32;
-
-    // ----- silnik indeksu XNT — lustro `anl_core::XntPool` (10F §29) -----
 
     /// Dzienny funding części tej puli (WP v1.0 §8). Przy `total_shares == 0`
     /// środki czekają w `xnt_undistributed` — zasada pustego koszyka.
@@ -209,8 +206,6 @@ impl PoolConfig {
         let pending: u64 = pending_u128
             .try_into()
             .map_err(|_| anl_math::MathError::Overflow)?;
-        // Osierocony udział = (index_puli − cap) × shares. Index puli mógł urosnąć
-        // ponad cap po fundingach po end_epoch pozycji — ta część wraca do bufora.
         let orphan_delta = self.xnt_reward_index.saturating_sub(cap_index);
         let orphan_u128 = orphan_delta
             .checked_mul(shares as u128)
@@ -305,7 +300,6 @@ pub struct UserPosition {
 }
 
 impl UserPosition {
-    // ...end_epoch(8) + xnt_window_claimed(8) + last_window_ts(8) + reserved(8) = 32
     pub const LEN: usize =
         8 + 1 + 32 + 1 + 1 + 8 + 8 + 8 + 2 + 4 + 8 + 8 + 8 + 8 + 1 + 16 + 1 + 8 + 8 + 8 + 8;
 }
@@ -418,14 +412,23 @@ mod wariant_a_tests {
         pool.current_day = 0;
         pool.add_to_basket(10_000_000_000, 0).unwrap();
         pool.roll_day_if_needed(1).unwrap();
-        assert_eq!(pool.xnt_undistributed, 10_000_000_000, "pusta pula -> bufor");
-        assert_eq!(pool.xnt_reward_index, 0, "index nie rosnie przy pustej puli");
+        assert_eq!(
+            pool.xnt_undistributed, 10_000_000_000,
+            "pusta pula -> bufor"
+        );
+        assert_eq!(
+            pool.xnt_reward_index, 0,
+            "index nie rosnie przy pustej puli"
+        );
         let debt: u128 = pool.xnt_reward_index;
         pool.total_shares = 1_000_000;
         pool.add_to_basket(5_000_000_000, 1).unwrap();
         pool.roll_day_if_needed(2).unwrap();
         let xnt = pending(&pool, 1_000_000, debt);
-        assert_eq!(xnt, 15_000_000_000, "staker dostaje bufor 10 + koszyk 5 = 15 XNT");
+        assert_eq!(
+            xnt, 15_000_000_000,
+            "staker dostaje bufor 10 + koszyk 5 = 15 XNT"
+        );
     }
 
     #[test]
@@ -440,7 +443,10 @@ mod wariant_a_tests {
         pool.total_shares += 1_000_000;
         let xnt1 = pending(&pool, 1_000_000, debt1);
         let xnt2 = pending(&pool, 1_000_000, debt2);
-        assert_eq!(xnt1, 10_000_000_000, "#1 dostaje cale 10 (byl sam w dobie 0)");
+        assert_eq!(
+            xnt1, 10_000_000_000,
+            "#1 dostaje cale 10 (byl sam w dobie 0)"
+        );
         assert_eq!(xnt2, 0, "#2 nie lapie doby 0 (wszedl w dobie 1)");
     }
 }

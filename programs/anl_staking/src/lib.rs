@@ -2,13 +2,10 @@
 //! Faza 1: initialize + create_pool + pause/resume.
 //! Faza 2 (WP v1.0): stake + fund_rewards/fund_xnt + settle_expired + claim + unstake_early.
 
-// Makra anchor 0.29 emitują cfg(custom-heap/custom-panic/solana/anchor-debug),
-// których rustc 1.89 nie zna — znany artefakt frameworka, nie naszego kodu.
 #![allow(unexpected_cfgs)]
 
 use anchor_lang::prelude::*;
 
-// Audyt #3 H-01: twarda blokada wdrożenia buildu testowego na mainnet.
 #[cfg(all(feature = "network-mainnet", feature = "test-periods"))]
 compile_error!("test-periods cannot be enabled together with network-mainnet");
 #[cfg(all(feature = "network-mainnet", feature = "network-testnet"))]
@@ -22,18 +19,11 @@ pub mod state;
 use instructions::*;
 use state::PoolType;
 
-// Program ID per sieć (runda #4, R4-ID): build bez feature'a sieci ma jawny
-// adres WYŁĄCZNIE deweloperski, a artefakty sieciowe — własne, rozłączne ID
-// (inne PDA, brak możliwości pomyłkowego wdrożenia nie tego wariantu).
 #[cfg(feature = "network-mainnet")]
-// PLACEHOLDER bez istniejącego keypaira — artefakt mainnet kompiluje się,
-// ale jest NIEWDRAŻALNY do czasu ceremonii mainnetowego Program ID.
 declare_id!("4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM");
 #[cfg(feature = "network-testnet")]
-// Testnet X1 — keypair z 19.07.2026 (po rotacji higienicznej), poza repo.
 declare_id!("4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM");
 #[cfg(not(any(feature = "network-mainnet", feature = "network-testnet")))]
-// DEV-ONLY: lokalne testy i IDE; nie odpowiada żadnemu wdrożonemu adresowi.
 declare_id!("4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM");
 
 #[program]
