@@ -18,3 +18,8 @@ patch_d1.py
 *.bak-przed-blad2
 website/testnet/index-49vhBow.html
 klucze/
+IMPLEMENTACJA-*.py
+*.DZIALAJACY
+*_01.html
+patch_*.py
+.DS_Store
