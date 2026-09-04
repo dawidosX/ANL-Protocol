@@ -310,6 +310,7 @@ footer{border-top:1px solid var(--edge);padding:46px 0 56px;color:var(--steel);f
   .fgrid{grid-template-columns:1fr 1fr}
   .wins{grid-template-columns:1fr}
 }
+.sortable{cursor:pointer;user-select:none}.sortable:hover{color:#f5b942}.sarrow{opacity:.65;font-size:.85em;margin-left:2px}
 </style>
 <link rel="canonical" href="https://anl.analtena.com/">
 <style>
@@ -1655,13 +1656,30 @@ async function loadClaimedTotals(){
   const sub=$("wsXntClaimedSub");
   if(sub && (xntWindow>0n)) sub.textContent = (_pl?"w tym z okien: ":"from windows: ")+fmtXnt(xntWindow)+" XNT";
 }
+window.__posSort = {key:null, dir:1};
+function anlRenderPositions(){
+  const tb = $("positions"); const rows = (window.__posRows||[]).slice();
+  const s = window.__posSort;
+  if(s.key){ rows.sort(function(a,b){ return (a[s.key]-b[s.key])*s.dir || (a.idx-b.idx); }); }
+  if(rows.length) tb.innerHTML = rows.map(function(r){ return r.html; }).join("");
+  ["end","rank"].forEach(function(k){
+    const el = document.getElementById("sa_"+k);
+    if(el) el.textContent = (s.key===k) ? (s.dir===1 ? "\u2191" : "\u2193") : "\u2195";
+  });
+}
+function anlSortPositions(k){
+  const key = (k===0 || k==="end") ? "end" : "rank";
+  const s = window.__posSort;
+  if(s.key===key) s.dir = -s.dir; else { s.key = key; s.dir = 1; }
+  anlRenderPositions();
+}
 async function loadPositions(){
   const tb = $("positions");
   const n = await nextIndex();
   if(n === 0n){ tb.innerHTML = '<tr><td colspan="10" class="mut">'+T("noPos")+'</td></tr>'; return; }
   const poolIdx = await poolXntIndexes();
   const winProg = await genesisWindowProg();  // null = okno zamkniete
-  let rows = "";
+  let rows = ""; const rowObjs = [];
   let epochSum = 0n;
   let sumCapyEst = 0n;
   let estXntSum = 0n;
@@ -1736,13 +1754,17 @@ async function loadPositions(){
       xntCell = (estCkpt>0n?'~':'')+fmtXnt(totalEst)+' XNT';
       estXntSum += totalEst;
     }
-    rows += `<tr><td>${i+1n}</td>
+    const _stRank = p.status===1 ? 2 : (now >= p.end ? 0 : 1);
+    const _rowHtml = `<tr><td>${i+1n}</td>
       <td><span class="pill ${p.pool===1?'pG':'pF'}">${p.pool===1?'Genesis':'Flexible'}</span></td>
       <td>${fmtAnl(p.amount)} ANL</td><td>${(p.apy/100).toFixed(0)}%</td>
       <td>${p.days} ${T("days")}</td><td>${startD}</td><td>${endD}</td>
       <td>${fmtAnl(p.reward)} ANL</td><td>${xntCell}</td><td>${p.status===1?'<span class="mut">—</span>':fmtAnl(capyFor(p.reward))+' CAPY'}</td><td>${st}</td></tr>`;
+    rowObjs.push({html:_rowHtml, end:p.end, rank:_stRank, idx:Number(i)});
   }
-  tb.innerHTML = rows || '<tr><td colspan="11" class="mut">'+T("noPos2")+'</td></tr>';
+  window.__posRows = rowObjs;
+  if(rowObjs.length) anlRenderPositions();
+  else tb.innerHTML = '<tr><td colspan="11" class="mut">'+T("noPos2")+'</td></tr>';
   const basketSum = (poolIdx[0].basket||0n) + (poolIdx[1].basket||0n);
   const undF = poolIdx[0].und, undG = poolIdx[1].und;
   const setTxt = (id, v)=>{ const e=$(id); if(e) e.textContent = v; };
@@ -2142,7 +2164,7 @@ document.querySelectorAll('.dpcp').forEach(b=>{
 });
 
 
-const DPD = {connect:{pl:'Połącz portfel',en:'Connect wallet'},connectedBtn:{pl:'Połączono',en:'Connected'},wallet:{pl:'Portfel',en:'Wallet'},balAnlL:{pl:'Saldo ANL',en:'ANL balance'},balXntL:{pl:'Saldo XNT <small>(gas)</small>',en:'XNT balance <small>(gas)</small>'},newStake:{pl:'Nowy stake',en:'New stake'},amountL:{pl:'Kwota ANL',en:'ANL amount'},poolL:{pl:'',en:''},dniW:{pl:'Dni',en:'Days'},poolG:{pl:'Genesis (do 20% APY · blokada na okres)',en:'Genesis (up to 20% APY · locked for the period)'},periodL:{pl:'',en:''},stakeBtn:{pl:'Zastakuj',en:'Stake'},apyNote:{pl:'APY przypisuje kontrakt w chwili otwarcia — pozycja pokaże je niżej.',en:'APY is assigned by the contract at opening — your position shows it below.'},yourPos:{pl:'Twoje pozycje',en:'Your positions'},refresh:{pl:'Odśwież',en:'Refresh'},thead:{pl:'<tr><th>#</th><th>Pula</th><th>Kwota</th><th>APY</th><th>Okres</th><th>Start</th><th>Koniec</th><th>Nagroda ANL</th><th>XNT (szac.)</th><th>CAPY (szac.)</th><th>Status</th></tr>',en:'<tr><th>#</th><th>Pool</th><th>Amount</th><th>APY</th><th>Period</th><th>Start</th><th>Ends</th><th>ANL reward</th><th>XNT (est.)</th><th>CAPY (est.)</th><th>Status</th></tr>'},connectFirst:{pl:'Połącz portfel, aby zobaczyć pozycje.',en:'Connect a wallet to see your positions.'},chooseWallet:{pl:'Wybierz portfel',en:'Choose a wallet'},cancel:{pl:'Anuluj',en:'Cancel'},addrTitle:{pl:'Adresy kontraktów (testnet)',en:'Contract addresses (testnet)'},addrHint:{pl:'Kliknij ⧉, aby skopiować i zweryfikować w explorerze.',en:'Click ⧉ to copy and verify in the explorer.'},histTitle:{pl:'Historia odebranych stakingów',en:'Claimed stakes history'},hIdx:{pl:'#',en:'#'},hType:{pl:'Typ',en:'Type'},hPrincipal:{pl:'Kapitał',en:'Principal'},hAnl:{pl:'ANL',en:'ANL'},hXnt:{pl:'XNT',en:'XNT'},hCapy:{pl:'CAPY',en:'CAPY'},hDate:{pl:'Data',en:'Date'},hTx:{pl:'Tx',en:'Tx'}};
+const DPD = {connect:{pl:'Połącz portfel',en:'Connect wallet'},connectedBtn:{pl:'Połączono',en:'Connected'},wallet:{pl:'Portfel',en:'Wallet'},balAnlL:{pl:'Saldo ANL',en:'ANL balance'},balXntL:{pl:'Saldo XNT <small>(gas)</small>',en:'XNT balance <small>(gas)</small>'},newStake:{pl:'Nowy stake',en:'New stake'},amountL:{pl:'Kwota ANL',en:'ANL amount'},poolL:{pl:'',en:''},dniW:{pl:'Dni',en:'Days'},poolG:{pl:'Genesis (do 20% APY · blokada na okres)',en:'Genesis (up to 20% APY · locked for the period)'},periodL:{pl:'',en:''},stakeBtn:{pl:'Zastakuj',en:'Stake'},apyNote:{pl:'APY przypisuje kontrakt w chwili otwarcia — pozycja pokaże je niżej.',en:'APY is assigned by the contract at opening — your position shows it below.'},yourPos:{pl:'Twoje pozycje',en:'Your positions'},refresh:{pl:'Odśwież',en:'Refresh'},thead:{pl:'<tr><th>#</th><th>Pula</th><th>Kwota</th><th>APY</th><th>Okres</th><th>Start</th><th class="sortable" onclick="anlSortPositions(0)">Koniec <span class="sarrow" id="sa_end">\u2195</span></th><th>Nagroda ANL</th><th>XNT (szac.)</th><th>CAPY (szac.)</th><th class="sortable" onclick="anlSortPositions(1)">Status <span class="sarrow" id="sa_rank">\u2195</span></th></tr>',en:'<tr><th>#</th><th>Pool</th><th>Amount</th><th>APY</th><th>Period</th><th>Start</th><th class="sortable" onclick="anlSortPositions(0)">Ends <span class="sarrow" id="sa_end">\u2195</span></th><th>ANL reward</th><th>XNT (est.)</th><th>CAPY (est.)</th><th class="sortable" onclick="anlSortPositions(1)">Status <span class="sarrow" id="sa_rank">\u2195</span></th></tr>'},connectFirst:{pl:'Połącz portfel, aby zobaczyć pozycje.',en:'Connect a wallet to see your positions.'},chooseWallet:{pl:'Wybierz portfel',en:'Choose a wallet'},cancel:{pl:'Anuluj',en:'Cancel'},addrTitle:{pl:'Adresy kontraktów (testnet)',en:'Contract addresses (testnet)'},addrHint:{pl:'Kliknij ⧉, aby skopiować i zweryfikować w explorerze.',en:'Click ⧉ to copy and verify in the explorer.'},histTitle:{pl:'Historia odebranych stakingów',en:'Claimed stakes history'},hIdx:{pl:'#',en:'#'},hType:{pl:'Typ',en:'Type'},hPrincipal:{pl:'Kapitał',en:'Principal'},hAnl:{pl:'ANL',en:'ANL'},hXnt:{pl:'XNT',en:'XNT'},hCapy:{pl:'CAPY',en:'CAPY'},hDate:{pl:'Data',en:'Date'},hTx:{pl:'Tx',en:'Tx'}};
 const DPT = {
  pl:{noWallet:"Nie wykryto portfela. Zainstaluj Phantom, Backpack lub X1 Wallet i odśwież stronę.",
      rejected:"Odmowa połączenia: ", connected:"Połączono: ",
