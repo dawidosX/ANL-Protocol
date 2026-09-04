@@ -1914,9 +1914,9 @@ async function claimPosition(i, poolType){
       AW(TOKEN_2022), AW(TOKEN_LEGACY),
       AW(capyVault,false,true), AW(userProfile,false,true),  // CAPY v3.1: konta 15-16
     ];
-    if(ckpt) keys.push(AW(ckpt));
-    else if(prevDayCkpt) keys.push(AW(PROGRAM_ID));
-    if(prevDayCkpt) keys.push(AW(prevDayCkpt,false,true));
+    // Anchor: konta opcjonalne ZAWSZE obecne — None = placeholder PROGRAM_ID
+    keys.push(AW(ckpt || PROGRAM_ID));                               // 17 xnt_checkpoint
+    keys.push(AW(prevDayCkpt || PROGRAM_ID, false, !!prevDayCkpt));  // 18 prev_day_ckpt
     const tx = new Transaction();
     // (auto close_day usuniete: program R4 domyka dobe wewnatrz claim)
     // ATA XNT/ANL musza istniec przed claim (constraint token::authority=owner).
@@ -1963,7 +1963,7 @@ async function claimGenesisWindow(i){
       AW(userPosition,false,true), AW(vaultAuthority), AW(XNT_MINT),
       AW(xntVault,false,true), AW(ownerXntAta(pubkey),false,true), AW(TOKEN_LEGACY),
     ];
-    if(ckpt) keys.push(AW(ckpt));
+    keys.push(AW(ckpt || PROGRAM_ID)); // opcjonalne: None = placeholder
     const tx = new Transaction();
     const xntAta = ownerXntAta(pubkey);
     const xntInfo = await conn.getAccountInfo(xntAta);
