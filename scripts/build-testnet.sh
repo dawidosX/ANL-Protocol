@@ -11,7 +11,7 @@ fi
 FEATURES="network-testnet,test-periods"
 BIN=target/deploy/anl_staking.so
 rm -f "$BIN"   # runda #4: zero ryzyka starego artefaktu
-anchor build -- --features "$FEATURES"
+anchor build --no-idl -- --features "$FEATURES"
 test -s "$BIN" || { echo "BLAD: brak binarki po buildzie." >&2; exit 1; }
 {
   echo "release: testnet"
