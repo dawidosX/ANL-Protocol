@@ -1860,13 +1860,23 @@ async function claimPosition(i, poolType){
     // cap liczony do OSTATNIEJ DOMKNIETEJ doby (jak kontrakt): jesli koszyk biezacej
     // doby wisi, target = current_day-1 (biezaca doba pominieta, odbior od razu).
     let capTarget = endEpoch;
+    let prevDayCkpt = null;
     try {
       const pI = await conn.getAccountInfo(poolConfig);
-      if(pI){
+      const cI = await conn.getAccountInfo(globalConfig);
+      if(pI && cI){
         const pdv = new DataView(pI.data.buffer, pI.data.byteOffset);
         const basket = pdv.getBigUint64(78, true);
         const curDay = pdv.getBigUint64(86, true);
-        const lastClosed = basket > 0n ? (curDay > 0n ? curDay - 1n : 0n) : curDay;
+        const gts = new DataView(cI.data.buffer, cI.data.byteOffset).getBigInt64(106, true);
+        const clockEpoch = (BigInt(Math.floor(Date.now()/1000)) - gts) / 86400n;
+        const rollNeeded = basket > 0n && curDay !== clockEpoch;
+        if(rollNeeded){
+          const eb = new Uint8Array(8); new DataView(eb.buffer).setBigUint64(0, curDay, true);
+          prevDayCkpt = pda([enc("xnt_ckpt"), new Uint8Array([poolType]), eb]);
+        }
+        const lastClosed = rollNeeded ? clockEpoch
+                         : (basket > 0n ? (curDay > 0n ? curDay - 1n : 0n) : curDay);
         if(lastClosed < endEpoch) capTarget = lastClosed;
       }
     } catch(_) {}
@@ -1882,36 +1892,11 @@ async function claimPosition(i, poolType){
       AW(TOKEN_2022), AW(TOKEN_LEGACY),
       AW(capyVault,false,true), AW(userProfile,false,true),  // CAPY v3.1: konta 15-16
     ];
-    if(ckpt) keys.push(AW(ckpt)); // xnt_checkpoint opcjonalny (17) — dołączamy gdy istnieje
+    if(ckpt) keys.push(AW(ckpt));
+    else if(prevDayCkpt) keys.push(AW(PROGRAM_ID));
+    if(prevDayCkpt) keys.push(AW(prevDayCkpt,false,true));
     const tx = new Transaction();
-    // AUTO close_day: jesli koszyk doby <= end_epoch wisi i doba jest juz PRZESZLA,
-    // domknij ja w tej samej transakcji (guard DayNotClosed inaczej odrzuci claim).
-    // close_day permissionless — user placi grosze, zero bota.
-    try {
-      const pInfo = await conn.getAccountInfo(poolConfig);
-      const cfgI = await conn.getAccountInfo(globalConfig);
-      if(pInfo && cfgI){
-        const pdv = new DataView(pInfo.data.buffer, pInfo.data.byteOffset);
-        const basket = pdv.getBigUint64(78, true);
-        const curDay = pdv.getBigUint64(86, true);
-        const gts = new DataView(cfgI.data.buffer, cfgI.data.byteOffset).getBigInt64(106, true);
-        const curEpoch = (BigInt(Math.floor(Date.now()/1000)) - gts) / 86400n;
-        // domykalna: koszyk wisi, doba przeszla, dotyczy okresu pozycji
-        if(basket > 0n && curDay < curEpoch && curDay <= endEpoch){
-          const eb = new Uint8Array(8); new DataView(eb.buffer).setBigUint64(0, curDay, true);
-          const dayCkpt = pda([enc("xnt_ckpt"), new Uint8Array([poolType]), eb]);
-          const cdData = new Uint8Array(16);
-          cdData.set(new Uint8Array([156,214,132,15,27,77,42,79]), 0);      // disc close_day
-          new DataView(cdData.buffer).setBigUint64(8, curDay, true);         // epoch arg
-          const cdKeys = [
-            AW(pubkey,true,true), AW(globalConfig,false,true),
-            AW(poolConfig,false,true), AW(dayCkpt,false,true),
-          ];
-          tx.add(new TransactionInstruction({programId:PROGRAM_ID, keys:cdKeys, data:cdData}));
-          log((window.anlCurrentLang&&window.anlCurrentLang()==="pl")?"Domykam dobę…":"Closing day…");
-        }
-      }
-    } catch(_) {}
+    // (auto close_day usuniete: program R4 domyka dobe wewnatrz claim)
     // ATA XNT/ANL musza istniec przed claim (constraint token::authority=owner).
     const anlAta = ownerAta(pubkey), xntAta = ownerXntAta(pubkey);
     const [anlInfo, xntInfo] = await conn.getMultipleAccountsInfo([anlAta, xntAta]);
