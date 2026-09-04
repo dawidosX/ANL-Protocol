@@ -63,6 +63,9 @@ struct Env {
     genesis_start_ts: i64,
     anl_treasury: Pubkey,
     last_funded_epoch: Option<u64>,
+    capy_mint: Keypair,
+    capy_treasury: Pubkey,
+    capy_vault: Pubkey,
 }
 
 impl Env {
@@ -73,6 +76,9 @@ impl Env {
         env.send(&[ix], &[]).await.unwrap();
         env.init_all_vaults().await;
         env.create_pools().await;
+        // AUDYT R4 (M-01): stake jest bramkowany na SetupIncomplete —
+        // pełny setup obejmuje init_capy_vault.
+        env.init_capy_vault().await;
         env
     }
 
@@ -141,6 +147,12 @@ impl Env {
 
         let genesis_start_ts = clock(&mut ctx.banks_client).await.unix_timestamp;
 
+        // CAPY (v3): Token-2022, 20M podaży do skarbca testowego, potem
+        // mint authority -> None (AUDYT R4: init_capy_vault to wymusza).
+        let capy_mint = Keypair::new();
+        create_mint(&mut ctx, &capy_mint, &authority, spl_token_2022::id()).await;
+        let (capy_vault, _) = Pubkey::find_program_address(&[b"capy_vault"], &program_id);
+
         let mut env = Env {
             ctx,
             program_id,
@@ -157,6 +169,9 @@ impl Env {
             genesis_start_ts,
             anl_treasury: Pubkey::default(),
             last_funded_epoch: None,
+            capy_mint,
+            capy_treasury: Pubkey::default(),
+            capy_vault,
         };
 
         // Audyt #2: fixed supply — cała podaż ANL do skarbca testowego,
@@ -182,6 +197,37 @@ impl Env {
             let ix = spl_token_2022::instruction::set_authority(
                 &spl_token_2022::id(),
                 &env.anl_mint.pubkey(),
+                None,
+                spl_token_2022::instruction::AuthorityType::MintTokens,
+                &env.authority.pubkey(),
+                &[],
+            )
+            .unwrap();
+            env.send(&[ix], &[]).await.unwrap();
+        }
+
+        // CAPY: 20M do skarbca testowego, mint authority -> None (fixed supply).
+        let capy_treasury = create_token_account(
+            &mut env.ctx,
+            &env.authority.pubkey(),
+            &env.capy_mint.pubkey(),
+            spl_token_2022::id(),
+        )
+        .await;
+        mint_to(
+            &mut env.ctx,
+            &env.capy_mint.pubkey(),
+            &capy_treasury,
+            &env.authority,
+            20_000_000 * ONE_ANL,
+            spl_token_2022::id(),
+        )
+        .await;
+        env.capy_treasury = capy_treasury;
+        {
+            let ix = spl_token_2022::instruction::set_authority(
+                &spl_token_2022::id(),
+                &env.capy_mint.pubkey(),
                 None,
                 spl_token_2022::instruction::AuthorityType::MintTokens,
                 &env.authority.pubkey(),
@@ -280,6 +326,86 @@ impl Env {
             self.ix_init_xnt_vault(self.authority.pubkey()),
         ];
         self.send(&ixs, &[]).await.unwrap();
+    }
+
+    async fn init_capy_vault(&mut self) {
+        let ix = Instruction {
+            program_id: self.program_id,
+            accounts: anl_staking::accounts::InitCapyVault {
+                authority: self.authority.pubkey(),
+                global_config: self.global_config,
+                vault_authority: self.vault_authority,
+                capy_mint: self.capy_mint.pubkey(),
+                capy_vault: self.capy_vault,
+                capy_token_program: spl_token_2022::id(),
+                system_program: solana_sdk::system_program::id(),
+            }
+            .to_account_metas(None),
+            data: anl_staking::instruction::InitCapyVault {}.data(),
+        };
+        self.send(&[ix], &[]).await.unwrap();
+    }
+
+    /// AUDYT R4: logika produkcyjnego bota — jeśli transakcja settle/claim
+    /// domknie dobę (current_day != epoka zegara i koszyk > 0), trzeba podać
+    /// checkpoint domykanej doby; w przeciwnym razie None.
+    async fn roll_ckpt_for(&mut self, pool_type: PoolType) -> Option<Pubkey> {
+        let pool_pk = if pool_type == PoolType::Genesis {
+            self.genesis_pool
+        } else {
+            self.flexible_pool
+        };
+        let pool = self.pool(pool_pk).await;
+        let cur = self.current_epoch().await;
+        if pool.current_day != cur && pool.current_day_basket > 0 {
+            Some(self.ckpt_pda(pool_type, pool.current_day))
+        } else {
+            None
+        }
+    }
+
+    /// Publiczne domknięcie doby `epoch` (Wariant A Sposób 2) — dotąd
+    /// nieużywane w testach; wymagane przez testy determinizmu R4.
+    async fn close_day(&mut self, pool_type: PoolType, epoch: u64) -> Result<(), BanksClientError> {
+        let pool = if pool_type == PoolType::Genesis {
+            self.genesis_pool
+        } else {
+            self.flexible_pool
+        };
+        let ix = Instruction {
+            program_id: self.program_id,
+            accounts: anl_staking::accounts::CloseDay {
+                caller: self.authority.pubkey(),
+                global_config: self.global_config,
+                pool_config: pool,
+                day_ckpt: self.ckpt_pda(pool_type, epoch),
+            }
+            .to_account_metas(None),
+            data: anl_staking::instruction::CloseDay { epoch }.data(),
+        };
+        self.send(&[ix], &[]).await
+    }
+
+    /// Zasila konto XNT: test-periods ⇒ mint; build produkcyjny ⇒ wrap
+    /// natywny (transfer + sync_native) — mint natywny nie pozwala mint_to.
+    async fn xnt_credit(&mut self, to: Pubkey, amount: u64) {
+        if cfg!(feature = "test-periods") {
+            mint_to(
+                &mut self.ctx,
+                &self.xnt_mint,
+                &to,
+                &self.authority,
+                amount,
+                spl_token::id(),
+            )
+            .await;
+        } else {
+            let ixs = [
+                solana_sdk::system_instruction::transfer(&self.authority.pubkey(), &to, amount),
+                spl_token::instruction::sync_native(&spl_token::id(), &to).unwrap(),
+            ];
+            self.send(&ixs, &[]).await.unwrap();
+        }
     }
 
     async fn create_pools(&mut self) {
@@ -516,6 +642,7 @@ impl Env {
             self.flexible_pool
         };
         let position = self.position_pda(&user.pubkey(), position_index);
+        let prev_day_ckpt = self.roll_ckpt_for(pool_type).await;
         let ix = Instruction {
             program_id: self.program_id,
             accounts: anl_staking::accounts::Stake {
@@ -530,7 +657,7 @@ impl Env {
                 user_profile: self.profile_pda(&user.pubkey()),
                 user_position: position,
                 anl_token_program: spl_token_2022::id(),
-                prev_day_ckpt: None,
+                prev_day_ckpt,
                 system_program: solana_sdk::system_program::id(),
             }
             .to_account_metas(None),
@@ -554,13 +681,16 @@ impl Env {
         } else {
             self.flexible_pool
         };
+        let prev_day_ckpt = self.roll_ckpt_for(pool_type).await;
         let ix = Instruction {
             program_id: self.program_id,
             accounts: anl_staking::accounts::SettleExpired {
                 cranker: self.authority.pubkey(),
+                global_config: self.global_config,
                 pool_config: pool,
                 user_position: position,
                 xnt_checkpoint: ckpt_epoch.map(|e| self.ckpt_pda(pool_type, e)),
+                prev_day_ckpt,
             }
             .to_account_metas(None),
             data: anl_staking::instruction::SettleExpired {}.data(),
@@ -582,6 +712,7 @@ impl Env {
         } else {
             self.flexible_pool
         };
+        let prev_day_ckpt = self.roll_ckpt_for(pool_type).await;
         let ix = Instruction {
             program_id: self.program_id,
             accounts: anl_staking::accounts::Claim {
@@ -599,7 +730,10 @@ impl Env {
                 owner_xnt: user_xnt,
                 anl_token_program: spl_token_2022::id(),
                 xnt_token_program: spl_token::id(),
+                capy_vault: self.capy_vault,
+                user_profile: self.profile_pda(&user.pubkey()),
                 xnt_checkpoint: ckpt_epoch.map(|e| self.ckpt_pda(pool_type, e)),
+                prev_day_ckpt,
             }
             .to_account_metas(None),
             data: anl_staking::instruction::Claim {}.data(),
@@ -907,12 +1041,27 @@ async fn ts_full_lifecycle_two_users_daily_xnt() {
         "Immutable APY: nagroda znana z gory"
     );
 
-    // TS-04: dzienny funding — pusty koszyk Flexible czeka w undistributed
+    // TS-04: dzienny funding — M-03: Flexible PUSTY ⇒ 100% do Genesis;
+    // Wariant A: środki czekają w koszyku bieżącej doby (nie w indeksie).
     env.fund_xnt(1_000_000).await.unwrap();
     let flex = env.pool(env.flexible_pool).await;
-    assert_eq!(flex.xnt_undistributed, 350_000, "35% czeka - pusty koszyk");
+    assert_eq!(
+        flex.xnt_undistributed, 0,
+        "M-03: pusty Flexible nie parkuje nic"
+    );
+    assert_eq!(
+        flex.current_day_basket, 0,
+        "M-03: pusty Flexible bez koszyka"
+    );
     let gen = env.pool(env.genesis_pool).await;
-    assert_eq!(gen.xnt_undistributed, 0, "65% weszlo do indeksu");
+    assert_eq!(
+        gen.current_day_basket, 1_000_000,
+        "100% w koszyku doby Genesis"
+    );
+    assert_eq!(
+        gen.xnt_undistributed, 0,
+        "koszyk != undistributed (Wariant A)"
+    );
 
     // TS-05: drugi dzień fundingu
     env.advance(DAY).await;
@@ -924,14 +1073,14 @@ async fn ts_full_lifecycle_two_users_daily_xnt() {
     env.settle(pos_b, PoolType::Genesis, Some(1)).await.unwrap();
     let pa = env.position(pos_a).await;
     let pb = env.position(pos_b).await;
-    // 2 dni × 650 000 XNT dla koszyka Genesis, proporcja 2:1 (floor)
-    assert!(pa.xnt_accrued + pb.xnt_accrued <= 1_300_000);
+    // 2 dni × 1 000 000 XNT dla Genesis (M-03), proporcja 2:1 (floor)
+    assert!(pa.xnt_accrued + pb.xnt_accrued <= 2_000_000);
     assert!(
-        pa.xnt_accrued >= 866_665 && pa.xnt_accrued <= 866_667,
+        pa.xnt_accrued >= 1_333_332 && pa.xnt_accrued <= 1_333_334,
         "A ~ 2/3"
     );
     assert!(
-        pb.xnt_accrued >= 433_332 && pb.xnt_accrued <= 433_334,
+        pb.xnt_accrued >= 666_665 && pb.xnt_accrued <= 666_667,
         "B ~ 1/3"
     );
     assert!(pa.settled && pb.settled);
@@ -1003,7 +1152,7 @@ async fn ts_early_exit_forfeits_and_redistributes() {
         .unwrap();
     assert_eq!(env.position(pos_a).await.apy_bps, 800, "Flexible zawsze 8%");
 
-    // dzień 1: koszyk Flexible dostaje 35% z 1 000 000 = 350 000; A i B po 175 000
+    // dzień 1: Genesis PUSTY ⇒ M-03: całe 1 000 000 do koszyka Flexible
     env.fund_xnt(1_000_000).await.unwrap();
 
     // TS-08: claim przed końcem okresu — odrzucony
@@ -1037,9 +1186,12 @@ async fn ts_early_exit_forfeits_and_redistributes() {
         "zero XNT przy zerwaniu"
     );
     let flex = env.pool(env.flexible_pool).await;
+    // Wariant A: dzień 0 jeszcze niedomknięty ⇒ pending A = 0 ⇒ przepadek 0;
+    // udział A ZOSTAJE w koszyku doby i rozdzieli się żywym przy domknięciu.
+    assert_eq!(flex.xnt_undistributed, 0, "nic nie paruje w undistributed");
     assert_eq!(
-        flex.xnt_undistributed, 175_000,
-        "przepadek wraca do puli koszyka"
+        flex.current_day_basket, 1_000_000,
+        "koszyk doby 0 nietknięty po zerwaniu (konserwacja)"
     );
     assert!(
         env.ctx
@@ -1058,8 +1210,8 @@ async fn ts_early_exit_forfeits_and_redistributes() {
         .await
         .unwrap();
     let pb = env.position(pos_b).await;
-    // B: 175 000 (dzień 1) + 350 000 (dzień 2) + 175 000 (przepadek A) = 700 000
-    assert_eq!(pb.xnt_accrued, 700_000);
+    // B po zerwaniu A jest sam: dzień 0 (1M, w tym udział A) + dzień 1 (1M) = 2M
+    assert_eq!(pb.xnt_accrued, 2_000_000);
 
     // TS-10: zerwanie po końcu okresu nie istnieje — właściwa ścieżka to claim
     let err = env
@@ -1265,7 +1417,7 @@ async fn ts_audit_funding_after_end_epoch_not_counted() {
         .unwrap();
     assert_eq!(env.position(pos_a).await.end_epoch, days as u64 - 1);
 
-    // epoka 0: koszyk Flexible 350 000 -> po 175 000 na pozycję
+    // epoka 0: Genesis pusty ⇒ M-03: całe 1 000 000 do Flexible; po 500 000/poz.
     env.fund_xnt(1_000_000).await.unwrap();
 
     // koniec okresu mija; bot NIE robi settle (scenariusz awarii z audytu)
@@ -1289,7 +1441,7 @@ async fn ts_audit_funding_after_end_epoch_not_counted() {
     assert!(err.is_err(), "checkpoint > end_epoch musi zostać odrzucony");
 
     // claim bez wcześniejszego settle (inline), checkpoint końca epoki 0:
-    // dokładnie 175 000 XNT — ani jednostki z późniejszego fundingu
+    // dokładnie 500 000 XNT — ani jednostki z późniejszego fundingu
     let xnt_before = env.token_balance(alice_xnt).await;
     env.claim(
         &alice,
@@ -1301,22 +1453,22 @@ async fn ts_audit_funding_after_end_epoch_not_counted() {
     )
     .await
     .unwrap();
-    assert_eq!(env.token_balance(alice_xnt).await - xnt_before, 175_000);
+    assert_eq!(env.token_balance(alice_xnt).await - xnt_before, 500_000);
 
     // równoważność ścieżek: settle-przed-claim daje IDENTYCZNY wynik
     env.settle(pos_b, PoolType::Flexible, Some(0))
         .await
         .unwrap();
-    assert_eq!(env.position(pos_b).await.xnt_accrued, 175_000);
+    assert_eq!(env.position(pos_b).await.xnt_accrued, 500_000);
     let xnt_before = env.token_balance(bob_xnt).await;
     env.claim(&bob, bob_anl, bob_xnt, pos_b, PoolType::Flexible, None)
         .await
         .unwrap();
-    assert_eq!(env.token_balance(bob_xnt).await - xnt_before, 175_000);
+    assert_eq!(env.token_balance(bob_xnt).await - xnt_before, 500_000);
 
     // inwariant wypłacalności: wypłaty + saldo vaulta == suma fundingów
     let vault = env.token_balance(env.xnt_vault).await;
-    assert_eq!(vault, 2_000_000 - 350_000, "reszta pozostaje w skarbcu");
+    assert_eq!(vault, 2_000_000 - 1_000_000, "reszta pozostaje w skarbcu");
 }
 
 /// TS-AUD5 (audyt #5, A-01/A-05): stan pośredni 4-etapowego setupu.
@@ -1365,8 +1517,19 @@ async fn ts_split_init_intermediate_state_guards() {
         "powtórna inicjalizacja skarbca musi zostać odrzucona"
     );
 
-    // (e) stan naprawiony: funding i stake przechodzą normalnie
+    // (e) AUDYT R4 (M-01): skarbce są, ale CAPY nie — stake NADAL odrzucony
+    // (SetupIncomplete). Kapitał nie może wejść, dopóki claim nie jest wykonywalny.
     env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let r = env
+        .stake(&user, user_anl, PoolType::Genesis, 1_000 * ONE_ANL, days, 0)
+        .await;
+    assert!(
+        r.is_err(),
+        "stake przed init_capy_vault musi zostać odrzucony"
+    );
+
+    // (f) pełny setup ⇒ stake przechodzi
+    env.init_capy_vault().await;
     env.stake(&user, user_anl, PoolType::Genesis, 1_000 * ONE_ANL, days, 0)
         .await
         .unwrap();
@@ -1411,7 +1574,10 @@ async fn atak_a1_podstawienie_skarbca_w_claim() {
             owner_xnt: user_xnt,
             anl_token_program: spl_token_2022::id(),
             xnt_token_program: spl_token::id(),
+            capy_vault: env.capy_vault,
+            user_profile: env.profile_pda(&user.pubkey()),
             xnt_checkpoint: None,
+            prev_day_ckpt: None,
         }
         .to_account_metas(None),
         data: anl_staking::instruction::Claim {}.data(),
@@ -1431,7 +1597,7 @@ async fn atak_a2_claim_cudzej_pozycji() {
     env.fund_rewards(1_000_000 * ONE_ANL).await;
     let days = anl_math::MIN_PERIOD_DAYS as u32;
     let (ofiara, ofiara_anl, _ofiara_xnt) = env.user_with_anl(100 * ONE_ANL).await;
-    let (napastnik, napastnik_anl, napastnik_xnt) = env.user_with_anl(1 * ONE_ANL).await;
+    let (napastnik, napastnik_anl, napastnik_xnt) = env.user_with_anl(ONE_ANL).await;
     let pos_ofiary = env
         .stake(
             &ofiara,
@@ -1464,7 +1630,10 @@ async fn atak_a2_claim_cudzej_pozycji() {
             owner_xnt: napastnik_xnt,
             anl_token_program: spl_token_2022::id(),
             xnt_token_program: spl_token::id(),
+            capy_vault: env.capy_vault,
+            user_profile: env.profile_pda(&napastnik.pubkey()),
             xnt_checkpoint: None,
+            prev_day_ckpt: None,
         }
         .to_account_metas(None),
         data: anl_staking::instruction::Claim {}.data(),
@@ -1732,15 +1901,7 @@ async fn atak_c3_fund_xnt_przez_obcego() {
         spl_token::id(),
     )
     .await;
-    mint_to(
-        &mut env.ctx,
-        &env.xnt_mint,
-        &atk_xnt,
-        &env.authority,
-        1_000,
-        spl_token::id(),
-    )
-    .await;
+    env.xnt_credit(atk_xnt, 1_000).await;
 
     let epoch = env.current_epoch().await;
     let ix = Instruction {
@@ -1797,9 +1958,14 @@ async fn atak_c4_funding_pusty_koszyk() {
         "C4: pusty koszyk Flexible — indeks nie rośnie"
     );
     assert_eq!(
-        g.xnt_undistributed + f.xnt_undistributed,
+        g.current_day_basket + f.current_day_basket,
         1_000,
-        "C4: całe XNT czeka jako undistributed (nic nie zginęło)"
+        "C4: całe XNT czeka w koszykach dnia (nic nie zginęło)"
+    );
+    assert_eq!(
+        g.xnt_undistributed + f.xnt_undistributed,
+        0,
+        "C4: undistributed rośnie dopiero przy domknięciu pustej doby"
     );
 }
 
@@ -1827,15 +1993,7 @@ async fn atak_c5_funding_stara_epoka() {
         spl_token::id(),
     )
     .await;
-    mint_to(
-        &mut env.ctx,
-        &env.xnt_mint,
-        &src,
-        &env.authority,
-        1_000,
-        spl_token::id(),
-    )
-    .await;
+    env.xnt_credit(src, 1_000).await;
     let stara_epoka = 0u64;
     let ix = Instruction {
         program_id: env.program_id,
@@ -1919,7 +2077,7 @@ async fn atak_d2_claim_po_zerwaniu() {
     let mut env = Env::new().await;
     env.fund_rewards(10_000_000 * ONE_ANL).await;
     let days = anl_math::MIN_PERIOD_DAYS as u32 + 2;
-    let (user, user_a, user_x) = env.user_with_anl(100 * ONE_ANL).await;
+    let (user, user_a, _user_x) = env.user_with_anl(100 * ONE_ANL).await;
     let pos = env
         .stake(&user, user_a, PoolType::Flexible, 100 * ONE_ANL, days, 0)
         .await
@@ -2183,9 +2341,11 @@ async fn atak_f2_podstawiony_checkpoint_na_settle() {
         program_id: env.program_id,
         accounts: anl_staking::accounts::SettleExpired {
             cranker: env.authority.pubkey(),
+            global_config: env.global_config,
             pool_config: env.genesis_pool,
             user_position: pos,
             xnt_checkpoint: Some(env.ckpt_pda(PoolType::Genesis, ep0)), // ⚠️ nie-ostatni
+            prev_day_ckpt: None,
         }
         .to_account_metas(None),
         data: anl_staking::instruction::SettleExpired {}.data(),
@@ -2515,8 +2675,8 @@ async fn gw5_final_claim_subtracts_window_claimed() {
     // końcowy XNT = całość naliczona − już wypłacone w oknie; NIE może podwoić.
     // suma (okno + końcówka) musi ≈ całość naliczona do end_epoch.
     let total_paid = window_claimed + final_xnt;
-    // całość ≈ w dni × 390_000 (65% z 600k), pozycja jedyna w Genesis
-    let expected_total = (w as u64) * 390_000;
+    // całość ≈ w dni × 600_000 (M-03: Flexible pusty ⇒ 100% dla Genesis)
+    let expected_total = (w as u64) * 600_000;
     assert!(
         total_paid <= expected_total + 10 && total_paid + 10 >= expected_total,
         "GW-5: suma okno+końcówka ≈ całość ({} vs {}), bez podwójnej wypłaty",
@@ -2605,17 +2765,18 @@ async fn orphan_share_returns_to_buffer() {
     // dwie pozycje Genesis: A krótka (kończy się dziś), B długa (żyje dalej)
     let (a, a_anl, a_xnt) = env.user_with_anl(100 * ONE_ANL).await;
     let (b, b_anl, _b_xnt) = env.user_with_anl(100 * ONE_ANL).await;
-    let posA = env
-        .stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, 1, 0)
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let pos_a = env
+        .stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, min_d, 0)
         .await
         .unwrap();
-    let _posB = env
-        .stake(&b, b_anl, PoolType::Genesis, 100 * ONE_ANL, 90, 0)
+    let _pos_b = env
+        .stake(&b, b_anl, PoolType::Genesis, 100 * ONE_ANL, 10 * min_d, 0)
         .await
         .unwrap();
 
-    // przewiń PO end_ts pozycji A (koniec epoki 0), potem funduj w epoce 1
-    env.advance(DAY + 60).await; // A wygasła, jest epoka 1
+    // przewiń PO end_ts pozycji A, potem funduj — PO jej end_epoch
+    env.advance((min_d as i64) * DAY + 60).await; // A wygasła
     env.fund_xnt(600_000).await.unwrap(); // funding PO end_epoch A
 
     let gen_before = env.pool(env.genesis_pool).await;
@@ -2624,7 +2785,7 @@ async fn orphan_share_returns_to_buffer() {
     // A odbiera: dostaje 0 XNT (end_epoch=0, funding był w epoce 1)
     let a_xnt_before = env.token_balance(a_xnt).await;
     let ck = Some(env.current_epoch().await).filter(|e| *e >= 1);
-    env.claim(&a, a_anl, a_xnt, posA, PoolType::Genesis, ck)
+    env.claim(&a, a_anl, a_xnt, pos_a, PoolType::Genesis, ck)
         .await
         .unwrap();
     let a_paid = env.token_balance(a_xnt).await - a_xnt_before;
@@ -2633,21 +2794,246 @@ async fn orphan_share_returns_to_buffer() {
         "ORPHAN: A wygasła przed fundingiem → dostaje 0 XNT"
     );
 
-    // ale jej osierocony udział wrócił do bufora (wzrósł względem przed claim)
+    // Wariant A: koszyk dzisiejszej doby NIETKNIĘTY przez settle A (jej udział
+    // został w koszyku); shares A zdjęte ⇒ przy domknięciu CAŁOŚĆ pójdzie do B.
     let gen_after = env.pool(env.genesis_pool).await;
-    assert!(
-        gen_after.xnt_undistributed > buf_before,
-        "ORPHAN: udział wygasłej A musi wrócić do bufora ({} > {})",
-        gen_after.xnt_undistributed,
-        buf_before
+    assert_eq!(
+        gen_after.current_day_basket, 600_000,
+        "ORPHAN/koszyk: udział wygasłej A zostaje w koszyku dla żywych"
     );
+    assert_eq!(gen_after.xnt_undistributed, buf_before, "bufor bez zmian");
 
-    // kolejny funding rozdaje bufor (w tym orphan) żywej B
+    // domknięcie doby: całość (w tym udział A) trafia do żywej B
     env.advance(DAY).await;
-    env.fund_xnt(1).await.unwrap(); // symboliczny funding uwalnia bufor
+    env.fund_xnt(1).await.unwrap(); // funding domyka poprzednią dobę
     let gen_final = env.pool(env.genesis_pool).await;
     assert_eq!(
         gen_final.xnt_undistributed, 0,
-        "ORPHAN: bufor (z orphanem) rozdany żywym przy następnym fundingu"
+        "ORPHAN: nic nie osiada w buforze — wszystko rozdane żywym"
     );
+    let b_pending = ((gen_final.xnt_reward_index - env.position(_pos_b).await.xnt_debt_index)
+        * (env.position(_pos_b).await.shares as u128))
+        / anl_math::PRECISION;
+    assert_eq!(
+        b_pending as u64, 600_000,
+        "ORPHAN: żywa B dostaje CAŁY koszyk (w tym udział wygasłej A)"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// GRUPA H — regresja rundy 4 (H-01/M-01 raportów B i C + pokrycie CAPY).
+// H1 = determinizm ostatniej doby: identyczna wypłata niezależnie od
+//      kolejności close_day vs settle (przed fixem: 2× różnica).
+// H2 = stale current_day: claim po ciszy oddaje zafundowaną, niedomkniętą
+//      dobę (przed fixem: trwałe zamrożenie zera).
+// H3 = CAPY end-to-end: claim nalicza pending, claim_capy wypłaca —
+//      jedyny obszar bez pokrycia integracyjnego wg rundy 4 (Kimi §7).
+// ═══════════════════════════════════════════════════════════════════
+
+/// Wspólny prefiks H1: A (MIN dni) i B (5×MIN) stakują w POŁOWIE doby 0,
+/// funding w dobie 0 i w dobie MIN, przeskok do doby MIN+1. A wygasła w
+/// ŚRODKU doby MIN ⇒ end_epoch = MIN-1 (tylko pełne doby) ⇒ należność A =
+/// jej udział w koszyku doby 0 (jedynej zafundowanej ≤ MIN-1).
+async fn h1_prefix() -> (Env, Keypair, Pubkey, Pubkey, Pubkey, Pubkey) {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    env.advance(DAY / 2).await; // start w POŁOWIE doby 0
+    let (a, a_anl, a_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let (b, b_anl, _b_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let pos_a = env
+        .stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+    let pos_b = env
+        .stake(&b, b_anl, PoolType::Genesis, 100 * ONE_ANL, 5 * min_d, 0)
+        .await
+        .unwrap();
+    env.fund_xnt(10_000).await.unwrap(); // doba 0: Genesis 10000 (M-03: Flexible pusty)
+    env.advance((min_d as i64) * DAY).await; // doba MIN — ostatnia (niepełna) doba A
+    env.fund_xnt(10_000).await.unwrap(); // doba MIN: Genesis 10000, koszyk OTWARTY
+    env.advance(DAY).await; // doba MIN+1 — A wygasła (koniec: MIN + 0.5 doby)
+    (env, a, a_anl, a_xnt, pos_a, pos_b)
+}
+
+fn b_claimable(pool: &PoolConfig, b: &UserPosition) -> u64 {
+    let pending =
+        ((pool.xnt_reward_index - b.xnt_debt_index) * (b.shares as u128)) / anl_math::PRECISION;
+    pending as u64 + pool.xnt_undistributed
+}
+
+// H1 — kolejność #1: close_day PRZED settle. Przed fixem A dostawała tu
+// 15000 (łapała niepełną ostatnią dobę); po fixie MUSI dostać dokładnie 5000.
+#[tokio::test]
+async fn regresja_h1a_close_przed_settle() {
+    let (mut env, a, a_anl, a_xnt, pos_a, pos_b) = h1_prefix().await;
+    let min_e = anl_math::MIN_PERIOD_DAYS as u64;
+    env.close_day(PoolType::Genesis, min_e).await.unwrap();
+    env.close_day(PoolType::Flexible, min_e).await.unwrap();
+    env.settle(pos_a, PoolType::Genesis, Some(0)).await.unwrap();
+    let before = env.token_balance(a_xnt).await;
+    env.claim(&a, a_anl, a_xnt, pos_a, PoolType::Genesis, Some(0))
+        .await
+        .unwrap();
+    let paid_a = env.token_balance(a_xnt).await - before;
+    assert_eq!(
+        paid_a, 5_000,
+        "H1a: A kończy w ŚRODKU ostatniej doby ⇒ TYLKO połowa koszyka doby 0"
+    );
+    let pool = env.pool(env.genesis_pool).await;
+    let b_pos = env.position(pos_b).await;
+    assert_eq!(
+        b_claimable(&pool, &b_pos),
+        15_000,
+        "H1a: konserwacja — reszta (5000 z doby 0 + cała doba MIN) dla B"
+    );
+}
+
+// H1 — kolejność #2: settle BEZ uprzedniego close_day (settle sam domyka
+// dobę przez roll). Wynik MUSI być identyczny jak w H1a.
+#[tokio::test]
+async fn regresja_h1b_settle_bez_close() {
+    let (mut env, a, a_anl, a_xnt, pos_a, pos_b) = h1_prefix().await;
+    env.settle(pos_a, PoolType::Genesis, Some(0)).await.unwrap();
+    let before = env.token_balance(a_xnt).await;
+    env.claim(&a, a_anl, a_xnt, pos_a, PoolType::Genesis, Some(0))
+        .await
+        .unwrap();
+    let paid_a = env.token_balance(a_xnt).await - before;
+    assert_eq!(
+        paid_a, 5_000,
+        "H1b: wypłata A NIE MOŻE zależeć od kolejności close_day/settle (H-01)"
+    );
+    let pool = env.pool(env.genesis_pool).await;
+    let b_pos = env.position(pos_b).await;
+    assert_eq!(
+        b_claimable(&pool, &b_pos),
+        15_000,
+        "H1b: konserwacja — pula B identyczna jak w H1a"
+    );
+}
+
+// H2 — stale current_day: funding w dobie 0, ZERO aktywności (nikt nie
+// domyka doby), zegar odjeżdża do doby 5, claim. Przed fixem cap liczył
+// "ostatnia domknięta = doba -1" ⇒ zamrożenie 0 XNT na zawsze. Po fixie
+// claim sam domyka dobę 0 i wypłaca pełny koszyk.
+#[tokio::test]
+async fn regresja_h2_stale_current_day_claim_po_ciszy() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    env.advance(DAY / 2).await;
+    let (a, a_anl, a_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let pos = env
+        .stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+    env.fund_xnt(10_000).await.unwrap(); // doba 0: Genesis 10000, koszyk otwarty
+    env.advance((min_d as i64 + 5) * DAY).await; // CISZA — nikt nie domyka
+    let before = env.token_balance(a_xnt).await;
+    env.claim(&a, a_anl, a_xnt, pos, PoolType::Genesis, Some(0))
+        .await
+        .unwrap();
+    let paid = env.token_balance(a_xnt).await - before;
+    assert_eq!(
+        paid, 10_000,
+        "H2: pełny koszyk zafundowanej doby 0 mimo stale current_day (M-01)"
+    );
+}
+
+// H3 — CAPY end-to-end: zasilenie skarbca CAPY (permissionless transfer),
+// claim nalicza pending_capy i rezerwuje, claim_capy wypłaca i zeruje.
+#[tokio::test]
+async fn regresja_h3_capy_split_claim_end_to_end() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let (a, a_anl, a_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let pos = env
+        .stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+
+    // Zasilenie skarbca CAPY 1000 CAPY ze skarbca testowego.
+    let ix = spl_token_2022::instruction::transfer_checked(
+        &spl_token_2022::id(),
+        &env.capy_treasury,
+        &env.capy_mint.pubkey(),
+        &env.capy_vault,
+        &env.authority.pubkey(),
+        &[],
+        1_000 * ONE_ANL,
+        DECIMALS,
+    )
+    .unwrap();
+    env.send(&[ix], &[]).await.unwrap();
+
+    env.advance((min_d as i64 + 1) * DAY).await;
+    env.claim(&a, a_anl, a_xnt, pos, PoolType::Genesis, None)
+        .await
+        .unwrap();
+
+    // Po claim: pending_capy naliczone i zarezerwowane (nic nie wypłacone).
+    let profile_acc = env
+        .ctx
+        .banks_client
+        .get_account(env.profile_pda(&a.pubkey()))
+        .await
+        .unwrap()
+        .unwrap();
+    let profile =
+        anl_staking::state::UserProfile::try_deserialize(&mut profile_acc.data.as_slice()).unwrap();
+    let pending = profile.pending_capy;
+    assert!(pending > 0, "H3: claim MUSI naliczyć pending_capy > 0");
+    let gc_acc = env
+        .ctx
+        .banks_client
+        .get_account(env.global_config)
+        .await
+        .unwrap()
+        .unwrap();
+    let gc =
+        anl_staking::state::GlobalConfig::try_deserialize(&mut gc_acc.data.as_slice()).unwrap();
+    assert_eq!(gc.capy_reserved, pending, "H3: rezerwacja == pending");
+
+    // claim_capy wypłaca całość pending na konto usera.
+    let a_capy = create_token_account(
+        &mut env.ctx,
+        &a.pubkey(),
+        &env.capy_mint.pubkey(),
+        spl_token_2022::id(),
+    )
+    .await;
+    let ix = Instruction {
+        program_id: env.program_id,
+        accounts: anl_staking::accounts::ClaimCapy {
+            owner: a.pubkey(),
+            global_config: env.global_config,
+            vault_authority: env.vault_authority,
+            user_profile: env.profile_pda(&a.pubkey()),
+            capy_mint: env.capy_mint.pubkey(),
+            capy_vault: env.capy_vault,
+            owner_capy: a_capy,
+            capy_token_program: spl_token_2022::id(),
+        }
+        .to_account_metas(None),
+        data: anl_staking::instruction::ClaimCapy {}.data(),
+    };
+    env.send_as(&a, &[ix], &[&a]).await.unwrap();
+
+    assert_eq!(
+        env.token_balance(a_capy).await,
+        pending,
+        "H3: claim_capy wypłaca dokładnie pending"
+    );
+    let gc_acc = env
+        .ctx
+        .banks_client
+        .get_account(env.global_config)
+        .await
+        .unwrap()
+        .unwrap();
+    let gc =
+        anl_staking::state::GlobalConfig::try_deserialize(&mut gc_acc.data.as_slice()).unwrap();
+    assert_eq!(gc.capy_reserved, 0, "H3: rezerwacja zwolniona po wypłacie");
 }
