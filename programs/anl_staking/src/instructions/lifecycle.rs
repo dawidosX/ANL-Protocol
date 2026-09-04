@@ -25,6 +25,12 @@ pub struct SettleExpired<'info> {
     /// Permissionless — settle może wykonać każdy (bot operacyjny, sam user).
     pub cranker: Signer<'info>,
 
+    /// AUDYT R4 (H-01/M-01): potrzebny genesis_start_ts — cap liczony od
+    /// epoki ZEGARA (po roll_day), nie od leniwego pool.current_day.
+    #[account(seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
+        constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
+    pub global_config: Box<Account<'info, GlobalConfig>>,
+
     #[account(
         mut,
         seeds = [POOL_SEED, &[pool_config.pool_type as u8]],
@@ -50,6 +56,13 @@ pub struct SettleExpired<'info> {
     /// PDA + łańcuch (next) weryfikowane w handlerze. None dozwolone tylko,
     /// gdy pula nie miała fundingu ≤ end_epoch.
     pub xnt_checkpoint: Option<UncheckedAccount<'info>>,
+
+    /// CHECK: AUDYT R4 — checkpoint doby domykanej przez roll_day (wymagany
+    /// TYLKO gdy settle faktycznie domyka dobę: current_day != epoka zegara
+    /// i koszyk > 0). PDA + dane weryfikowane w helperze. Może być tym samym
+    /// kontem co xnt_checkpoint (zapis przed odczytem, borrowy sekwencyjne).
+    #[account(mut)]
+    pub prev_day_ckpt: Option<UncheckedAccount<'info>>,
 }
 
 /// Indeks-granica dla settlementu pozycji: snapshot ostatniej epoki
@@ -112,6 +125,31 @@ fn cap_index_at(
 }
 
 pub fn settle_expired(ctx: Context<SettleExpired>) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    {
+        let pos = &ctx.accounts.user_position;
+        require!(
+            pos.status == PositionStatus::Active,
+            AnlError::PositionClosed
+        );
+        require!(!pos.settled, AnlError::AlreadySettled);
+        require!(now >= pos.end_ts, AnlError::PeriodNotEnded);
+    }
+
+    // AUDYT R4 (H-01/M-01): dokładnie jak w stake — najpierw przekręć dobę
+    // wg ZEGARA (domyka ewentualny stale koszyk i finalizuje jego checkpoint),
+    // dopiero potem licz cap. Bez tego cap od leniwego current_day zaniżał
+    // wypłatę o zafundowane, niedomknięte doby i zamrażał ją na stałe.
+    let cur_epoch = epoch_of(now, ctx.accounts.global_config.genesis_start_ts)
+        .ok_or(AnlError::BeforeGenesis)?;
+    let program_id = *ctx.program_id;
+    roll_day_and_write_checkpoint(
+        &mut ctx.accounts.pool_config,
+        cur_epoch,
+        ctx.accounts.prev_day_ckpt.as_ref(),
+        &program_id,
+    )?;
+
     let cap = settlement_cap_index(
         &ctx.accounts.pool_config,
         &ctx.accounts.user_position,
@@ -119,13 +157,6 @@ pub fn settle_expired(ctx: Context<SettleExpired>) -> Result<()> {
         ctx.program_id,
     )?;
     let pos = &mut ctx.accounts.user_position;
-    require!(
-        pos.status == PositionStatus::Active,
-        AnlError::PositionClosed
-    );
-    require!(!pos.settled, AnlError::AlreadySettled);
-    let now = Clock::get()?.unix_timestamp;
-    require!(now >= pos.end_ts, AnlError::PeriodNotEnded);
 
     let frozen = ctx
         .accounts
@@ -236,6 +267,11 @@ pub struct Claim<'info> {
 
     /// CHECK: jak w SettleExpired — checkpoint końca end_epoch pozycji.
     pub xnt_checkpoint: Option<UncheckedAccount<'info>>,
+
+    /// CHECK: AUDYT R4 — checkpoint doby domykanej przez roll_day (wymagany
+    /// TYLKO gdy claim faktycznie domyka dobę). PDA + dane w helperze.
+    #[account(mut)]
+    pub prev_day_ckpt: Option<UncheckedAccount<'info>>,
 }
 
 pub fn claim(ctx: Context<Claim>) -> Result<()> {
@@ -250,6 +286,19 @@ pub fn claim(ctx: Context<Claim>) -> Result<()> {
     );
 
     if !ctx.accounts.user_position.settled {
+        // AUDYT R4 (H-01/M-01): roll doby wg ZEGARA przed liczeniem capu —
+        // patrz komentarz w settle_expired. Po rollu wypłata dojrzałej
+        // pozycji jest deterministyczna: zawsze pełne doby do end_epoch,
+        // niezależnie od kolejności close_day / settle / claim.
+        let cur_epoch = epoch_of(now, ctx.accounts.global_config.genesis_start_ts)
+            .ok_or(AnlError::BeforeGenesis)?;
+        let program_id = *ctx.program_id;
+        roll_day_and_write_checkpoint(
+            &mut ctx.accounts.pool_config,
+            cur_epoch,
+            ctx.accounts.prev_day_ckpt.as_ref(),
+            &program_id,
+        )?;
         let cap = settlement_cap_index(
             &ctx.accounts.pool_config,
             &ctx.accounts.user_position,
@@ -326,9 +375,7 @@ pub fn claim(ctx: Context<Claim>) -> Result<()> {
     }
     let total_anl_paid = ctx.accounts.global_config.total_anl_paid;
     let capy_reserved = ctx.accounts.global_config.capy_reserved;
-    let remaining_anl = ANL_REWARD_POOL
-        .checked_sub(total_anl_paid as u128)
-        .unwrap_or(0);
+    let remaining_anl = ANL_REWARD_POOL.saturating_sub(total_anl_paid as u128);
     let capy_entitlement: u64 = if remaining_anl == 0 || anl_reward == 0 {
         0
     } else {

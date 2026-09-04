@@ -348,6 +348,54 @@ pub fn epoch_of(ts: i64, genesis_start_ts: i64) -> Option<u64> {
     Some(((ts - genesis_start_ts) as u64) / (anl_math::SECONDS_PER_DAY as u64))
 }
 
+/// AUDYT R4 (H-01/M-01): wspólny krok "przekręć dobę wg ZEGARA + sfinalizuj
+/// checkpoint domkniętej doby". Wołany przez stake / claim / settle_expired
+/// PRZED liczeniem capu i PRZED zmianą total_shares — dzięki temu:
+///   1. `current_day` nigdy nie jest stale względem zegara na ścieżkach
+///      wyjścia (cap nie może być zaniżony o zafundowane, niedomknięte doby),
+///   2. kolejność transakcji (`close_day` vs `settle`/`claim`) nie zmienia
+///      wypłat — obie ścieżki konwergują do tego samego stanu indeksu.
+///
+/// Gdy roll faktycznie domyka dobę (koszyk > 0), checkpoint tej doby MUSI
+/// zostać podany i zostaje nadpisany finalnym indeksem (checkpoint istnieje,
+/// bo koszyk > 0 ⇒ fund_xnt tej doby go utworzył). Walidacja: owner, PDA,
+/// wersja/epoka/pool_type — fail-closed jak w fund::write_final_index.
+pub fn roll_day_and_write_checkpoint<'info>(
+    pool: &mut PoolConfig,
+    cur_epoch: u64,
+    prev_day_ckpt: Option<&UncheckedAccount<'info>>,
+    program_id: &Pubkey,
+) -> Result<()> {
+    use crate::constants::XNT_CKPT_SEED;
+    use crate::errors::AnlError;
+
+    let closed = pool.roll_day_if_needed(cur_epoch).map_err(AnlError::from)?;
+    if let Some(closed_epoch) = closed {
+        let final_index = pool.xnt_reward_index;
+        let pool_type = pool.pool_type;
+        let ai = prev_day_ckpt.ok_or(AnlError::CheckpointRequired)?;
+        let info = ai.to_account_info();
+        require_keys_eq!(*info.owner, *program_id, AnlError::CheckpointMismatch);
+        let (pda, _) = Pubkey::find_program_address(
+            &[
+                XNT_CKPT_SEED,
+                &[pool_type as u8],
+                &closed_epoch.to_le_bytes(),
+            ],
+            program_id,
+        );
+        require_keys_eq!(info.key(), pda, AnlError::CheckpointMismatch);
+        let mut ck = XntCheckpoint::try_deserialize(&mut &info.data.borrow()[..])?;
+        require!(
+            ck.version == ACCOUNT_VERSION && ck.epoch == closed_epoch && ck.pool_type == pool_type,
+            AnlError::CheckpointMismatch
+        );
+        ck.index = final_index;
+        ck.try_serialize(&mut &mut info.data.borrow_mut()[..])?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod wariant_a_tests {
     use super::*;
@@ -448,5 +496,86 @@ mod wariant_a_tests {
             "#1 dostaje cale 10 (byl sam w dobie 0)"
         );
         assert_eq!(xnt2, 0, "#2 nie lapie doby 0 (wszedl w dobie 1)");
+    }
+
+    // ===== AUDYT R4: determinizm ostatniej doby (H-01 raportow B i C) =====
+    //
+    // Model: pozycja A (100 shares) konczy sie W SRODKU doby E => po fixie
+    // end_epoch = E-1 (tylko pelne doby). Pozycja B (100 shares) zyje dalej.
+    // Koszyk doby E = 100 XNT. Cap A = finalny indeks doby E-1.
+    // Wymog: A i B dostaja TO SAMO niezaleznie od kolejnosci
+    // (roll/close przed settle vs settle przed close).
+
+    const SHARES: u64 = 100;
+    const BASKET_E: u64 = 100_000_000_000; // 100 XNT
+
+    /// Pula na poczatku doby E: A+B w srodku, doby <E rozliczone (index=idx0).
+    fn pool_at_day_e(idx0: u128) -> PoolConfig {
+        let mut pool = empty_pool(PoolType::Genesis);
+        pool.total_shares = 2 * SHARES;
+        pool.xnt_reward_index = idx0;
+        pool.current_day = 5; // E = 5
+        pool.current_day_basket = 0;
+        pool
+    }
+
+    #[test]
+    fn test_r4_kolejnosc_settle_vs_close_identyczna_wyplata() {
+        let idx0: u128 = 7 * anl_math::PRECISION; // dowolny finalny indeks E-1
+        let debt: u128 = 0;
+
+        // --- Kolejnosc 1: dzien E domkniety PRZED settle A ---
+        let mut p1 = pool_at_day_e(idx0);
+        p1.add_to_basket(BASKET_E, 5).unwrap();
+        p1.roll_day_if_needed(6).unwrap(); // koniec doby E: koszyk w indeks
+        let cap_a = idx0; // cap A = finalny indeks doby E-1 (end_epoch = 4)
+        let a1 = p1.settle_position_at(SHARES, debt, cap_a).unwrap();
+        let b1 = pending(&p1, SHARES, debt);
+        // orphan A (wzrost indeksu za dobe E ponad cap) wrocil do undistributed
+        let und1 = p1.xnt_undistributed;
+
+        // --- Kolejnosc 2: settle A PRZED domknieciem doby E ---
+        let mut p2 = pool_at_day_e(idx0);
+        p2.add_to_basket(BASKET_E, 5).unwrap();
+        let a2 = p2.settle_position_at(SHARES, debt, cap_a).unwrap();
+        p2.roll_day_if_needed(6).unwrap(); // teraz koszyk E idzie na same B
+        let b2 = pending(&p2, SHARES, debt);
+        let und2 = p2.xnt_undistributed;
+
+        assert_eq!(a1, a2, "A: wyplata zalezna od kolejnosci (H-01!)");
+        // B: kolejnosc 1 dostaje polowe koszyka E od razu + polowa przez
+        // orphan->undistributed przy nastepnym fundingu; kolejnosc 2 dostaje
+        // caly koszyk E od razu. Suma dla B musi byc rowna:
+        let b1_total = b1 + und1;
+        let b2_total = b2 + und2;
+        assert_eq!(
+            b1_total, b2_total,
+            "B: laczna pula (index + undistributed) zalezna od kolejnosci"
+        );
+        // Konserwacja: A + pula B + undistributed == idx0*shares + koszyk E
+        let baza = 2 * (idx0 * SHARES as u128 / anl_math::PRECISION) as u64;
+        assert_eq!(a1 + b1 + und1, baza + BASKET_E, "kolejnosc 1: wyciek XNT");
+        assert_eq!(a2 + b2 + und2, baza + BASKET_E, "kolejnosc 2: wyciek XNT");
+    }
+
+    #[test]
+    fn test_r4_stale_current_day_roll_oddaje_zafundowana_dobe() {
+        // Funding w dobie 5, zegar w dobie 10, nikt nie zamknal doby.
+        // Pozycja z end_epoch >= 5 PO rollu (jak w claim/settle po fixie)
+        // musi dostac koszyk doby 5.
+        let mut pool = empty_pool(PoolType::Genesis);
+        pool.total_shares = SHARES;
+        let debt: u128 = pool.xnt_reward_index;
+        pool.current_day = 5;
+        pool.add_to_basket(BASKET_E, 5).unwrap();
+        // PRZED fixem: cap liczony przy current_day=5, basket>0
+        // => last_closed=4 => pozycja tracila cala dobe 5 na zawsze.
+        // PO fixie: settle/claim najpierw roluja wg zegara:
+        let closed = pool.roll_day_if_needed(10).unwrap();
+        assert_eq!(closed, Some(5), "roll musi domknac stale dobe 5");
+        assert_eq!(pool.current_day, 10);
+        assert_eq!(pool.current_day_basket, 0);
+        let xnt = pending(&pool, SHARES, debt);
+        assert_eq!(xnt, BASKET_E, "pozycja dostaje pelna zafundowana dobe 5");
     }
 }

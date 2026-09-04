@@ -67,6 +67,11 @@ pub fn initialize_handler(
         AnlError::InvalidXntMint
     );
 
+    // AUDYT R4 (L-02 raport B): stałe bazowe (MIN_STAKE_AMOUNT,
+    // ANL_REWARD_POOL, mianownik CAPY) zakładają 9 miejsc dziesiętnych —
+    // wymuszamy to na mincie, jak przy CAPY.
+    require!(ctx.accounts.anl_mint.decimals == 9, AnlError::InvalidMint);
+
     {
         let ai = ctx.accounts.anl_mint.to_account_info();
         let data = ai.try_borrow_data()?;
@@ -291,6 +296,15 @@ pub fn init_capy_vault_handler(ctx: Context<InitCapyVault>) -> Result<()> {
         if state.base.freeze_authority.is_some() {
             msg!("CAPY mint ma aktywna freeze_authority - odrzucone");
             return err!(AnlError::InvalidMint);
+        }
+        // AUDYT R4 (M-02 raport C / L-03 raport B): "skończona pula
+        // 20 000 000 CAPY" ma być inwariantem on-chain, nie obietnicą
+        // off-chain — mint authority musi być wypalona, jak przy ANL.
+        // Inaczej posiadacz authority dodrukowuje CAPY, permissionless
+        // fund_capy pompuje available i rozwadnia entitlement claimów.
+        if state.base.mint_authority.is_some() {
+            msg!("CAPY mint ma aktywna mint_authority - odrzucone (pula 20M)");
+            return err!(AnlError::MintHasMintAuthority);
         }
     }
 

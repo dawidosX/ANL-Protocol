@@ -94,6 +94,14 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
     let pool = &ctx.accounts.pool_config;
     require!(!cfg.paused, AnlError::Paused);
     require!(pool.status == PoolStatus::Active, AnlError::PoolPaused);
+    // AUDYT R4 (M-01): claim dojrzałej pozycji WYMAGA konta capy_vault —
+    // przyjęcie stake'u przed init_capy_vault tworzyłoby pozycje, których
+    // kapitał zależy od dokończenia setupu przez authority (lockout przy
+    // utracie klucza). Bramka: capy_mint ustawiany wyłącznie w init_capy_vault.
+    require!(
+        cfg.capy_mint != Pubkey::default(),
+        AnlError::SetupIncomplete
+    );
     require!(amount > 0, AnlError::ZeroAmount);
     require!(
         (MIN_PERIOD_DAYS..=MAX_PERIOD_DAYS).contains(&declared_days),
@@ -153,39 +161,14 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
 
     let cur_epoch = epoch_of(now, cfg.genesis_start_ts).ok_or(AnlError::BeforeGenesis)?;
     let program_id = *ctx.program_id;
-    let pool = &mut ctx.accounts.pool_config;
-    let closed = pool.roll_day_if_needed(cur_epoch).map_err(AnlError::from)?;
-    let closed_info = if let Some(closed_epoch) = closed {
-        let final_index = pool.xnt_reward_index;
-        let pool_type = pool.pool_type;
-        let ckpt = ctx
-            .accounts
-            .prev_day_ckpt
-            .as_ref()
-            .ok_or(AnlError::CheckpointRequired)?;
-        let info = ckpt.to_account_info();
-        require_keys_eq!(*info.owner, program_id, AnlError::CheckpointMismatch);
-        let (pda, _) = Pubkey::find_program_address(
-            &[
-                XNT_CKPT_SEED,
-                &[pool_type as u8],
-                &closed_epoch.to_le_bytes(),
-            ],
-            &program_id,
-        );
-        require_keys_eq!(info.key(), pda, AnlError::CheckpointMismatch);
-        let mut ck = XntCheckpoint::try_deserialize(&mut &info.data.borrow()[..])?;
-        require!(
-            ck.version == ACCOUNT_VERSION && ck.epoch == closed_epoch && ck.pool_type == pool_type,
-            AnlError::CheckpointMismatch
-        );
-        ck.index = final_index;
-        ck.try_serialize(&mut &mut info.data.borrow_mut()[..])?;
-        Some(())
-    } else {
-        None
-    };
-    let _ = closed_info;
+    // AUDYT R4: wspólny helper (ta sama implementacja w stake / claim /
+    // settle_expired) — roll doby wg zegara + finalizacja checkpointu.
+    roll_day_and_write_checkpoint(
+        &mut ctx.accounts.pool_config,
+        cur_epoch,
+        ctx.accounts.prev_day_ckpt.as_ref(),
+        &program_id,
+    )?;
     let pool = &mut ctx.accounts.pool_config;
     pool.total_staked = pool
         .total_staked
@@ -228,8 +211,18 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
     pos.settled = false;
     pos.xnt_debt_index = pool.xnt_reward_index;
     pos.bump = ctx.bumps.user_position;
-    pos.end_epoch = epoch_of(pos.end_ts.saturating_sub(1), cfg.genesis_start_ts)
-        .ok_or(AnlError::BeforeGenesis)?;
+    // AUDYT R4 (H-01 raport B): end_epoch obejmuje wyłącznie PEŁNE doby.
+    // Pozycja kończąca się w ŚRODKU doby K nie jest uprawniona do koszyka K
+    // (WP: "tylko pełne doby") — stara formuła epoch_of(end_ts - 1) włączała
+    // niepełną dobę K, przez co wypłata zależała od wyścigu close_day vs
+    // settle. Koniec DOKŁADNIE na granicy dób: epoch_of(end_ts) wskazuje
+    // następną dobę, minus 1 = ostatnia w pełni przesiedziana — bez zmian.
+    // Okres >= 1 doby gwarantuje epoch_of(end_ts) >= 1 (brak underflow);
+    // prog_epoch okien Genesis <= epoch_of(now) - 1 < ta granica, więc
+    // xnt_window_claimed nigdy nie przekroczy finalnego xnt_accrued.
+    pos.end_epoch = epoch_of(pos.end_ts, cfg.genesis_start_ts)
+        .ok_or(AnlError::BeforeGenesis)?
+        .saturating_sub(1);
     pos.xnt_window_claimed = 0;
     pos.last_window_ts = 0;
     pos.reserved = [0; 8];

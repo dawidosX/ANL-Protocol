@@ -489,6 +489,9 @@ pub fn close_day(ctx: Context<CloseDay>, epoch: u64) -> Result<()> {
     pool.current_day = cur_epoch;
     let final_index = pool.xnt_reward_index;
     let info = ctx.accounts.day_ckpt.to_account_info();
+    // AUDYT R4 (L-02 raport C): jawny owner-check przed deserializacją —
+    // spójnie z settlement_cap_index i roll_day_and_write_checkpoint.
+    require_keys_eq!(*info.owner, *ctx.program_id, AnlError::CheckpointMismatch);
     let mut ck = XntCheckpoint::try_deserialize(&mut &info.data.borrow()[..])?;
     require!(
         ck.version == ACCOUNT_VERSION && ck.epoch == epoch && ck.pool_type == pool.pool_type,

@@ -90,6 +90,8 @@ pub enum AnlError {
     NotGenesisPool,
     #[msg("Position's end-of-stake day is not yet closed; call close_day first")]
     DayNotClosed,
+    #[msg("Protocol setup incomplete: CAPY vault must be initialized before staking")]
+    SetupIncomplete,
 }
 
 impl From<anl_math::MathError> for AnlError {
