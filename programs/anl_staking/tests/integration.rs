@@ -2588,6 +2588,8 @@ async fn gw3_double_claim_same_window_rejected() {
         .await
         .unwrap();
     // drugie wołanie w tym samym oknie — nic nowego do wypłaty
+    // advance(1): nowy blockhash — identyczna tx trafiałaby w dedup podpisów
+    env.advance(1).await;
     let r2 = env
         .claim_genesis_window(&alice, alice_xnt, pos, PoolType::Genesis, ck)
         .await;
