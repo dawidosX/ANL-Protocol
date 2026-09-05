@@ -3510,3 +3510,66 @@ async fn atak_r6_limit_200m_anl_niezaleznie_od_salda_skarbca() {
         "R6: po wyczerpaniu limitu 200M zaden stake nie przechodzi"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// AUDYT R7 — odpowiedz na uwage C „stake po fund_xnt tej samej doby dostaje
+// koszyk". Design jest SYMETRYCZNY: wejscie w srodku doby zalicza te dobe
+// (udzial wg shares na jej koniec), wyjscie w srodku doby ja traci
+// (end_epoch = epoch_of(end_ts) - 1). Pozycja na N dni dostaje DOKLADNIE N
+// koszykow — ani doby wejscia „za darmo" ponad N, ani mniej.
+// ═══════════════════════════════════════════════════════════════════
+
+/// Stake A (Genesis, MIN dni) w polowie doby 0, PO fundingu doby 0. Funding
+/// codziennie (doby 0..=MIN). B w Flexible i kotwica C w Genesis od poczatku
+/// (obie pule niepuste ⇒ split 65/35 stabilny: Genesis dostaje 6 500 z 10 000
+/// kazdej doby, dzielone A/C po polowie = 3 250 dla A za dobe). Claim po
+/// end_ts ⇒ A ma 3 250 × MIN: dobe 0 (weszla w jej srodku) TAK, dobe MIN
+/// (wyszla w jej srodku) NIE.
+/// Uwaga (dokumentacja): gdyby Genesis byl PUSTY w chwili fundingu doby 0,
+/// caly koszyk poszedlby do Flexible (zasada pustej puli) i A nie mialaby
+/// z doby 0 nic — to zamierzone, nie luka.
+#[tokio::test]
+async fn regresja_r7_n_dni_dokladnie_n_koszykow() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let min_e = min_d as u64;
+    let (b, b_anl, _) = env.user_with_anl(100 * ONE_ANL).await;
+    env.stake(&b, b_anl, PoolType::Flexible, 100 * ONE_ANL, 5 * min_d, 0)
+        .await
+        .unwrap();
+    let (c, c_anl, _) = env.user_with_anl(100 * ONE_ANL).await;
+    env.stake(&c, c_anl, PoolType::Genesis, 100 * ONE_ANL, 5 * min_d, 0)
+        .await
+        .unwrap();
+    env.advance(DAY / 4).await;
+    env.fund_xnt(10_000).await.unwrap(); // doba 0 — PRZED wejsciem A
+    env.advance(DAY / 4).await; // polowa doby 0
+    let (a, a_anl, a_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos_a = env
+        .stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+    let pa = env.position(pos_a).await;
+    assert_eq!(pa.end_epoch, min_e - 1, "end_epoch = ostatnia PELNA doba");
+    for _ in 0..min_e {
+        env.advance(DAY).await;
+        env.fund_xnt(10_000).await.unwrap(); // doby 1..=MIN (MIN = doba wyjscia)
+    }
+    env.advance(60).await; // now >= end_ts (koniec w srodku doby MIN)
+    let before = env.token_balance(a_xnt).await;
+    env.claim(&a, a_anl, a_xnt, pos_a, PoolType::Genesis, Some(min_e - 1))
+        .await
+        .unwrap();
+    let paid = env.token_balance(a_xnt).await - before;
+    assert_eq!(
+        paid,
+        3_250 * min_e,
+        "R7: pozycja na {min_e} dni dostaje DOKLADNIE {min_e} koszykow Genesis (doba wejscia TAK, doba wyjscia NIE)"
+    );
+    assert_ne!(
+        paid,
+        3_250 * (min_e + 1),
+        "R7: doba wyjscia nie jest zaliczana"
+    );
+}
