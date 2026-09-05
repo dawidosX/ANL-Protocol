@@ -8,3 +8,6 @@ features: network-testnet,test-periods
 sha256: 1d44959176da39a83a42cadd835b108795d7fee4a0aed706c00e9f24b9a6ba0a
 rustc_host: rustc 1.97.1 (8bab26f4f 2026-07-14)
 build_sbf: solana-cargo-build-sbf 1.18.17 platform-tools v1.41 rustc 1.75.0 
+deployed_slot: 185933070
+deploy_date_utc: 2026-09-05T17:55:00Z
+deploy_note: deploy przez Dawida; dump on-chain == binarka sha 1d449591 (0 bajtow roznicy), authority Dx2vEpVdMh2qScz4vEHAXquTm6QYocKbmPRdcXHLzvEm
