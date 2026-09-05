@@ -1330,7 +1330,18 @@ nav .btn-gold{white-space:nowrap}
     connected=null; if(btn) btn.textContent=connLabel;
   }
 
-  if(btn) btn.addEventListener('click',function(){ connected?disconnect():open(); });
+  /* Jeden system portfela: gdy dApp wystawia window.anlWallet, przycisk naglowka
+     deleguje do dApp (picker/odlaczenie), a stan czyta ze zdarzen anl:wallet.
+     Wlasna detekcja i modal (wmodal) zostaja WYLACZNIE jako fallback bez dApp. */
+  function useDapp(){ return !!(window.anlWallet && typeof window.anlWallet.connect==='function'); }
+  if(btn) btn.addEventListener('click',function(){
+    if(useDapp()){ if(window.anlWallet.pubkey()) window.anlWallet.disconnect(); else window.anlWallet.connect(); return; }
+    connected?disconnect():open();
+  });
+  window.addEventListener('anl:wallet',function(e){
+    var d=(e&&e.detail)||{}; if(!btn) return;
+    btn.textContent = (d.connected && d.address) ? short(d.address) : connLabel;
+  });
   document.getElementById('wmClose').addEventListener('click',close);
   modal.addEventListener('click',function(e){ if(e.target===modal) close(); });
 })();
@@ -1368,7 +1379,8 @@ window.anlDialog = function(opts){
 (function(){
 
 const {Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram} = solanaWeb3;
-const RPC = "https://rpc.testnet.x1.xyz";
+// Endpoint RPC — jedna stala (przygotowanie pod wlasny RPC).
+const RPC_URL = "https://rpc.testnet.x1.xyz";
 const PROGRAM_ID = new PublicKey("4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM");
 const ANL_MINT   = new PublicKey("BLyHV1ENioCMNeGptBJptUgPkrhkjYq527rU7Q1UpXFF");
 const TOKEN_2022 = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
@@ -1377,7 +1389,29 @@ const DISC_STAKE = new Uint8Array([206,176,202,18,200,209,179,108]);
 const DISC_UNSTAKE = new Uint8Array([246,212,81,180,65,2,126,125]);
 const DEC = 1_000_000_000n;
 
-const conn = new Connection(RPC, "confirmed");
+// disableRetryOnRateLimit: web3.js domyslnie powtarza 429 co 500 ms w petli — to
+// dawalo "martwa" strone. Teraz 429 wraca jako blad, a limiter nizej pilnuje tempa.
+const _rawConn = new Connection(RPC_URL, {commitment:"confirmed", disableRetryOnRateLimit:true});
+// Globalny limiter RPC: max RPC_MAX_PARALLEL rownoleglych zapytan, RPC_GAP_MS
+// odstepu miedzy startami. Prosty semafor owiniety wokol KAZDEJ metody conn.*.
+const RPC_MAX_PARALLEL = 4, RPC_GAP_MS = 150;
+let _rpcActive = 0, _rpcLastStart = 0; const _rpcQueue = [];
+window.__rpcCalls = 0; // licznik zapytan (diagnostyka: console)
+function _rpcPump(){
+  if(_rpcActive >= RPC_MAX_PARALLEL || _rpcQueue.length === 0) return;
+  const wait = _rpcLastStart + RPC_GAP_MS - Date.now();
+  if(wait > 0){ setTimeout(_rpcPump, wait); return; }
+  _rpcLastStart = Date.now(); _rpcActive++; window.__rpcCalls++;
+  const go = _rpcQueue.shift(); go();
+  if(_rpcQueue.length) setTimeout(_rpcPump, RPC_GAP_MS);
+}
+function _rpcSlot(){ return new Promise(function(res){ _rpcQueue.push(res); _rpcPump(); }); }
+function _rpcDone(){ _rpcActive--; _rpcPump(); }
+const conn = new Proxy(_rawConn, { get(t, k){
+  const v = t[k]; if(typeof v !== "function") return v;
+  return async function(...args){ await _rpcSlot(); try{ return await v.apply(t, args); } finally{ _rpcDone(); } };
+}});
+function isRateLimited(e){ return /429|Too Many Requests|rate limit/i.test(String((e && e.message) || e)); }
 const enc = (s)=>new TextEncoder().encode(s);
 const pda = (seeds)=>PublicKey.findProgramAddressSync(seeds, PROGRAM_ID)[0];
 const globalConfig   = pda([enc("global_config")]);
@@ -1468,6 +1502,7 @@ async function pick(w, silent){
       walletAdapter = {kind:"leg", p:w.p};
     }
     try{ localStorage.setItem("anlWallet", w.name); }catch(_){}
+    try{ window.dispatchEvent(new CustomEvent("anl:wallet",{detail:{connected:true, address:pubkey.toBase58(), wallet:w.name}})); }catch(_){}
     const cta=document.querySelector("nav .btn-gold"); if(cta) cta.style.display="none";
     const bc=$("btnConnect"); delete bc.dataset.dp; bc.classList.add("chip");
     bc.textContent = pubkey.toBase58().slice(0,4)+"…"+pubkey.toBase58().slice(-4)+" ✕";
@@ -1514,21 +1549,38 @@ function ownerAta(owner){
     [owner.toBuffer(), TOKEN_2022.toBuffer(), ANL_MINT.toBuffer()], ATA_PROG)[0];
 }
 
+let inFlight = false;
 async function refresh(){
-  if(!pubkey) return;
+  if(!pubkey || inFlight) return;   // jeden refresh naraz — kolejne klikniecia ignorowane
+  inFlight = true;
+  const rb = $("btnRefresh");
+  if(rb){ rb.disabled = true; rb.textContent = T("refreshing"); }
+  const calls0 = window.__rpcCalls;
   try{
-    const lam = await conn.getBalance(pubkey);
-    const x = (lam/1e9).toLocaleString("pl-PL",{maximumFractionDigits:2});
-    $("btnConnect").textContent = x+" XNT · "+pubkey.toBase58().slice(0,4)+"…"+pubkey.toBase58().slice(-4)+" ✕";
-  }catch(e){}
-  try{
-    const b = await conn.getTokenAccountBalance(ownerAta(pubkey));
-    window.__availAnl = Math.floor(b.value.uiAmount);
-    $("availAnl").textContent = T("avail")+fmt(window.__availAnl)+" ANL";
-    try{ anlAmtSlide(document.getElementById("amtRange").value); }catch(e){}
-  }catch(e){ window.__availAnl=0; $("availAnl").textContent = T("avail")+"0 ANL"; }
-  await loadPositions();
-  loadHistory().catch(function(e){ console.log("[ANL] historia:", e.message); });
+    try{
+      // 1 zapytanie: lamporty portfela + konto ATA ANL (amount @64) zamiast getBalance + getTokenAccountBalance
+      const [meInfo, ataInfo] = await conn.getMultipleAccountsInfo([pubkey, ownerAta(pubkey)]);
+      const lam = meInfo ? meInfo.lamports : 0;
+      const x = (lam/1e9).toLocaleString("pl-PL",{maximumFractionDigits:2});
+      $("btnConnect").textContent = x+" XNT · "+pubkey.toBase58().slice(0,4)+"…"+pubkey.toBase58().slice(-4)+" ✕";
+      let avail = 0;
+      if(ataInfo && ataInfo.data.length >= 72){
+        avail = Number(new DataView(ataInfo.data.buffer, ataInfo.data.byteOffset).getBigUint64(64, true) / DEC);
+      }
+      window.__availAnl = avail;
+      $("availAnl").textContent = T("avail")+fmt(avail)+" ANL";
+      try{ anlAmtSlide(document.getElementById("amtRange").value); }catch(e){}
+    }catch(e){ window.__availAnl=0; $("availAnl").textContent = T("avail")+"0 ANL"; if(isRateLimited(e)) throw e; }
+    await loadPositions();
+    await loadHistory();   // sekwencyjnie po pozycjach (mniej rownoleglych zapytan)
+  }catch(e){
+    console.log("[ANL] refresh:", e.message);
+    if(isRateLimited(e)) log(T("rpcBusy"), "err");
+  }finally{
+    inFlight = false;
+    if(rb){ rb.disabled = !pubkey; dpApply(); }
+    console.log("[ANL] refresh: zapytan RPC =", window.__rpcCalls - calls0);
+  }
 }
 
 async function nextIndex(){
@@ -1543,6 +1595,7 @@ function decodePosition(data){
   const u128 = (off)=> (dv.getBigUint64(off+8,true)<<64n) | dv.getBigUint64(off,true);
   return {
     pool: data[41], status: data[42],
+    index: dv.getBigUint64(43, true),
     amount: dv.getBigUint64(51, true),
     shares: dv.getBigUint64(59, true),
     apy: dv.getUint16(67, true),
@@ -1574,11 +1627,9 @@ async function capIndexAt(poolType, endEpoch, pool, debt){
   if(endEpoch >= pool.lastFunded) return pool.idx;    // pozycja obejmuje ostatni funding
   const key = poolType+":"+endEpoch;
   if(_capCache.has(key)) { const v=_capCache.get(key); return v===null? debt : v; }
-  const ck = await findCheckpoint(poolType, endEpoch);
+  const ck = await findCheckpointInfo(poolType, endEpoch);
   if(!ck){ _capCache.set(key, null); return debt; }   // brak fundingu <= end_epoch
-  const info = await conn.getAccountInfo(ck);
-  if(!info){ _capCache.set(key, null); return debt; }
-  const dv = new DataView(info.data.buffer, info.data.byteOffset);
+  const dv = new DataView(ck.data.buffer, ck.data.byteOffset);
   const idx = (dv.getBigUint64(18+8,true)<<64n) | dv.getBigUint64(18,true);
   _capCache.set(key, idx);
   return idx;
@@ -1642,25 +1693,57 @@ function decodeWindow(b64){
   const ts = dv.getBigInt64(o,true);
   return { owner:owner.toBase58(), idx, principal:0n, anl:0n, xnt:xntPaid, capy:0n, ts:Number(ts), kind:"window" };
 }
-async function loadHistory(){
-  if(!pubkey) return;
+// Zdarzenia claim/okno: JEDEN przebieg dla historii i sum (bylo: 80 + 100 getTransaction
+// rownolegle w dwu petlach). Limit 25 sygnatur, getTransaction SEKWENCYJNIE, wynik dekodowania
+// per sygnatura w localStorage (stara transakcja nigdy sie nie zmienia). 429 -> przerwij i pokaz to, co jest.
+const HISTORY_SIG_LIMIT = 25;
+const TX_CACHE_PREFIX = "anlTx:v1:";
+function txCacheGet(sig){
+  try{
+    const raw = localStorage.getItem(TX_CACHE_PREFIX+sig); if(!raw) return null;
+    return JSON.parse(raw).map(function(e){ return {owner:e.owner, idx:BigInt(e.idx), principal:BigInt(e.principal),
+      anl:BigInt(e.anl), xnt:BigInt(e.xnt), capy:BigInt(e.capy), ts:e.ts, kind:e.kind}; });
+  }catch(_){ return null; }
+}
+function txCacheSet(sig, evs){
+  try{ localStorage.setItem(TX_CACHE_PREFIX+sig, JSON.stringify(evs.map(function(e){ return {owner:e.owner, idx:String(e.idx),
+    principal:String(e.principal), anl:String(e.anl), xnt:String(e.xnt), capy:String(e.capy), ts:e.ts, kind:e.kind}; }))); }catch(_){}
+}
+function decodeTxEvents(tx){
+  const out = [];
+  for(const l of ((tx && tx.meta && tx.meta.logMessages) || [])){
+    const m = l.match(/^Program data: (.+)$/); if(!m) continue;
+    let ev = null; try{ ev = decodeClaimed(m[1]) || decodeWindow(m[1]); }catch(_){ ev = null; }
+    if(ev) out.push(ev);
+  }
+  return out;
+}
+async function fetchClaimEvents(){
   const me = pubkey.toBase58();
-  const sigs = await conn.getSignaturesForAddress(PROGRAM_ID, {limit:80});
-  const rows = [];
+  const sigs = await conn.getSignaturesForAddress(PROGRAM_ID, {limit:HISTORY_SIG_LIMIT});
+  const rows = []; let partial = false;
   for(const s of sigs){
     if(s.err) continue;
-    let tx; try{ tx = await conn.getTransaction(s.signature, {commitment:"confirmed", maxSupportedTransactionVersion:0}); }catch(_){ continue; }
-    const logs = (tx && tx.meta && tx.meta.logMessages) || [];
-    for(const l of logs){
-      const m = l.match(/^Program data: (.+)$/);
-      if(!m) continue;
-      let ev=null;
-      try{ ev = decodeClaimed(m[1]) || decodeWindow(m[1]); }catch(_){ ev=null; }
-      if(ev && ev.owner===me){
-        rows.push({ ...ev, sig:s.signature });
-      }
+    let evs = txCacheGet(s.signature);
+    if(!evs){
+      let tx;
+      try{ tx = await conn.getTransaction(s.signature, {commitment:"confirmed", maxSupportedTransactionVersion:0}); }
+      catch(e){ if(isRateLimited(e)){ partial = true; break; } continue; }
+      if(!tx){ continue; } // brak tx na RPC — nie cache'ujemy, sprobujemy nastepnym razem
+      evs = decodeTxEvents(tx); txCacheSet(s.signature, evs);
     }
+    for(const ev of evs){ if(ev.owner === me) rows.push(Object.assign({}, ev, {sig:s.signature})); }
   }
+  return {rows, partial};
+}
+async function loadHistory(){
+  if(!pubkey) return;
+  const res = await fetchClaimEvents();
+  window.__histRows = res.rows; window.__histPartial = res.partial; // do re-renderu przy zmianie jezyka (bez RPC)
+  renderHistory(res.rows.slice(), res.partial);
+  renderClaimedTotals(res.rows);
+}
+function renderHistory(rows, partial){
   const tb = $("histBody"), box = $("histBox");
   if(!tb || !box) return;
   if(rows.length===0){ box.style.display="none"; return; }
@@ -1686,30 +1769,17 @@ async function loadHistory(){
   var sumAnl=0n,sumXnt=0n,sumCapy=0n;
   rows.forEach(function(r){ if(r.kind!=="window"){sumAnl+=r.anl;} sumXnt+=r.xnt; sumCapy+=(r.capy||0n); });
   tb.innerHTML += '<tr style="border-top:2px solid var(--edge);font-weight:700">'+
-    '<td colspan="3">'+(_plS?"Suma nagr\u00f3d":"Total rewards")+'</td>'+
+    '<td colspan="3">'+(_plS?"Suma nagr\u00f3d":"Total rewards")+(partial?' <span class="mut" style="font-weight:400">('+T("rpcPartial")+')</span>':'')+'</td>'+
     '<td>'+fmtAnl(sumAnl)+' ANL</td>'+
     '<td>'+fmtXnt(sumXnt)+' XNT</td>'+
     '<td>'+fmtAnl(sumCapy)+' CAPY</td>'+
     '<td colspan="2"></td></tr>';
   box.style.display="block";
 }
-async function loadClaimedTotals(){
-  if(!pubkey) return;
+function renderClaimedTotals(rows){
   const setTxt = (id, v)=>{ const e=document.getElementById(id); if(e) e.textContent = v; };
-  const me = pubkey.toBase58();
-  const sigs = await conn.getSignaturesForAddress(PROGRAM_ID, {limit:100});
   let anlClaimed=0n, xntEnd=0n, xntWindow=0n;
-  for(const s of sigs){
-    if(s.err) continue;
-    let tx; try{ tx = await conn.getTransaction(s.signature,{commitment:"confirmed",maxSupportedTransactionVersion:0}); }catch(_){ continue; }
-    for(const l of ((tx&&tx.meta&&tx.meta.logMessages)||[])){
-      const m=l.match(/^Program data: (.+)$/); if(!m) continue;
-      let ev=null; try{ ev=decodeClaimed(m[1]); }catch(_){}
-      if(ev && ev.owner===me){ anlClaimed+=ev.anl; xntEnd+=ev.xnt; continue; }
-      let w=null; try{ w=decodeWindow(m[1]); }catch(_){}
-      if(w && w.owner===me){ xntWindow+=w.xnt; }
-    }
-  }
+  rows.forEach(function(r){ if(r.kind==="window"){ xntWindow+=r.xnt; } else { anlClaimed+=r.anl; xntEnd+=r.xnt; } });
   const _pl=(function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl";}catch(e){return false;}})();
   setTxt("wsAnlClaimed", fmtAnl(anlClaimed)+" ANL");
   setTxt("wsXntClaimed", fmtXnt(xntEnd+xntWindow)+" XNT");
@@ -1735,43 +1805,61 @@ function anlSortPositions(k){
 }
 async function loadPositions(){
   const tb = $("positions");
-  const n = await nextIndex();
-  if(n === 0n){ tb.innerHTML = '<tr><td colspan="10" class="mut">'+T("noPos")+'</td></tr>'; return; }
-  const poolIdx = await poolXntIndexes();
-  const winProg = await genesisWindowProg();  // null = okno zamkniete
-  let rows = ""; const rowObjs = [];
-  let epochSum = 0n;
-  let sumCapyEst = 0n;
-  let estXntSum = 0n;
-  let sumStaked=0n, sumAnlPend=0n, sumXntPend=0n, nActive=0;
-  // === PROGNOZA CAPY: odczyt danych globalnych (raz) ===
-  let capyAvail = 0n, remainingAnl = 0n;
-  try {
-    const ANL_REWARD_POOL = 200_000_000n * 1_000_000_000n;
-    const gcInfo = await conn.getAccountInfo(globalConfig);
-    if(gcInfo){
-      const dvg = new DataView(gcInfo.data.buffer, gcInfo.data.byteOffset);
+  _capCache.clear(); _ckptCache.clear(); // swieze indeksy checkpointow w kazdym odswiezeniu
+  // 1 zapytanie: wszystkie ZYWE pozycje wlasciciela (dataSize 155 = UserPosition::LEN,
+  // owner @9). Zamkniete pozycje maja close=owner, wiec nie istnieja on-chain
+  // (bylo: getAccountInfo per indeks, takze dla zamknietych).
+  const accs = await conn.getProgramAccounts(PROGRAM_ID, {filters:[{dataSize:155},{memcmp:{offset:9, bytes:pubkey.toBase58()}}]});
+  const positions = accs.map(function(a){ return decodePosition(a.account.data); })
+    .sort(function(a,b){ return a.index < b.index ? -1 : (a.index > b.index ? 1 : 0); });
+  if(positions.length === 0){ tb.innerHTML = '<tr><td colspan="11" class="mut">'+T("noPos")+'</td></tr>'; return; }
+  // 1 zapytanie: pule (idx/shares/basket/und), global_config (gts, total_anl_paid,
+  // capy_reserved, total_xnt_funded), capy_vault (saldo), profil (pending_capy)
+  const p0 = pda([enc("pool"), new Uint8Array([0])]);
+  const p1 = pda([enc("pool"), new Uint8Array([1])]);
+  const profilePda = pda([enc("profile"), pubkey.toBuffer()]);
+  const g = await conn.getMultipleAccountsInfo([p0, p1, globalConfig, capyVault, profilePda]);
+  const rdPool = (info)=>{ if(!info) return {idx:0n, und:0n, shares:0n, lastFunded:NO_EPOCH, basket:0n};
+    const dv=new DataView(info.data.buffer, info.data.byteOffset);
+    return { idx: (dv.getBigUint64(29+8,true)<<64n) | dv.getBigUint64(29,true),
+             shares: dv.getBigUint64(21,true),
+             lastFunded: dv.getBigUint64(61,true),
+             basket: dv.getBigUint64(78,true),
+             und: dv.getBigUint64(45,true) }; };
+  const poolIdx = [rdPool(g[0]), rdPool(g[1])]; // [Flexible, Genesis]
+  const gcInfo = g[2], cvInfo = g[3], pinfo = g[4];
+  let winProg = null; // null = okno zamkniete
+  let capyAvail = 0n, remainingAnl = 0n, totalFunded = 0n;
+  if(gcInfo){
+    const dvg = new DataView(gcInfo.data.buffer, gcInfo.data.byteOffset);
+    const gts = dvg.getBigInt64(106, true);
+    const ep  = (BigInt(Math.floor(Date.now()/1000)) - gts) / 86400n;
+    const blocks = ep / GENESIS_WINDOW_DAYS;
+    winProg = blocks >= 1n ? blocks * GENESIS_WINDOW_DAYS - 1n : null;
+    try{
+      const ANL_REWARD_POOL = 200_000_000n * 1_000_000_000n;
       const totalAnlPaid = dvg.getBigUint64(197, true);
       const capyReserved = dvg.getBigUint64(205, true);
       remainingAnl = ANL_REWARD_POOL > totalAnlPaid ? ANL_REWARD_POOL - totalAnlPaid : 0n;
-      const cvInfo = await conn.getAccountInfo(capyVault);
       let capyBal = 0n;
       if(cvInfo){ capyBal = new DataView(cvInfo.data.buffer, cvInfo.data.byteOffset).getBigUint64(64, true); }
       capyAvail = capyBal > capyReserved ? capyBal - capyReserved : 0n;
-    }
-  } catch(e){}
+    }catch(e){}
+    try{ if(gcInfo.data.length >= 164) totalFunded = dvg.getBigUint64(156, true); }catch(_){}
+  }
   const capyFor = (anlReward)=>{
     if(remainingAnl===0n || anlReward===0n) return 0n;
     return anlReward * capyAvail / remainingAnl;
   };
   // eksport do kalkulatora (w jednostkach ANL/CAPY, nie base)
   try{ window.__capyAvail=Number(capyAvail/1_000_000_000n); window.__remainingAnl=Number(remainingAnl/1_000_000_000n); }catch(e){}
-  for(let i=0n; i<n; i++){
-    const idx = new Uint8Array(8); new DataView(idx.buffer).setBigUint64(0, i, true);
-    const pos = pda([enc("position"), pubkey.toBuffer(), idx]);
-    const info = await conn.getAccountInfo(pos);
-    if(!info) continue;
-    const p = decodePosition(info.data);
+  const rowObjs = [];
+  let epochSum = 0n;
+  let sumCapyEst = 0n;
+  let estXntSum = 0n;
+  let sumStaked=0n, sumAnlPend=0n, sumXntPend=0n, nActive=0;
+  for(const p of positions){
+    const i = p.index; // indeks on-chain pozycji (position_index), nie licznik petli
     if(p.status!==1){ sumStaked += p.amount; sumAnlPend += p.reward; nActive++; sumCapyEst += capyFor(p.reward); }
     const winPay = (p.status!==1 && p.pool===1 && winProg!==null) ? await windowPayout(p, poolIdx[1], winProg) : 0n;
     const now = Date.now()/1000;
@@ -1830,13 +1918,6 @@ async function loadPositions(){
   const setTxt = (id, v)=>{ const e=$(id); if(e) e.textContent = v; };
   const basketG = poolIdx[1].basket||0n, basketF = poolIdx[0].basket||0n;
   const totalRes = basketG + basketF + undF + undG;
-  let totalFunded = 0n;
-  try {
-    const cfgTF = await conn.getAccountInfo(globalConfig);
-    if (cfgTF && cfgTF.data.length >= 164) {
-      totalFunded = new DataView(cfgTF.data.buffer, cfgTF.data.byteOffset).getBigUint64(156, true);
-    }
-  } catch(_) {}
   const _plTF = (function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl";}catch(e){return true;}})();
   setTxt("xntReserved", (estXntSum>0n?"~":"")+fmtXnt(estXntSum>0n?estXntSum:totalRes)+" XNT");
   setTxt("xntReservedSub", fmtXnt(basketG)+" Genesis / "+fmtXnt(basketF)+" Flexible · "+(_plTF?"zasilono \u0142\u0105cznie: ":"funded total: ")+fmtXnt(totalFunded)+" XNT");
@@ -1853,23 +1934,18 @@ async function loadPositions(){
     setTxt("wsStakedSub", nActive+" "+(_pl?"aktywnych pozycji":"active positions"));
     setTxt("wsAnlPend", fmtAnl(sumAnlPend)+" ANL");
     setTxt("wsXntPend", estXntSum>0n ? "~"+fmtXnt(estXntSum)+" XNT" : (epochSum>0n ? fmtXnt(epochSum)+" XNT" : "0 XNT"));
-    // CAPY v3.1: odczyt pending_capy z UserProfile (offset 49 w danych konta)
-    (async function(){
-      try{
-        const profile = pda([enc("profile"), pubkey.toBuffer()]);
-        const pinfo = await conn.getAccountInfo(profile);
-        let pend = 0n;
-        if(pinfo && pinfo.data.length >= 57){
-          pend = new DataView(pinfo.data.buffer, pinfo.data.byteOffset).getBigUint64(49, true);
-        }
-        setTxt("wsCapyPend", pend>0n ? fmtAnl(pend)+" CAPY" : "~"+fmtAnl(sumCapyEst)+" CAPY");
-        const btn=$("btnClaimCapy"); if(btn) btn.style.display = pend>0n ? "inline-block" : "none";
-      }catch(e){ setTxt("wsCapyPend", "0 CAPY"); }
-    })();
+    // CAPY v3.1: pending_capy z UserProfile (offset 49) — z batcha powyzej, bez osobnego zapytania
+    try{
+      let pend = 0n;
+      if(pinfo && pinfo.data.length >= 57){
+        pend = new DataView(pinfo.data.buffer, pinfo.data.byteOffset).getBigUint64(49, true);
+      }
+      setTxt("wsCapyPend", pend>0n ? fmtAnl(pend)+" CAPY" : "~"+fmtAnl(sumCapyEst)+" CAPY");
+      const btn=$("btnClaimCapy"); if(btn) btn.style.display = pend>0n ? "inline-block" : "none";
+    }catch(e){ setTxt("wsCapyPend", "0 CAPY"); }
     const box=$("walletStats"); if(box) box.style.display="flex";
   })();
-  // odebrane — z historii (async, nie blokuje)
-  loadClaimedTotals().catch(function(e){ console.log("[ANL] staty odebrane:", e.message); });
+  // odebrane: liczone w loadHistory (ten sam przebieg po sygnaturach) — brak osobnego skanu
   if(epochSum===0n && basketSum>0n){
     setTxt("xntEpochSub", T("xntBasket"));
   } else {
@@ -1914,17 +1990,34 @@ async function unstakeEarly(i, poolType){
   }
 }
 // --- wyszukanie checkpointu on-chain: najwyższa istniejąca epoka <= end_epoch ---
-async function findCheckpoint(poolType, endEpoch){
-  // skan w dół od end_epoch; pierwszy istniejący xnt_ckpt to właściwy (ostatni funding <= end_epoch)
-  const floor = endEpoch > 400n ? endEpoch - 400n : 0n; // limit bezpieczeństwa skanu
-  for(let e = endEpoch; e >= floor; e--){
-    const eb = new Uint8Array(8); new DataView(eb.buffer).setBigUint64(0, e, true);
-    const ck = pda([enc("xnt_ckpt"), new Uint8Array([poolType]), eb]);
-    const info = await conn.getAccountInfo(ck);
-    if(info) return ck;
-    if(e === 0n) break;
+// Batch: do 100 PDA na jedno getMultipleAccountsInfo (bylo: getAccountInfo per epoka,
+// do 400 zapytan na pozycje). Cache per (pula, epoka) czyszczony przy kazdym loadPositions.
+const _ckptCache = new Map();
+async function findCheckpointInfo(poolType, endEpoch){
+  const key = poolType+":"+endEpoch;
+  if(_ckptCache.has(key)) return _ckptCache.get(key);
+  const floor = endEpoch > 400n ? endEpoch - 400n : 0n; // limit bezpieczenstwa skanu
+  let e = endEpoch, found = null;
+  while(e >= floor){
+    const pks = []; const eps = [];
+    for(let k = 0; k < 100 && e >= floor; k++){
+      const eb = new Uint8Array(8); new DataView(eb.buffer).setBigUint64(0, e, true);
+      pks.push(pda([enc("xnt_ckpt"), new Uint8Array([poolType]), eb])); eps.push(e);
+      if(e === 0n){ e = -1n; break; }
+      e--;
+    }
+    const infos = await conn.getMultipleAccountsInfo(pks);
+    for(let j = 0; j < infos.length; j++){
+      if(infos[j]){ found = {pk:pks[j], data:infos[j].data, epoch:eps[j]}; break; }
+    }
+    if(found) break;
   }
-  return null; // brak fundingu <= end_epoch -> checkpoint niewymagany
+  _ckptCache.set(key, found);
+  return found; // null = brak fundingu <= end_epoch -> checkpoint niewymagany
+}
+async function findCheckpoint(poolType, endEpoch){
+  const f = await findCheckpointInfo(poolType, endEpoch);
+  return f ? f.pk : null;
 }
 
 async function claimPosition(i, poolType){
@@ -2081,7 +2174,12 @@ async function claimCapy(){
 window.anlClaimCapy = claimCapy;
 window.anlClaimWindow = claimGenesisWindow;
 window.anlClaim = claimPosition;
-window.anlRerenderHistory = function(){ if(pubkey){ loadHistory().catch(function(){}); loadClaimedTotals().catch(function(){}); } };
+window.anlRerenderHistory = function(){
+  if(!pubkey) return;
+  // zmiana jezyka: re-render z pamieci, zero zapytan RPC; fallback do loadHistory gdy brak danych
+  if(window.__histRows){ renderHistory(window.__histRows.slice(), window.__histPartial); renderClaimedTotals(window.__histRows); }
+  else loadHistory().catch(function(){});
+};
 window.anlSortPositions = anlSortPositions;
 window.anlUnstake = unstakeEarly;
 
@@ -2206,6 +2304,7 @@ function dappDisconnect(){
   }catch(_){}
   pubkey=null; walletAdapter=null;
   try{ localStorage.removeItem("anlWallet"); }catch(_){}
+  try{ window.dispatchEvent(new CustomEvent("anl:wallet",{detail:{connected:false}})); }catch(_){}
   $("availAnl").textContent="";
   const cta=document.querySelector("nav .btn-gold"); if(cta) cta.style.display="";
   $("btnStake").disabled=true; $("btnRefresh").disabled=true;
@@ -2215,6 +2314,9 @@ function dappDisconnect(){
   const d=$("status"); if(d) d.innerHTML="";
 }
 $("btnConnect").onclick = ()=> pubkey ? dappDisconnect() : connect();
+// Jeden system portfela: naglowek (i inne skrypty) uzywaja tego API + zdarzen anl:wallet
+window.anlWallet = { connect: function(){ return connect(); }, disconnect: function(){ return dappDisconnect(); },
+  pubkey: function(){ return pubkey ? pubkey.toBase58() : null; } };
 try{ const nv=document.querySelector("nav .nav-in"); if(nv) nv.appendChild($("btnConnect")); }catch(_){}
 $("dpCancel").onclick=()=>$("dpModal").classList.remove("open");
 $("btnStake").onclick = stake;
@@ -2243,7 +2345,8 @@ const DPT = {
      xntPending:"do rozdzielenia", xntDaily:"XNT/dzień (szac.)", avail:"dostępne: ",
      lockedG:"do końca okresu", lockedGT:"Pozycje Genesis są zablokowane do końca zadeklarowanego okresu — bez opcji zerwania (WP v1.1).",
      errGas:"Nie udało się wysłać transakcji. Sprawdź, czy masz XNT na opłaty sieciowe w portfelu.", errRejected:"Transakcja odrzucona w portfelu.", errNetwork:"Problem z siecią — spróbuj ponownie za chwilę.", errGeneric:"Nie udało się zrealizować operacji. Spróbuj ponownie.", unstakeConfirm:"Zerwać pozycję przed czasem? Kapitał wróci od razu w całości, ale WSZYSTKIE nagrody (ANL, XNT i CAPY) bezpowrotnie przepadną.",
-     dayW:"dzień", winW:"okna 31/91 dni"},
+     dayW:"dzień", winW:"okna 31/91 dni",
+     refreshing:"Odświeżam…", rpcBusy:"RPC przeciążone (429) — pokazuję dane częściowe, spróbuj za chwilę.", rpcPartial:"historia częściowa — limit RPC"},
  en:{noWallet:"No wallet detected. Install Phantom, Backpack or X1 Wallet and refresh the page.",
      rejected:"Connection rejected: ", connected:"Connected: ",
      noPos:"No positions yet — open your first one above.", noPos2:"No positions.",
@@ -2258,7 +2361,8 @@ const DPT = {
      xntPending:"pending split", xntDaily:"XNT/day (est.)", avail:"available: ",
      lockedG:"until period end", lockedGT:"Genesis positions are locked until the end of the declared period — no early exit (WP v1.1).",
      errGas:"Could not send the transaction. Check that you have XNT for network fees in your wallet.", errRejected:"Transaction rejected in the wallet.", errNetwork:"Network issue — please try again in a moment.", errGeneric:"Could not complete the operation. Please try again.", unstakeConfirm:"Break this position early? Principal returns immediately in full, but ALL rewards (ANL and XNT) are forfeited forever.",
-     dayW:"day", winW:"windows 31/91 days"}
+     dayW:"day", winW:"windows 31/91 days",
+     refreshing:"Refreshing…", rpcBusy:"RPC rate-limited (429) — showing partial data, try again shortly.", rpcPartial:"partial history — RPC limit"}
 };
 let DPL = (window.anlCurrentLang && window.anlCurrentLang()==="pl")?"pl":"en";
 const T = (k)=>{
@@ -2286,8 +2390,13 @@ try{ var av=document.getElementById("availAnl"); if(av && !av.textContent) av.te
   const set=(id,txt)=>{const e=document.getElementById(id); if(e) e.textContent=txt;};
   const fmtBig=(n)=>{ n=Number(n); if(n>=1e6) return (n/1e6).toLocaleString("pl-PL",{maximumFractionDigits:2})+"M";
     return n.toLocaleString("pl-PL"); };
-  async function tok(a){ try{ const b=await conn.getTokenAccountBalance(new PublicKey(a));
-      return Math.floor(b.value.uiAmount);}catch(e){return null;} }
+  // 1 zapytanie na 4 skarbce + global_config (bylo: 4x getTokenAccountBalance + 4x getAccountInfo)
+  let _acc = [null,null,null,null,null];
+  try{ _acc = await conn.getMultipleAccountsInfo([principalVault, rewardVault, xntVault, capyVault, globalConfig]); }catch(e){ console.log("[ANL] staty:", e.message); }
+  const _gcInfo = _acc[4];
+  const _vaultIdx = {}; _vaultIdx[principalVault.toBase58()]=0; _vaultIdx[rewardVault.toBase58()]=1; _vaultIdx[xntVault.toBase58()]=2; _vaultIdx[capyVault.toBase58()]=3;
+  async function tok(a){ try{ const info=_acc[_vaultIdx[a]]; if(!info || info.data.length<72) return null;
+      return Number(new DataView(info.data.buffer, info.data.byteOffset).getBigUint64(64,true)/1_000_000_000n);}catch(e){return null;} }
   const tvl = await tok(principalVault.toBase58());
   if(tvl!==null) set("stTvl", Number(tvl).toLocaleString("pl-PL")+" ANL");
   const poolBal = await tok(rewardVault.toBase58()); // saldo reward_vault = ZOSTALO
@@ -2299,11 +2408,11 @@ try{ var av=document.getElementById("availAnl"); if(av && !av.textContent) av.te
       // zostalo = saldo reward_vault (maleje przy wyplatach)
       let left = (typeof poolBal!=="undefined" && poolBal!=null) ? poolBal : null;
       if(left===null){
-        try{ const ra=await conn.getAccountInfo(pda([enc("reward_vault")])); if(ra) left=Number(ra.data.readBigUInt64LE(64))/1e9; }catch(_){}
+        try{ const ra=_acc[1]; if(ra) left=Number(ra.data.readBigUInt64LE(64))/1e9; }catch(_){}
       }
       // zablokowane = anl_reward_reserved z global_config @114
       let reserved=null;
-      try{ const gcA=await conn.getAccountInfo(pda([enc("global_config")])); if(gcA) reserved=Number(gcA.data.readBigUInt64LE(114))/1e9; }catch(_){}
+      try{ const gcA=_gcInfo; if(gcA) reserved=Number(gcA.data.readBigUInt64LE(114))/1e9; }catch(_){}
       const fmt=(n)=> n>=1e6 ? (n/1e6).toLocaleString(isPL?"pl-PL":"en-US",{maximumFractionDigits:2})+"M" : Math.round(n).toLocaleString(isPL?"pl-PL":"en-US");
       const el=document.getElementById("stPoolSub");
       if(el){
@@ -2325,7 +2434,7 @@ try{ var av=document.getElementById("availAnl"); if(av && !av.textContent) av.te
       const sub = document.getElementById("stXntSub");
       let _totalF = 0n;
       try {
-        const _cfgV = await conn.getAccountInfo(globalConfig);
+        const _cfgV = _gcInfo;
         if(_cfgV && _cfgV.data.length >= 164) _totalF = _cfgV.data.readBigUInt64LE(156);
       } catch(_){}
       const _totalXnt = _fmtX(Number(_totalF)/1e9);
@@ -2343,7 +2452,7 @@ try{ var av=document.getElementById("availAnl"); if(av && !av.textContent) av.te
   }catch(e){}
   try{ const cvBal = await tok(capyVault.toBase58());
     if(cvBal!==null) set("stCapy", _fmtX(cvBal)+" CAPY"); }catch(e){}
-  try{ const cfg = await conn.getAccountInfo(globalConfig);
+  try{ const cfg = _gcInfo;
     if(cfg){ const gts = Number(new DataView(cfg.data.buffer,cfg.data.byteOffset).getBigInt64(106,true));
       lastDay = Math.max(0, Math.floor((Date.now()/1000-gts)/86400));
       const apy = lastDay<31?20: lastDay<91?15: 8;
