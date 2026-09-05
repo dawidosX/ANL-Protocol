@@ -10,6 +10,15 @@ if [ -n "$(git status --porcelain)" ]; then
 fi
 FEATURES="network-testnet,test-periods"
 BIN=target/deploy/anl_staking.so
+# R7.2 (B): ostrzezenie (nie blad - build tworzy nowy manifest), gdy poprzedni manifest
+# nie odpowiada juz HEAD lub binarce: sygnal, ze kod zmienil sie od ostatniego buildu/deployu.
+if [ -f release-manifest-testnet.txt ]; then
+  mf() { sed -n "s/^$1: //p" release-manifest-testnet.txt | head -1; }
+  [ "$(mf src_tree)"  = "$(git rev-parse HEAD:programs/anl_staking/src)" ] || echo "UWAGA: src_tree w poprzednim manifescie ($(mf src_tree)) != HEAD ($(git rev-parse HEAD:programs/anl_staking/src)) - kod on-chain zmienil sie od ostatniego buildu"
+  [ "$(mf code_tree)" = "$(git rev-parse HEAD:programs)" ] || echo "UWAGA: code_tree w poprzednim manifescie != HEAD"
+  [ "$(mf math_tree)" = "$(git rev-parse HEAD:crates/anl-math)" ] || echo "UWAGA: math_tree w poprzednim manifescie != HEAD"
+  if [ -f "$BIN" ]; then [ "$(mf sha256)" = "$(sha256sum "$BIN" | cut -d' ' -f1)" ] || echo "UWAGA: sha256 w poprzednim manifescie != obecna binarka w target/deploy"; fi
+fi
 rm -f "$BIN"   # runda #4: zero ryzyka starego artefaktu
 anchor build --no-idl -- --features "$FEATURES"
 test -s "$BIN" || { echo "BLAD: brak binarki po buildzie." >&2; exit 1; }
