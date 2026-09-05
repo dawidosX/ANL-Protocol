@@ -1,8 +1,12 @@
 release: testnet
-date: 2026-09-05T13:16:25Z
-head: 814e16b6087d942bea4bde9de4fbeec47591bcad
+date: 2026-09-05T13:31:15Z
+head: bda077ce441897b1398dff8398f6cb6bbfcc6f64
+code_tree: 7e04b873a4de2e195d26b3e53ae7a5c972246db0
+math_tree: 6fb61151f3e10b0a5d68249a941721500b34a5b3
 features: network-testnet,test-periods
 sha256: 332553d4236f3c75949980aeba5d9fcec1a08fafed69d9dba2adf4857cbd8b37
-rustc: rustc 1.97.1 (8bab26f4f 2026-07-14)
+rustc_host: rustc 1.97.1 (8bab26f4f 2026-07-14)
+build_sbf: solana-cargo-build-sbf 1.18.17 platform-tools v1.41 rustc 1.75.0 
 deployed_slot: 185887287
 deploy_date_utc: 2026-09-05T13:22:02Z
+deploy_note: binarka wdrozona z head 814e16b (src_tree b463b06909d405971af73050343c850f9cf423c4 identyczne z HEAD); rebuild na HEAD daje ten sam sha256 - deploy bez zmian
