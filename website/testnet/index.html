@@ -1650,7 +1650,7 @@ async function loadHistory(){
   tb.innerHTML = rows.map(function(r,i){
     const d = new Date(r.ts*1000).toLocaleDateString((function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl"?"pl-PL":"en-US";}catch(e){return "en-US";}})(),{dateStyle:"short"});
     const _pl = (function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl";}catch(e){return false;}})();
-    const typ = r.kind==="window" ? (_pl?"okno":"window") : (_pl?"końcowy":"final");
+    const typ = r.kind==="window" ? "XNT Claim" : (_pl?"Odbiór":"Claim");
     const prc = r.kind==="window" ? "—" : fmtAnl(r.principal)+" ANL";
     const anlC = r.kind==="window" ? "—" : fmtAnl(r.anl)+" ANL";
     return "<tr><td>"+(i+1)+"</td>"+
