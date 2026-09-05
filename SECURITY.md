@@ -1,61 +1,64 @@
 # Security & Bug Bounty — ANL Staking Protocol (X1 testnet)
 
-**Status kodu:** audit-freeze `v1.0-testnet-freeze` — `src_tree 4c2256398137bb417a1b769316137852d14ec4d5`, program `4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM`, binarka `87b431d4…30a3`, slot 185899744.
-**Audyty:** 7 rund (2026-08/09), czterech niezależnych audytorów — raporty w `docs/audits/`. Trzy potwierdzenia freeze (9 / 9 / 9,3 z 10).
+[PL](SECURITY.pl.md) | **EN**
 
-Nagradzamy znalezienie błędów w **zamrożonym kodzie**, który stanie się bazą mainnetu. Kto znajdzie coś teraz — pomaga naprawić, zanim będzie na to za późno.
+**Code status:** audit-freeze `v1.0-testnet-freeze` — `src_tree 4c2256398137bb417a1b769316137852d14ec4d5`, program `4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM`, binary `87b431d4…30a3`, slot 185899744.
+**Audits:** 7 rounds (2026-08/09), four independent auditors — reports in `docs/audits/`. Three freeze confirmations (9 / 9 / 9.3 out of 10).
+
+We reward bugs found in the **frozen code** that will become the mainnet base. Whoever finds something now helps fix it before it is too late.
 
 ---
 
-## 1. Nagrody
+## 1. Rewards
 
-| Waga | Nagroda | Co się kwalifikuje |
+| Severity | Reward | What qualifies |
 |---|---|---|
-| **Critical** | **1 000 000 ANL** | wyprowadzenie tokenów z któregokolwiek skarbca (principal / reward / XNT / CAPY) bez uprawnienia; wypłata ponad należność; podwójny claim; przejęcie lub nadpisanie cudzej pozycji; przejęcie `authority` |
-| **High** | 250 000 ANL | trwała blokada środków użytkownika lub całego stakingu bez użycia klucza authority (liveness); obejście pinu `initialize`, limitu 200M, cooldownu lub blokady Genesis |
-| **Medium** | 50 000 ANL | zaniżenie/zawyżenie należności zależne od kolejności transakcji; nowy wektor griefingu z realnym kosztem dla innych użytkowników; desynchronizacja księgi (rezerwacje, indeksy, checkpointy) |
-| **Low** | 10 000 ANL | inne błędy z realnym, odtwarzalnym skutkiem on-chain (w tym niespójne kody błędów, martwe ścieżki umożliwiające nadużycie) |
+| **Critical** | **1,000,000 ANL** | draining tokens from any vault (principal / reward / XNT / CAPY) without authorization; payout above entitlement; double claim; taking over or overwriting another user's position; taking over `authority` |
+| **High** | 250,000 ANL | permanent lock of a user's funds or of the whole staking without the authority key (liveness); bypass of the `initialize` pin, the 200M cap, the cooldown or the Genesis lock |
+| **Medium** | 50,000 ANL | under- or over-payment that depends on transaction ordering; a new griefing vector with real cost to other users; ledger desynchronisation (reservations, indexes, checkpoints) |
+| **Low** | 10,000 ANL | other bugs with a real, reproducible on-chain effect (including inconsistent error codes, dead paths enabling abuse) |
 
-Wagę ustala zespół wspólnie z jednym z niezależnych audytorów protokołu. Pierwsze poprawne zgłoszenie danego błędu otrzymuje nagrodę; duplikaty nie. Wypłata po naprawie i re-audycie (nie po zgłoszeniu).
+Severity is set by the team together with one of the protocol's independent auditors. The first valid report of a given bug receives the reward; duplicates do not. Payout after the fix and re-audit (not upon report).
 
-## 2. Zakres
+## 2. Scope
 
-**W zakresie:** program `anl_staking` na X1 testnet (`programs/anl_staking/`, `crates/anl-math/`) na `src_tree 4c225639…`. Kod źródłowy, testy i harness: to repozytorium (`programs/anl_staking/tests/integration.rs`, `Env`).
+**In scope:** the `anl_staking` program on X1 testnet (`programs/anl_staking/`, `crates/anl-math/`) at `src_tree 4c225639…`. Source code, tests and harness: this repository (`programs/anl_staking/tests/integration.rs`, `Env`).
 
-**Poza zakresem:** frontend `website/`, publiczny RPC X1 (limity, dostępność), infrastruktura hostingu, klucze i procedury operacyjne (jeden hot key na testnecie jest znany — F-02), tokeny ANL/XNT/CAPY same w sobie, inżynieria społeczna.
+**Out of scope:** the `website/` frontend, the public X1 RPC (limits, availability), hosting infrastructure, keys and operational procedures (the single hot key on testnet is known — F-02), the ANL/XNT/CAPY tokens themselves, social engineering.
 
-## 3. Znane i świadomie zaakceptowane (NIE kwalifikują się)
+## 3. Known and consciously accepted (do NOT qualify)
 
-Udokumentowane w `docs/CHANGES-AFTER-ROUND{4,5,6,7}.md` i raportach audytu:
+Documented in `docs/CHANGES-AFTER-ROUND{4,5,6,7}.md` and the audit reports:
 
-- okna Genesis (`claim_genesis_window`) bez rolla doby — samokorekta w kolejnym oknie / finalnym claim
-- dust z zaokrągleń (floor) pozostający w skarbcach; brak instrukcji `sweep`
-- udział pozycji wygasłej (orphan) rozdzielany stakerom żywym **w chwili** `settle_expired` — zależność od momentu rozliczenia jest inherentna (SLA bota)
-- pusta pula ⇒ 100% fundingu XNT dla drugiej puli (M-03)
-- pozycje sprzed 4.09.2026 ze starą formułą `end_epoch` (grandfathering, tylko testnet)
-- pauza dotyczy wyłącznie `stake` (design: wyjście zawsze działa)
-- wejście w środku doby zalicza tę dobę, wyjście w środku doby jej nie zalicza (pozycja na N dni = dokładnie N koszyków)
-- Genesis do 3650 dni w oknie 1 rezerwuje do 200% kapitału (kapitał realnie zablokowany)
-- brak `sweep` nadmiaru ANL ponad 200M w reward vault (operacyjne)
-- `DayNotClosed` — martwy wariant błędu (stabilność kodów)
-- advisory RustSec dopuszczone w `.cargo/audit.toml` z uzasadnieniem (dev-deps / host, poza artefaktem SBF)
+- Genesis windows (`claim_genesis_window`) without a day roll — self-correcting in the next window / final claim
+- rounding dust (floor) left in the vaults; no `sweep` instruction
+- the expired position's share (orphan) is distributed to stakers alive **at the moment of** `settle_expired` — the dependence on settlement timing is inherent (bot SLA)
+- empty pool ⇒ 100% of the XNT funding goes to the other pool (M-03)
+- positions opened before 2026-09-04 with the old `end_epoch` formula (grandfathering, testnet only)
+- pause applies only to `stake` (design: exit always works)
+- entering mid-day counts that day, exiting mid-day does not (a position for N days = exactly N baskets)
+- Genesis up to 3650 days in window 1 reserves up to 200% of principal (capital is genuinely locked)
+- no `sweep` of ANL in excess of 200M in the reward vault (operational)
+- `DayNotClosed` — dead error variant (error-code stability)
+- RustSec advisories allowed in `.cargo/audit.toml` with justification (dev-deps / host, outside the SBF artifact)
 
-Jeśli uważasz, że któryś z powyższych jest jednak **exploitowalny** (np. daje kradzież lub trwałą blokadę) — zgłoś z sekwencją; wtedy się kwalifikuje.
+If you believe one of the above is nevertheless **exploitable** (e.g. yields theft or a permanent lock) — report it with the sequence; then it qualifies.
 
-## 4. Wymagany dowód
+## 4. Required proof
 
-Zgłoszenie musi zawierać **odtwarzalny PoC**: test w harnessie `Env` (preferowane — `cargo test -p anl_staking --features test-periods --test integration`) **albo** sekwencję transakcji na X1 testnet z sygnaturami. Opis: co robi napastnik, jaki jest skutek finansowy (ile, z którego skarbca, czyje środki), jakie założenia. "Wydaje mi się, że…" bez reprodukcji nie kwalifikuje się.
+A report must contain a **reproducible PoC**: a test in the `Env` harness (preferred — `cargo test -p anl_staking --features test-periods --test integration`) **or** a sequence of transactions on X1 testnet with signatures. Describe: what the attacker does, the financial effect (how much, from which vault, whose funds), the assumptions. "I think that…" without a reproduction does not qualify.
 
-## 5. Zasady odpowiedzialnego ujawniania
+## 5. Responsible disclosure rules
 
-- Zgłoszenie **prywatnie**: `security@anl-protocol.com` (lub Telegram: @… — wpisać). Nie publikuj przed naprawą.
-- Odpowiadamy w 72 h; ocena wagi do 7 dni; naprawa i re-audyt do 30 dni; ujawnienie publiczne po naprawie, nie później niż 90 dni od zgłoszenia — z podziękowaniem (za zgodą).
-- Nie testuj na cudzych pozycjach ani środkach na testnecie inaczej niż w sposób, który nie powoduje trwałej szkody; nie DoS-uj publicznego RPC.
-- Nagroda w ANL, wypłata na adres zgłaszającego po naprawie. Możliwa wypłata równowartości w XNT — do ustalenia przy zgłoszeniu.
+- Report **privately only**: a direct message (DM) to the admin of the Telegram group **https://t.me/ANLprotocol** (join the group, message the admin privately).
+- **Do not post the bug in the group or publicly before the fix — a report posted in the group is treated as disclosure and does not qualify for a reward.**
+- We respond within 72 h; severity assessment within 7 days; fix and re-audit within 30 days; public disclosure after the fix, no later than 90 days from the report — with credit (upon consent).
+- Do not test on other users' positions or funds on testnet in any way that causes lasting harm; do not DoS the public RPC.
+- Reward in ANL, paid to the reporter's address after the fix. Payout of the equivalent in XNT is possible — to be agreed at report time.
 
-## 6. Ogłoszenie (do strony / X / Discord X1)
+## 6. Announcement (for the website / X: https://x.com/ANLProtocol / X1 Discord)
 
-> **ANL Staking Protocol — bug bounty do 1 000 000 ANL.** Kod stakingu na X1 testnet przeszedł 7 rund audytu i został zamrożony (`src_tree 4c225639…`). Zanim trafi na mainnet, płacimy za znalezienie w nim błędów: Critical 1 000 000 ANL · High 250 000 · Medium 50 000 · Low 10 000. Zakres, wykluczenia i zasady: `SECURITY.md` w repo `github.com/dawidosX/ANL-Protocol`. Zgłoszenia prywatnie: security@anl-protocol.com. PoC jako test w naszym harnessie mile widziany.
+> **ANL Staking Protocol — bug bounty up to 1,000,000 ANL.** The staking code on X1 testnet has passed 7 audit rounds and is frozen (`src_tree 4c225639…`). Before it reaches mainnet, we pay for finding bugs in it: Critical 1,000,000 ANL · High 250,000 · Medium 50,000 · Low 10,000. Scope, exclusions and rules: `SECURITY.md` (PL: `SECURITY.pl.md`) in the repo `github.com/dawidosX/ANL-Protocol`. Reports **only by direct message (DM) to the admin of the Telegram group https://t.me/ANLprotocol** — a post in the group or in public before the fix = disclosure, no reward. A PoC as a test in our harness is welcome.
 
 ---
-*Wersja 1.0 — 2026-09-05. Zmiany zakresu/nagród ogłaszane w tym pliku z datą.*
+*Version 1.2 — 2026-09-05 (contact: Telegram DM, group link; Polish version in `SECURITY.pl.md`). Changes to scope/rewards are announced in this file with a date.*
