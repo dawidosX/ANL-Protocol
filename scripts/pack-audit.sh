@@ -24,7 +24,7 @@ ZIP="$HOME/Downloads/ANL-Protocol-audyt-${TAG}-${HEAD}.zip"; MAN="${ZIP%.zip}.ma
 rm -f "$ZIP" "$MAN"
 zip -r -q "$ZIP" programs/anl_staking/src programs/anl_staking/tests programs/anl_staking/Cargo.toml \
   crates/anl-math docs/AUDIT-BRIEF-round5.md docs/CHANGES-AFTER-ROUND4.md docs/CHANGES-AFTER-ROUND5.md \
-  docs/CHANGES-AFTER-ROUND6.md docs/CHANGES-AFTER-ROUND7.md docs/AUDIT-BRIEF-round7.md \
+  docs/CHANGES-AFTER-ROUND6.md docs/CHANGES-AFTER-ROUND7.md docs/AUDIT-BRIEF-round7.md docs/AUDIT-NOTE-round7.2.md \
   docs/audits docs/TEST-LOG.txt docs/TEST-LOG.sha256 docs/ops deny.toml .cargo/audit.toml \
   scripts/audyt-naliczen.js scripts/diagnoza-user2.js scripts/audit-evidence.sh scripts/build-testnet.sh scripts/pack-audit.sh \
   release-manifest-testnet.txt Cargo.toml Cargo.lock Anchor.toml README.md .github/workflows/ci.yml \
