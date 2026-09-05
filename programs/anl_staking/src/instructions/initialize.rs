@@ -66,9 +66,10 @@ pub fn initialize_handler(
         EXPECTED_XNT_MINT,
         AnlError::InvalidXntMint
     );
-    // AUDYT R6 (I-01): inicjalizator przypięty w buildach produkcyjnych —
-    // koniec z first-come authority po deployu.
-    #[cfg(not(feature = "test-periods"))]
+    // AUDYT R6 (I-01): inicjalizator przypięty w buildach SIECIOWYCH
+    // (network-testnet / network-mainnet) — koniec z first-come authority po
+    // deployu. Testy (bez feature sieci) używają kluczy lokalnych.
+    #[cfg(any(feature = "network-mainnet", feature = "network-testnet"))]
     require_keys_eq!(
         ctx.accounts.authority.key(),
         EXPECTED_INIT_AUTHORITY,
