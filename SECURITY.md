@@ -48,14 +48,15 @@ Zgłoszenie musi zawierać **odtwarzalny PoC**: test w harnessie `Env` (preferow
 
 ## 5. Zasady odpowiedzialnego ujawniania
 
-- Zgłoszenie **prywatnie**: `security@anl-protocol.com` (lub Telegram: @… — wpisać). Nie publikuj przed naprawą.
+- Zgłoszenie **wyłącznie prywatnie**: wiadomość prywatna (DM) do admina grupy Telegram **[LINK DO GRUPY / @ADMINA]**.
+- **Nie publikuj błędu na grupie ani publicznie przed naprawą — zgłoszenie na grupie traktujemy jak ujawnienie i nie kwalifikuje się do nagrody.**
 - Odpowiadamy w 72 h; ocena wagi do 7 dni; naprawa i re-audyt do 30 dni; ujawnienie publiczne po naprawie, nie później niż 90 dni od zgłoszenia — z podziękowaniem (za zgodą).
 - Nie testuj na cudzych pozycjach ani środkach na testnecie inaczej niż w sposób, który nie powoduje trwałej szkody; nie DoS-uj publicznego RPC.
 - Nagroda w ANL, wypłata na adres zgłaszającego po naprawie. Możliwa wypłata równowartości w XNT — do ustalenia przy zgłoszeniu.
 
 ## 6. Ogłoszenie (do strony / X / Discord X1)
 
-> **ANL Staking Protocol — bug bounty do 1 000 000 ANL.** Kod stakingu na X1 testnet przeszedł 7 rund audytu i został zamrożony (`src_tree 4c225639…`). Zanim trafi na mainnet, płacimy za znalezienie w nim błędów: Critical 1 000 000 ANL · High 250 000 · Medium 50 000 · Low 10 000. Zakres, wykluczenia i zasady: `SECURITY.md` w repo `github.com/dawidosX/ANL-Protocol`. Zgłoszenia prywatnie: security@anl-protocol.com. PoC jako test w naszym harnessie mile widziany.
+> **ANL Staking Protocol — bug bounty do 1 000 000 ANL.** Kod stakingu na X1 testnet przeszedł 7 rund audytu i został zamrożony (`src_tree 4c225639…`). Zanim trafi na mainnet, płacimy za znalezienie w nim błędów: Critical 1 000 000 ANL · High 250 000 · Medium 50 000 · Low 10 000. Zakres, wykluczenia i zasady: `SECURITY.md` w repo `github.com/dawidosX/ANL-Protocol`. Zgłoszenia **tylko w wiadomości prywatnej (DM) do admina grupy Telegram [LINK DO GRUPY / @ADMINA]** — post na grupie lub publicznie przed naprawą = ujawnienie, bez nagrody. PoC jako test w naszym harnessie mile widziany.
 
 ---
-*Wersja 1.0 — 2026-09-05. Zmiany zakresu/nagród ogłaszane w tym pliku z datą.*
+*Wersja 1.1 — 2026-09-05 (kontakt: DM Telegram zamiast e-mail). Zmiany zakresu/nagród ogłaszane w tym pliku z datą.*

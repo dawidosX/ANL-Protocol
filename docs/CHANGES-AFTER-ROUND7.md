@@ -77,6 +77,19 @@ Wniosek: z 31 advisories w `Cargo.lock` **dwa** dotyczą crate'ów kompilowanych
 oba bez znanej podatności wykorzystywalnej przez nasz kod. Cel „pusta lista" wymaga upgrade'u stosu Solana/Anchor
 (otwarte, przed immutable mainnet). Listy `audit.toml`/`deny.toml` zsynchronizowane (9 podatności + informacyjne).
 
+### 2.3b Dependabot (npm) — 2 nowe alerty po dodaniu `scripts/package-lock.json` do repo (R7.1)
+Od R7.1 lockfile npm narzędzi operacyjnych jest śledzony, więc Dependabot skanuje także `scripts/`. Oba alerty dotyczą
+zależności przechodnich `@solana/web3.js@1.98.x` → `jayson` (klient JSON-RPC); **żaden nie dotyczy programu on-chain**
+(`programs/`, `crates/`) ani frontendu (`website/` ładuje web3.js z CDN, bez `jayson`/`stream-json`).
+
+| Advisory | Pakiet | Waga | Ścieżka | Dotyka | Ocena / plan |
+|---|---|---|---|---|---|
+| GHSA-528h-pc64-c93x | `stream-json` ≤ 3.4.0 | moderate (DoS: filtry O(depth²) na zagnieżdżonym JSON) | `@solana/web3.js` → `jayson` → `stream-json` | tylko `scripts/*.js` (audyt-naliczen, diagnoza-user2, **fund-xnt** = bot operatora) | złośliwy/skompromitowany RPC mógłby zablokować pętlę zdarzeń bota (liveness `fund_xnt`), nie środki; mitigacja: własny/zaufany RPC (`RPC_URL`), bot pod supervisorem z restartem; upgrade po wydaniu `jayson` z poprawką (`npm audit fix --force` proponuje web3.js 0.0.3 — nie stosować) |
+| GHSA-w5hq-g745-h8pq | `uuid` < 11.1.1 | moderate (brak kontroli granic bufora w v3/v5/v6 przy `buf`) | `@solana/web3.js` → `jayson` → `uuid` | jw. | `jayson` używa `uuid` do id żądań (v4, bez `buf`) — ścieżka podatna nieosiągalna w naszym użyciu; upgrade razem z `jayson` |
+
+`cargo audit` (RustSec, baza 1239 advisories) bez nowych pozycji względem `deny.toml`/`.cargo/audit.toml`. Do backlogu:
+`npm audit --prefix scripts` jako krok informacyjny w `audit-evidence.sh` (nie fail-closed — narzędzia, nie artefakt).
+
 ### 2.4 Provenance — hash drzewa zamiast commita
 Zarzut „6 różnych commitów w jednej rundzie" (Kimi R6, C P-01) wynika z commitów **docs/manifestów** między buildem,
 evidence i deployem. Od R7 skrypty zapisują `code_tree = git rev-parse HEAD:programs` i
