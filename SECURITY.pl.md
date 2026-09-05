@@ -50,15 +50,15 @@ Zgłoszenie musi zawierać **odtwarzalny PoC**: test w harnessie `Env` (preferow
 
 ## 5. Zasady odpowiedzialnego ujawniania
 
-- Zgłoszenie **wyłącznie prywatnie**: wiadomość prywatna (DM) do admina grupy Telegram **https://t.me/analtena** (wejdź do grupy, napisz do admina prywatnie).
+- Zgłoszenie **wyłącznie prywatnie**: wiadomość prywatna (DM) do admina grupy Telegram **https://t.me/ANLprotocol** (wejdź do grupy, napisz do admina prywatnie).
 - **Nie publikuj błędu na grupie ani publicznie przed naprawą — zgłoszenie na grupie traktujemy jak ujawnienie i nie kwalifikuje się do nagrody.**
 - Odpowiadamy w 72 h; ocena wagi do 7 dni; naprawa i re-audyt do 30 dni; ujawnienie publiczne po naprawie, nie później niż 90 dni od zgłoszenia — z podziękowaniem (za zgodą).
 - Nie testuj na cudzych pozycjach ani środkach na testnecie inaczej niż w sposób, który nie powoduje trwałej szkody; nie DoS-uj publicznego RPC.
 - Nagroda w ANL, wypłata na adres zgłaszającego po naprawie. Możliwa wypłata równowartości w XNT — do ustalenia przy zgłoszeniu.
 
-## 6. Ogłoszenie (do strony / X / Discord X1)
+## 6. Ogłoszenie (do strony / X: https://x.com/ANLProtocol / Discord X1)
 
-> **ANL Staking Protocol — bug bounty do 1 000 000 ANL.** Kod stakingu na X1 testnet przeszedł 7 rund audytu i został zamrożony (`src_tree 4c225639…`). Zanim trafi na mainnet, płacimy za znalezienie w nim błędów: Critical 1 000 000 ANL · High 250 000 · Medium 50 000 · Low 10 000. Zakres, wykluczenia i zasady: `SECURITY.pl.md` (EN: `SECURITY.md`) w repo `github.com/dawidosX/ANL-Protocol`. Zgłoszenia **tylko w wiadomości prywatnej (DM) do admina grupy Telegram https://t.me/analtena** — post na grupie lub publicznie przed naprawą = ujawnienie, bez nagrody. PoC jako test w naszym harnessie mile widziany.
+> **ANL Staking Protocol — bug bounty do 1 000 000 ANL.** Kod stakingu na X1 testnet przeszedł 7 rund audytu i został zamrożony (`src_tree 4c225639…`). Zanim trafi na mainnet, płacimy za znalezienie w nim błędów: Critical 1 000 000 ANL · High 250 000 · Medium 50 000 · Low 10 000. Zakres, wykluczenia i zasady: `SECURITY.pl.md` (EN: `SECURITY.md`) w repo `github.com/dawidosX/ANL-Protocol`. Zgłoszenia **tylko w wiadomości prywatnej (DM) do admina grupy Telegram https://t.me/ANLprotocol** — post na grupie lub publicznie przed naprawą = ujawnienie, bez nagrody. PoC jako test w naszym harnessie mile widziany.
 
 ---
 *Wersja 1.2 — 2026-09-05 (kontakt: DM Telegram, link grupy; wersja EN w `SECURITY.md`). Zmiany zakresu/nagród ogłaszane w tym pliku z datą.*

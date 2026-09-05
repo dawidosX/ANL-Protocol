@@ -50,15 +50,15 @@ A report must contain a **reproducible PoC**: a test in the `Env` harness (prefe
 
 ## 5. Responsible disclosure rules
 
-- Report **privately only**: a direct message (DM) to the admin of the Telegram group **https://t.me/analtena** (join the group, message the admin privately).
+- Report **privately only**: a direct message (DM) to the admin of the Telegram group **https://t.me/ANLprotocol** (join the group, message the admin privately).
 - **Do not post the bug in the group or publicly before the fix — a report posted in the group is treated as disclosure and does not qualify for a reward.**
 - We respond within 72 h; severity assessment within 7 days; fix and re-audit within 30 days; public disclosure after the fix, no later than 90 days from the report — with credit (upon consent).
 - Do not test on other users' positions or funds on testnet in any way that causes lasting harm; do not DoS the public RPC.
 - Reward in ANL, paid to the reporter's address after the fix. Payout of the equivalent in XNT is possible — to be agreed at report time.
 
-## 6. Announcement (for the website / X / X1 Discord)
+## 6. Announcement (for the website / X: https://x.com/ANLProtocol / X1 Discord)
 
-> **ANL Staking Protocol — bug bounty up to 1,000,000 ANL.** The staking code on X1 testnet has passed 7 audit rounds and is frozen (`src_tree 4c225639…`). Before it reaches mainnet, we pay for finding bugs in it: Critical 1,000,000 ANL · High 250,000 · Medium 50,000 · Low 10,000. Scope, exclusions and rules: `SECURITY.md` (PL: `SECURITY.pl.md`) in the repo `github.com/dawidosX/ANL-Protocol`. Reports **only by direct message (DM) to the admin of the Telegram group https://t.me/analtena** — a post in the group or in public before the fix = disclosure, no reward. A PoC as a test in our harness is welcome.
+> **ANL Staking Protocol — bug bounty up to 1,000,000 ANL.** The staking code on X1 testnet has passed 7 audit rounds and is frozen (`src_tree 4c225639…`). Before it reaches mainnet, we pay for finding bugs in it: Critical 1,000,000 ANL · High 250,000 · Medium 50,000 · Low 10,000. Scope, exclusions and rules: `SECURITY.md` (PL: `SECURITY.pl.md`) in the repo `github.com/dawidosX/ANL-Protocol`. Reports **only by direct message (DM) to the admin of the Telegram group https://t.me/ANLprotocol** — a post in the group or in public before the fix = disclosure, no reward. A PoC as a test in our harness is welcome.
 
 ---
 *Version 1.2 — 2026-09-05 (contact: Telegram DM, group link; Polish version in `SECURITY.pl.md`). Changes to scope/rewards are announced in this file with a date.*
