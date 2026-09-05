@@ -20,6 +20,8 @@ test -s "$BIN" || { echo "BLAD: brak binarki po buildzie." >&2; exit 1; }
   # R7: hash drzewa kodu (niezalezny od commitow docs) — to on odpowiada sha binarki
   echo "code_tree: $(git rev-parse HEAD:programs)"
   echo "math_tree: $(git rev-parse HEAD:crates/anl-math)"
+  # R7.1: src_tree = wylacznie kod on-chain (bez testow) - identyfikuje binarke
+  echo "src_tree: $(git rev-parse HEAD:programs/anl_staking/src)"
   echo "features: $FEATURES"
   echo "sha256: $(sha256sum "$BIN" | cut -d' ' -f1)"
   echo "rustc_host: $(rustc --version)"

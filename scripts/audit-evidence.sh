@@ -58,6 +58,7 @@ expect_fail() {
   # audytorzy porownuja code_tree/math_tree, nie commit.
   echo "code_tree: $(git rev-parse HEAD:programs)"
   echo "math_tree: $(git rev-parse HEAD:crates/anl-math)"
+  echo "src_tree: $(git rev-parse HEAD:programs/anl_staking/src)"
   echo "sha256(Cargo.lock): $(sha256sum Cargo.lock | cut -d' ' -f1)"
   ver rustc --version
   ver cargo --version
