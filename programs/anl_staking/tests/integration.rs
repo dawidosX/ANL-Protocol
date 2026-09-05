@@ -188,7 +188,7 @@ impl Env {
             &env.anl_mint.pubkey(),
             &treasury,
             &env.authority,
-            100_000_000 * ONE_ANL,
+            1_000_000_000 * ONE_ANL, // R6: pelna podaz (test limitu 200M)
             spl_token_2022::id(),
         )
         .await;
@@ -3454,5 +3454,59 @@ async fn r6_i03_ten_sam_ckpt_jako_prev_day_i_xnt_checkpoint() {
     assert_eq!(
         pool.current_day_basket, 0,
         "I-03: doba MIN-1 domknieta przez roll"
+    );
+}
+
+// AUDYT R6 (MEDIUM raport C): twardy limit 200M ANL — skarbiec z nadmiarem
+// NIE rozszerza puli nagrod.
+#[tokio::test]
+async fn atak_r6_limit_200m_anl_niezaleznie_od_salda_skarbca() {
+    let mut env = Env::new().await;
+    // skarbiec z NADMIAREM: 300M (wiecej niz ANL_REWARD_POOL = 200M)
+    env.fund_rewards(300_000_000 * ONE_ANL).await;
+    let (w, w_anl, _) = env.user_with_anl(150_000_000 * ONE_ANL).await;
+    // Genesis okno 1 (20%) x 10 lat = 200% -> 150M principal chce 300M nagrody:
+    // pokrycie skarbca jest (300M), ale limit emisji 200M MUSI odrzucic
+    let r = env
+        .stake(
+            &w,
+            w_anl,
+            PoolType::Genesis,
+            150_000_000 * ONE_ANL,
+            anl_math::MAX_PERIOD_DAYS as u32,
+            0,
+        )
+        .await;
+    assert!(
+        r.is_err(),
+        "R6: rezerwacja 300M > ANL_REWARD_POOL musi odbic mimo salda 300M"
+    );
+    // 100M x 200% = 200M -> dokladnie limit, dozwolone
+    let r = env
+        .stake(
+            &w,
+            w_anl,
+            PoolType::Genesis,
+            100_000_000 * ONE_ANL,
+            anl_math::MAX_PERIOD_DAYS as u32,
+            0,
+        )
+        .await;
+    assert!(r.is_ok(), "R6: rezerwacja == limit dozwolona");
+    // kazdy kolejny stake -> ponad limit, odrzucony
+    let (u, u_anl, _) = env.user_with_anl(1_000 * ONE_ANL).await;
+    let r = env
+        .stake(
+            &u,
+            u_anl,
+            PoolType::Flexible,
+            1_000 * ONE_ANL,
+            anl_math::MIN_PERIOD_DAYS as u32,
+            0,
+        )
+        .await;
+    assert!(
+        r.is_err(),
+        "R6: po wyczerpaniu limitu 200M zaden stake nie przechodzi"
     );
 }

@@ -66,6 +66,14 @@ pub fn initialize_handler(
         EXPECTED_XNT_MINT,
         AnlError::InvalidXntMint
     );
+    // AUDYT R6 (I-01): inicjalizator przypięty w buildach produkcyjnych —
+    // koniec z first-come authority po deployu.
+    #[cfg(not(feature = "test-periods"))]
+    require_keys_eq!(
+        ctx.accounts.authority.key(),
+        EXPECTED_INIT_AUTHORITY,
+        AnlError::InvalidAuthority
+    );
 
     // AUDYT R4 (L-02 raport B): stałe bazowe (MIN_STAKE_AMOUNT,
     // ANL_REWARD_POOL, mianownik CAPY) zakładają 9 miejsc dziesiętnych —

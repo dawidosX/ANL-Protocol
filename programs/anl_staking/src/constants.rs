@@ -29,6 +29,16 @@ pub const XNT_CKPT_SEED: &[u8] = b"xnt_ckpt";
 pub const NO_EPOCH: u64 = u64::MAX;
 /// Oczekiwany mint XNT (wrapped native X1) — twarda kotwica produkcyjna.
 /// W buildzie test-periods kontrola wyłączona (testy używają mintów lokalnych).
+/// AUDYT R6 (I-01 / HIGH raport C): `initialize` był first-come — pierwszy
+/// wołający po deployu zostawał authority. W buildach produkcyjnych (bez
+/// test-periods) inicjalizator MUSI być tym kluczem. MAINNET: podmienić na
+/// klucz multisig w ceremonii deployu (zmiana stałej = nowy sha binarki,
+/// zapisany w manifeście). Testy używają kluczy lokalnych (kontrola wyłączona).
+pub const EXPECTED_INIT_AUTHORITY: anchor_lang::prelude::Pubkey =
+    anchor_lang::prelude::Pubkey::new_from_array([
+        192, 101, 91, 47, 117, 27, 123, 67, 38, 66, 131, 241, 109, 94, 194, 5, 23, 144, 50, 133,
+        45, 200, 40, 252, 149, 251, 250, 2, 89, 29, 151, 170,
+    ]);
 pub const EXPECTED_XNT_MINT: anchor_lang::prelude::Pubkey =
     anchor_lang::prelude::Pubkey::new_from_array([
         6, 155, 136, 87, 254, 171, 129, 132, 251, 104, 127, 99, 70, 24, 192, 53, 218, 196, 57, 220,

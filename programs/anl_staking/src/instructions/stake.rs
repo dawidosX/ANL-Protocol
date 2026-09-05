@@ -166,6 +166,17 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
         ctx.accounts.reward_vault.amount >= new_reserved,
         AnlError::RewardCoverageExceeded
     );
+    // AUDYT R6 (MEDIUM raport C): twardy limit tokenomiki — laczna emisja
+    // nagrod ANL (wyplacone + zarezerwowane) nigdy nie przekroczy
+    // ANL_REWARD_POOL, niezaleznie od salda skarbca (nadmiar w skarbcu nie
+    // rozszerza puli). Saldo skarbca = pokrycie; stala = maksimum emisji.
+    require!(
+        (cfg.total_anl_paid as u128)
+            .checked_add(new_reserved as u128)
+            .ok_or(AnlError::MathOverflow)?
+            <= ANL_REWARD_POOL,
+        AnlError::RewardCoverageExceeded
+    );
     cfg.anl_reward_reserved = new_reserved;
 
     let cur_epoch = epoch_of(now, cfg.genesis_start_ts).ok_or(AnlError::BeforeGenesis)?;
