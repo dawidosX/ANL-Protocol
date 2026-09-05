@@ -1,10 +1,10 @@
 # AUDIT BRIEF — RUNDA 7 (wąska re-weryfikacja zmian po rundzie 6)
 
-**Repo:** `dawidosX/ANL-Protocol` · **Kod on-chain:** `src_tree b463b069…` (commit `814e16b`, identyczne w HEAD)
-**Provenance:** `code_tree 7e04b873a4de2e195d26b3e53ae7a5c972246db0` · `math_tree 6fb61151f3e10b0a5d68249a941721500b34a5b3`
-**Binarka testnet:** sha256 `332553d4236f3c75949980aeba5d9fcec1a08fafed69d9dba2adf4857cbd8b37`, slot **185887287**
+**Repo:** `dawidosX/ANL-Protocol` · **Kod on-chain (R7.1):** `src_tree d95f8ba909db0ce6c96c8832ee862e7e779bd4a1` (`HEAD:programs/anl_staking/src`)
+**Provenance:** `code_tree 0da5cdaa26e46d6db3a63587bffef3ebfe569fe3` · `math_tree 6fb61151f3e10b0a5d68249a941721500b34a5b3`
+**Binarka testnet:** sha256 `4b55041782da0e40169e0050b680a81fc17e7df954689c8a9a350f7e4f916d1f`, slot **185892286**
 (program `4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM`; zgodność dumpu on-chain z binarką: 0 bajtów różnicy)
-**Data briefu:** 2026-09-05 · **Poprzednia runda:** 6 (raport adwersarialny Claude Code + raporty C i Kimi)
+**Data briefu:** 2026-09-05 (aktualizacja R7.1) · **Poprzednia runda:** 6 (raport adwersarialny Claude Code + raporty C i Kimi)
 **Załączniki:** `docs/CHANGES-AFTER-ROUND7.md`, `docs/CHANGES-AFTER-ROUND6.md`,
 `docs/audits/2026-09-05_audyt-r6-adwersarialny_claude-fable5.md`, `docs/TEST-LOG.txt` (+`.sha256`),
 `release-manifest-testnet.txt`, `deny.toml`, `.cargo/audit.toml`
@@ -13,10 +13,12 @@
 
 Runda 6 dała cztery zmiany w logice kontraktu: dwie w księgowości XNT (R6-01 High liveness, R6-02 Low)
 i dwie w kontroli dostępu / tokenomice (pin `initialize` — HIGH raportu C; twardy limit 200M — MEDIUM
-raportu C). Prosimy o **zawężony** przegląd: czy te cztery poprawki są szczelne i nie otworzyły nowych
-wektorów, oraz o potwierdzenie freeze na **tree-hash** (nie na commit).
+raportu C). R7.1 dodała obronę w głąb dla R6-01 na poziomie modelu puli (`max(cap, debt)` także w
+`settle_position_at` / `accrued_to_cap`, po OK Recenzenta) i tekst komunikatu `InvalidPeriod`. Prosimy o
+**zawężony** przegląd: czy te poprawki są szczelne i nie otworzyły nowych wektorów, oraz o potwierdzenie
+freeze na **tree-hash** (nie na commit).
 
-## 1. Co się zmieniło w kodzie (diff `91418cc..814e16b`, tylko `programs/` i `crates/`)
+## 1. Co się zmieniło w kodzie (diff `91418cc..HEAD`, tylko `programs/` i `crates/`)
 
 | Plik | Zmiana | Adresuje |
 |---|---|---|
@@ -25,6 +27,9 @@ wektorów, oraz o potwierdzenie freeze na **tree-hash** (nie na commit).
 | `fund.rs` | `write_final_index` wyłącznie dla `Some(closed_epoch)` z `add_to_basket` | R6-02 |
 | `constants.rs`, `initialize.rs` | `EXPECTED_INIT_AUTHORITY`; `require_keys_eq!` w buildach `network-*` | I-01 / HIGH (C) |
 | `stake.rs` | `total_anl_paid + new_reserved ≤ ANL_REWARD_POOL` | MEDIUM (C) |
+| `state/mod.rs` (R7.1) | `settle_position_at`, `accrued_to_cap`: `cap = max(cap, debt)` przed odejmowaniem (obrona w głąb; orphan względem podniesionego capu) | R6-01 |
+| `errors.rs` (R7.1) | tekst `InvalidPeriod` (dopisek o limicie Flexible 365) — kody bez zmian | I-07 |
+| `constants.rs` (R7.1) | moduły `#[cfg(test)]` — strażniki wartości `EXPECTED_INIT_AUTHORITY` pod `network-testnet` / `network-mainnet` (nie wchodzą do binarki) | I-01 |
 | `crates/anl-math` | bez zmian (`math_tree` jak w R6) | — |
 
 Nie zmieniono: układu kont żadnej instrukcji, kodów błędów (brak nowych wariantów), klienta.
@@ -45,17 +50,19 @@ M-03 (pusta pula → 100 % dla drugiej).
 
 ## 3. Dowody
 
-- Testy: **52/52** integracyjne w OBU reżimach (test-periods, prod), lib 11/11, `anl-math` 24+10, `core` 34+2 (oba
+- Testy: **52/52** integracyjne w OBU reżimach (test-periods, prod), lib 12/12, `anl-math` 24+10, `core` 34+2 (oba
   reżimy, proptest z odtworzeniem kontrprzykładu I-06), clippy `--all-targets -D warnings` ×2, fmt, `cargo audit`
-  0 podatności — `docs/TEST-LOG.txt` powiązany z HEAD `9152b54`, `code_tree 7e04b873…`.
+  0 podatności, strażniki pinu pod `network-testnet,test-periods` i `network-mainnet` — `docs/TEST-LOG.txt`
+  powiązany z HEAD `319ad10`, `code_tree 0da5cdaa…`.
 - Nowe testy: `regresja_r6_01_cap_ponizej_debt_nie_blokuje_claim` (przed fixem `Custom(6022)`),
   `regresja_r6_02_wyplata_niezalezna_od_kolejnosci_fund_vs_settle` (przed fixem 15 000 ≠ 10 000),
   `r6_i03_ten_sam_ckpt_jako_prev_day_i_xnt_checkpoint`, `atak_r6_limit_200m_anl_niezaleznie_od_salda_skarbca`,
-  `regresja_r7_n_dni_dokladnie_n_koszykow`, `test_r6_property_konserwacja_xnt_losowe_sekwencje` (40 × 120).
-- Deploy testnet: slot 185887287, sha `332553d4…` — dump on-chain == binarka; `audyt-naliczen.js` po deployu:
-  134 pozycje, 1 znana flaga (`3sva…#11` APY, artefakt).
+  `regresja_r7_n_dni_dokladnie_n_koszykow`, `test_r6_property_konserwacja_xnt_losowe_sekwencje` (40 × 120),
+  `test_r7_cap_ponizej_debt_daje_zero_bez_overflow` (model), `init_authority_pinned_{testnet,mainnet}`.
+- Deploy testnet R7.1: slot 185892286, sha `4b550417…` — dump on-chain == binarka (0 bajtów różnicy, weryfikacja
+  dwustronna); `audyt-naliczen.js` po deployu: 134 pozycje, 1 znana flaga (`3sva…#11` APY, artefakt).
 - Reprodukowalność: `cargo build-sbf` (platform-tools v1.41) na czystym `git archive` daje identyczny sha
-  (potwierdzone w R6 dla `855ca6a4…`; rebuild R7 na HEAD → `332553d4…`).
+  (potwierdzone w R6 dla `855ca6a4…`; rebuild R7 → `332553d4…`, rebuild R7.1 na HEAD → `4b550417…`).
 
 ## 4. Pytania celowane (prosimy o werdykt do każdego: Czyste / Uwaga / Finding z wagą)
 
@@ -89,15 +96,25 @@ wpłaci > 200M do skarbca?
 manifestu i paczki (`pack-audit.sh` — manifest OBOK zipa) wystarcza jako dowód „ten sam kod", i że różnice
 commitów wynikające wyłącznie z docs/manifestów nie są zastrzeżeniem provenance.
 
+**(f) borsh 0.9.3 w grafie SBF (RUSTSEC-2023-0033).** `cargo +solana tree --target sbf-solana-solana` pokazuje
+`borsh 0.9.3` przez `solana-program` (legacy API `borsh0_9`). Nasza ocena: nieosiągalne — advisory dotyczy
+deserializacji `Vec<T>` dla ZST bez `Copy`; konta i argumenty programu nie mają ZST ani `Vec<ZST>`
+(u8…u128/i64/bool/Pubkey/enum/[u8; N]); Anchor 0.30.1 deserializuje przez borsh 0.10.x. Prosimy o potwierdzenie
+lub kontrprzykład (ścieżka, w której nasz kod wywołuje borsh 0.9).
+
+**(g) Obrona w głąb w modelu (R7.1).** `settle_position_at` i `accrued_to_cap` liczą `cap = max(cap, debt)` przed
+odejmowaniem; orphan liczony względem podniesionego capu (`index − max(cap, debt)`), więc cały udział pozycji od
+wejścia trafia do żywych, a konserwacja jest zachowana. Alternatywą był błąd sygnalizacyjny w modelu — odrzucony
+jako ta sama klasa ryzyka liveness co R6-01. Czy zgadzacie się, że podwójny `max` (w `cap_index_at` i w modelu)
+nie zmienia żadnej wypłaty dla `cap ≥ debt` i nie otwiera nadpłaty dla `cap < debt`?
+
 ## 5. Znane, świadome i do decyzji
 
-- `borsh 0.9.3` (RUSTSEC-2023-0033, unsound przy ZST) jest w grafie SBF przez `solana-program`; nasz kod
-  deserializuje przez Anchor (borsh 0.10.4) i nie ma ZST w kontach — prosimy o potwierdzenie.
-- `scripts/` w `.gitignore` (nowe skrypty cicho pomijane) — do usunięcia wpisu.
+- `scripts/` w `.gitignore` — naprawione w R7.1 (ignorowany tylko `scripts/node_modules/`).
 - WP: cooldown 3 d i ≤ 365 d Flexible, limit 200M, pin `initialize`, SLA bota (settle codziennie) — do naniesienia.
 - Upgrade stosu Solana/Anchor przed immutable mainnet (opróżnia listy wyjątków supply-chain).
 
 ## 6. Prośba o format odpowiedzi
 
-Werdykt per pytanie (a)–(e) (Czyste / Uwaga / Finding z wagą) i jednozdaniowa konkluzja:
-**gotowe do audit-freeze na `code_tree 7e04b873…` — TAK / NIE (co blokuje)**.
+Werdykt per pytanie (a)–(g) (Czyste / Uwaga / Finding z wagą) i jednozdaniowa konkluzja:
+**gotowe do audit-freeze na `src_tree d95f8ba9…` / `code_tree 0da5cdaa…` — TAK / NIE (co blokuje)**.
