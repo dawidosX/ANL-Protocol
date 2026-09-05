@@ -102,7 +102,7 @@ Live stats (TVL, vault balances, validator) read directly from chain.
 
 **Security / Bug bounty:** the frozen testnet code (`v1.0-testnet-freeze`, `src_tree 4c225639…`) is covered by a
 bug bounty of up to **1 000 000 ANL** (Critical). Scope, exclusions, required proof and private-disclosure rules:
-**[SECURITY.md](SECURITY.md)**.
+**[SECURITY.md](SECURITY.md)** (PL: [SECURITY.pl.md](SECURITY.pl.md)).
 
 The protocol has undergone **multiple rounds of security review** with findings
 fixed and independently re-verified — full trail in
