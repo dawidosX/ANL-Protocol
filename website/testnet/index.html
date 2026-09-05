@@ -1100,6 +1100,7 @@ nav .btn-gold{white-space:nowrap}
     document.getElementById('langTgl').textContent = l === 'pl' ? 'EN' : 'PL';
     recalc();
     if (window.anlLiveSetLang) window.anlLiveSetLang(l);
+    if (window.anlRerenderHistory) window.anlRerenderHistory();
   }
   window.anlCurrentLang = function(){ return LANG; };
   // Linki do whitepapera podazaja za jezykiem strony (PL -> /whitepaper, EN -> /whitepaper-en)
@@ -2062,6 +2063,7 @@ async function claimCapy(){
 window.anlClaimCapy = claimCapy;
 window.anlClaimWindow = claimGenesisWindow;
 window.anlClaim = claimPosition;
+window.anlRerenderHistory = function(){ if(pubkey){ loadHistory().catch(function(){}); loadClaimedTotals().catch(function(){}); } };
 window.anlSortPositions = anlSortPositions;
 window.anlUnstake = unstakeEarly;
 
