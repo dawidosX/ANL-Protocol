@@ -23,8 +23,13 @@ use state::PoolType;
 declare_id!("4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM");
 #[cfg(feature = "network-testnet")]
 declare_id!("4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM");
+// AUDYT R7.2 (release path): build BEZ feature sieciowego (testy, CI) ma OSOBNY
+// Program ID. Taka binarka nie ma pinu `initialize` (EXPECTED_INIT_AUTHORITY)
+// ani strażników mainnetu, więc NIE MOŻE działać pod produkcyjnym adresem —
+// Anchor odrzuci ją na starcie (DeclaredProgramIdMismatch). Keypair testowy
+// nie jest w repo (target/test-program-id.json); do testów wystarczy pubkey.
 #[cfg(not(any(feature = "network-mainnet", feature = "network-testnet")))]
-declare_id!("4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM");
+declare_id!("ChG81WApHgpbWjt4r8wmJ57WS3MkXyMGzJ2tBbC8pcov");
 
 #[program]
 pub mod anl_staking {
@@ -127,5 +132,39 @@ pub mod anl_staking {
     /// WP §7: przed end_ts — principal wraca w całości, całość nagród przepada.
     pub fn unstake_early(ctx: Context<UnstakeEarly>) -> Result<()> {
         instructions::lifecycle::unstake_early(ctx)
+    }
+}
+
+/// AUDYT R7.2 — strażniki Program ID (CI: bez feature, `network-testnet,test-periods`,
+/// `network-mainnet`). Zmiana adresu produkcyjnego wymaga zmiany strażnika w tym
+/// samym commicie; build testowy MUSI mieć inny adres niż produkcyjny.
+#[cfg(test)]
+mod program_id_guards {
+    const PROD_ID: &str = "4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM";
+    const TEST_ID: &str = "ChG81WApHgpbWjt4r8wmJ57WS3MkXyMGzJ2tBbC8pcov";
+
+    #[cfg(feature = "network-testnet")]
+    #[test]
+    fn program_id_pinned_testnet() {
+        assert_eq!(crate::ID.to_string(), PROD_ID);
+        assert_ne!(crate::ID.to_string(), TEST_ID);
+    }
+
+    #[cfg(feature = "network-mainnet")]
+    #[test]
+    fn program_id_pinned_mainnet() {
+        assert_eq!(crate::ID.to_string(), PROD_ID);
+        assert_ne!(crate::ID.to_string(), TEST_ID);
+    }
+
+    #[cfg(not(any(feature = "network-mainnet", feature = "network-testnet")))]
+    #[test]
+    fn program_id_is_test_id() {
+        assert_eq!(crate::ID.to_string(), TEST_ID);
+        assert_ne!(
+            crate::ID.to_string(),
+            PROD_ID,
+            "binarka bez pinu initialize nie moze dzialac pod adresem produkcyjnym"
+        );
     }
 }
