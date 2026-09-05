@@ -16,6 +16,9 @@ status of every finding lives one directory up.
 | `audit-4-verification-gpt.md` | Runda #4 — re-weryfikacja paczki `audit4` (GPT) / round-4 re-verification |
 | `audit-4-verification-grok.pdf` | Runda #4 — re-weryfikacja paczki `audit4` (Grok) / round-4 re-verification |
 | `2026-09-05_audyt-r6-adwersarialny_claude-fable5.md` | Runda #6 — audyt adwersarialny paczki `91418cc` (Claude Fable 5.1): R6-01 cap<debt (High), R6-02 nadpisanie checkpointu (Low), PoC w harnessie / round-6 adversarial audit |
+| `2026-09-05_audyt-r7.2_kimi.md` | Runda #7.2 (release-path) — werdykt Kimi: A/B/C Czyste, FREEZE TAK, 9/10; odhaczenie zadań R5/R7 / round-7.2 verdict (Kimi) |
+| `2026-09-05_audyt-r7.2_C.md` | Runda #7.2 (release-path) — werdykt C: A/B/C CLOSED, FREEZE TAK, 9.3/10 / round-7.2 verdict (C) |
+| *(B, R7.2)* | Werdykt B (FREEZE TAK, 9/10) przekazany konwersacyjnie — plik do uzupełnienia / delivered conversationally, file pending |
 
 Raport rundy #2 (Grok, 8,5/10) został przekazany w formie konwersacyjnej i nie
 zachował się jako plik; jego wnioski są streszczone w §4 historii. / The
