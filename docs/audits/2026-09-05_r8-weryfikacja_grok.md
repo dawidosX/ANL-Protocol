@@ -1,16 +1,12 @@
-# R8 — weryfikacja fixu `claim` (saturating_sub + InvariantAlarm kind 2) — Grok
+# R8 — mini-runda: weryfikacja fixu `claim` (`saturating_sub` + `InvariantAlarm kind 2`) — Grok
 
-**Runda:** R8 mini-runda (recenzja jednej zmiany, prompt `R8-CLAIM-SATURATING-SUB`) · **Data:** 2026-09-05
-**Kod:** `src_tree 7ab2a7455eca9f9efc7a83699f9aee4616017efa` (merge `2582b9d`, tag `v1.1-testnet-freeze` → `6113493`)
+**Prompt:** `R8-CLAIM-SATURATING-SUB` (cztery pytania o jedną zmianę) · **Data:** 2026-09-05
+**Kod:** `src_tree 7ab2a7455eca9f9efc7a83699f9aee4616017efa` (merge `2582b9d`; tag `v1.1-testnet-freeze` → `6113493`)
 **Binarka / slot:** `1d44959176da39a83a42cadd835b108795d7fee4a0aed706c00e9f24b9a6ba0a` / 185933070
 
-## Werdykt (przekazany konwersacyjnie przez Dawida, 2026-09-05)
+## Odpowiedzi (treść przekazana przez Dawida, 2026-09-05)
 
-| Pytanie | Werdykt |
-|---|---|
-| Zmiana `checked_sub` → `saturating_sub` w `claim` (XNT do wypłaty) | zweryfikowana: principal + ANL nie zależą od rachunku XNT; przy `window_claimed > accrued` XNT = 0, alarm `kind 2` |
-| **DRAINABLE** | **NIE** |
-| **FREEZE** na `src_tree 7ab2a745…` | **TAK** |
-
-*Pełna treść raportu audytora nie została dostarczona jako plik — ten dokument jest zapisem werdyktu z komunikatu Dawida.
-Po otrzymaniu pliku treść zostanie podmieniona w całości.*
+1. **Czy `saturating_sub` może dać nadpłatę XNT?** — **Nie.** Przykład: `accrued = 80`, `window_claimed = 100` → XNT do wypłaty = 0.
+2. **Czy `emit!(InvariantAlarm kind 2)` zmienia stan lub może revertować?** — **Nie.** `emit!` to log.
+3. **Czy `checked_sub` w `claim_genesis_window` powinno zostać?** — **Słusznie zostaje.**
+4. **DRAINABLE / FREEZE:** **DRAINABLE: NIE** · **FREEZE: TAK** na `src_tree 7ab2a745…`.
