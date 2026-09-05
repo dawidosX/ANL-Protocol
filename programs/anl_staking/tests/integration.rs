@@ -3039,3 +3039,72 @@ async fn regresja_h3_capy_split_claim_end_to_end() {
         anl_staking::state::GlobalConfig::try_deserialize(&mut gc_acc.data.as_slice()).unwrap();
     assert_eq!(gc.capy_reserved, 0, "H3: rezerwacja zwolniona po wypłacie");
 }
+
+// AUDYT R5, M-01 raportu C: orphan do ZYWYCH natychmiast (Adam/Beata/Celina na tx).
+#[tokio::test]
+async fn regresja_h5_orphan_do_zywych_nie_do_pozniejszego_stakera() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    env.advance(DAY / 2).await;
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let (adam, adam_anl, _a_x) = env.user_with_anl(100 * ONE_ANL).await;
+    let (beata, beata_anl, _b_x) = env.user_with_anl(100 * ONE_ANL).await;
+    let (celina, celina_anl, _c_x) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos_a = env
+        .stake(&adam, adam_anl, PoolType::Genesis, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+    let pos_b = env
+        .stake(
+            &beata,
+            beata_anl,
+            PoolType::Genesis,
+            100 * ONE_ANL,
+            5 * min_d,
+            0,
+        )
+        .await
+        .unwrap();
+    env.advance((min_d as i64) * DAY).await;
+    env.fund_xnt(10_000).await.unwrap();
+    env.advance(DAY).await;
+    let min_e = anl_math::MIN_PERIOD_DAYS as u64;
+    env.close_day(PoolType::Genesis, min_e).await.unwrap();
+    env.close_day(PoolType::Flexible, min_e).await.unwrap();
+    env.settle(pos_a, PoolType::Genesis, None).await.unwrap();
+    let pa = env.position(pos_a).await;
+    assert_eq!(pa.xnt_accrued, 0, "H5: Adam nie ma prawa do doby MIN");
+    let pool = env.pool(env.genesis_pool).await;
+    assert_eq!(pool.xnt_undistributed, 0, "H5: orphan NIE w buforze");
+    let pb = env.position(pos_b).await;
+    assert_eq!(
+        b_claimable(&pool, &pb),
+        10_000,
+        "H5: Beata ma CALE 10 000 natychmiast"
+    );
+    let pos_c = env
+        .stake(
+            &celina,
+            celina_anl,
+            PoolType::Genesis,
+            100 * ONE_ANL,
+            5 * min_d,
+            0,
+        )
+        .await
+        .unwrap();
+    env.fund_xnt(10_000).await.unwrap();
+    env.advance(DAY).await;
+    env.close_day(PoolType::Genesis, min_e + 1).await.unwrap();
+    env.close_day(PoolType::Flexible, min_e + 1).await.unwrap();
+    let pool = env.pool(env.genesis_pool).await;
+    let pb = env.position(pos_b).await;
+    let pc = env.position(pos_c).await;
+    assert_eq!(b_claimable(&pool, &pb), 15_000, "H5: Beata 10 000 + 5 000");
+    assert_eq!(
+        b_claimable(&pool, &pc),
+        5_000,
+        "H5: Celina TYLKO 5 000 - zero z doby MIN"
+    );
+    assert_eq!(pool.xnt_undistributed, 0, "H5: bufor pusty");
+}
