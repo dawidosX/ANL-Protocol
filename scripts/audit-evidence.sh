@@ -54,11 +54,17 @@ expect_fail() {
   echo "ANL Protocol — dowody audytowe (fail-closed)"
   echo "Wygenerowano: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   echo "HEAD:  $HEAD"
+  # R7 (provenance, Kimi R6 / C P-01): hash DRZEWA kodu niezalezny od commitow docs —
+  # audytorzy porownuja code_tree/math_tree, nie commit.
+  echo "code_tree: $(git rev-parse HEAD:programs)"
+  echo "math_tree: $(git rev-parse HEAD:crates/anl-math)"
   echo "sha256(Cargo.lock): $(sha256sum Cargo.lock | cut -d' ' -f1)"
   ver rustc --version
   ver cargo --version
   ver anchor --version
   ver solana --version
+  # R6 I-04: toolchain SBF (platform-tools) determinuje sha binarki, nie rustc hosta
+  command -v cargo-build-sbf >/dev/null && { echo "build-sbf:"; cargo build-sbf --version 2>&1 | sed 's/^/  /'; } || echo "build-sbf: niezainstalowane"
   ver cargo-audit --version
   ver cargo-deny --version
   echo "========================================================================"

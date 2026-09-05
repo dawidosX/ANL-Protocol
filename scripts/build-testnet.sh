@@ -17,8 +17,13 @@ test -s "$BIN" || { echo "BLAD: brak binarki po buildzie." >&2; exit 1; }
   echo "release: testnet"
   echo "date: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
   echo "head: $(git rev-parse HEAD)"
+  # R7: hash drzewa kodu (niezalezny od commitow docs) — to on odpowiada sha binarki
+  echo "code_tree: $(git rev-parse HEAD:programs)"
+  echo "math_tree: $(git rev-parse HEAD:crates/anl-math)"
   echo "features: $FEATURES"
   echo "sha256: $(sha256sum "$BIN" | cut -d' ' -f1)"
-  echo "rustc: $(rustc --version)"
+  echo "rustc_host: $(rustc --version)"
+  # R6 I-04: binarke SBF kompiluje rustc z platform-tools, nie rustc hosta
+  echo "build_sbf: $(cargo build-sbf --version 2>&1 | tr '\n' ' ' | sed 's/  */ /g')"
 } | tee release-manifest-testnet.txt
 echo "Przed deployem: porownaj sha256 wdrazanej binarki z manifestem."
