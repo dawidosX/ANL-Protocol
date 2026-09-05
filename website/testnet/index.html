@@ -1693,77 +1693,131 @@ function decodeWindow(b64){
   const ts = dv.getBigInt64(o,true);
   return { owner:owner.toBase58(), idx, principal:0n, anl:0n, xnt:xntPaid, capy:0n, ts:Number(ts), kind:"window" };
 }
-// Zdarzenia claim/okno: JEDEN przebieg dla historii i sum (bylo: 80 + 100 getTransaction
-// rownolegle w dwu petlach). Limit 25 sygnatur, getTransaction SEKWENCYJNIE, wynik dekodowania
-// per sygnatura w localStorage (stara transakcja nigdy sie nie zmienia). 429 -> przerwij i pokaz to, co jest.
-const TX_CACHE_PREFIX = "anlTx:v1:";
-function txCacheGet(sig){
-  try{
-    const raw = localStorage.getItem(TX_CACHE_PREFIX+sig); if(!raw) return null;
-    return JSON.parse(raw).map(function(e){ return {owner:e.owner, idx:BigInt(e.idx), principal:BigInt(e.principal),
-      anl:BigInt(e.anl), xnt:BigInt(e.xnt), capy:BigInt(e.capy), ts:e.ts, kind:e.kind}; });
-  }catch(_){ return null; }
+// ===== Historia zdarzen programu dla portfela =====
+// Zrodlo: sygnatury PORTFELA (200/strona, do HISTORY_MAX_PAGES przez `before`; stop na sygnaturze
+// juz w indeksie, chyba ze trwa jednorazowy pelny skan po migracji). Nieznana sygnatura ->
+// getTransaction sekwencyjnie, filtr "tx dotyka PROGRAM_ID", dekodowanie WSZYSTKICH zdarzen
+// programu (Claim, XNT Claim, CAPY Claim, Unstake, Stake) do cache per sygnatura (anlTx:v2;
+// [] dla zwyklych transferow). Indeks sygnatur programu per portfel (anlHist:v3) => tabela i sumy
+// z PELNEJ historii lokalnej. Migracja z v1: wpisy z zdarzeniami kopiowane bez RPC; wpisy v1 == []
+// (mogly byc CAPY/Unstake/Stake, ktorych v1 nie dekodowal) pobierane ponownie, o ile RPC je ma.
+// 429 -> przerwij i pokaz to, co jest.
+const HISTORY_PAGE = 200, HISTORY_MAX_PAGES = 5;
+const TX_CACHE_PREFIX = "anlTx:v2:", TX_CACHE_PREFIX_V1 = "anlTx:v1:";
+const HIST_INDEX_PREFIX = "anlHist:v3:", HIST_INDEX_PREFIX_V2 = "anlHist:v2:", HIST_SCANNED_PREFIX = "anlHistV3Scanned:";
+const EV_BIG = ["idx","principal","anl","xnt","capy","forfeitAnl","forfeitXnt"];
+function evToJson(e){ const o={}; for(const k in e){ o[k] = (typeof e[k]==="bigint") ? String(e[k]) : e[k]; } return o; }
+function evFromJson(o){ const e={}; for(const k in o){ e[k] = (EV_BIG.indexOf(k)>=0 && o[k]!==null && o[k]!==undefined) ? BigInt(o[k]) : o[k]; } return e; }
+function txCacheGetRaw(prefix, sig){ try{ const r=localStorage.getItem(prefix+sig); return r ? JSON.parse(r).map(evFromJson) : null; }catch(_){ return null; } }
+function txCacheGet(sig){ return txCacheGetRaw(TX_CACHE_PREFIX, sig); }
+function txCacheSet(sig, evs){ try{ localStorage.setItem(TX_CACHE_PREFIX+sig, JSON.stringify(evs.map(evToJson))); }catch(_){} }
+function histIndexGet(me){ try{ const r=localStorage.getItem(HIST_INDEX_PREFIX+me); return r ? JSON.parse(r) : []; }catch(_){ return []; } }
+function histIndexSet(me, sigs){ try{ localStorage.setItem(HIST_INDEX_PREFIX+me, JSON.stringify(sigs)); }catch(_){} }
+// Migracja indeksu v2 -> v3: sygnatury z cache v1 (zdarzenia Claim/XNT Claim) kopiowane do v2 bez RPC,
+// zeby nie zniknely odbiory starsze niz retencja RPC. Zwraca liste zmigrowanych sygnatur.
+function histMigrate(me){
+  let old=[]; try{ const r=localStorage.getItem(HIST_INDEX_PREFIX_V2+me); old = r ? JSON.parse(r) : []; }catch(_){}
+  const migrated=[];
+  for(const sig of old){
+    if(txCacheGet(sig)){ migrated.push(sig); continue; }
+    const v1 = txCacheGetRaw(TX_CACHE_PREFIX_V1, sig);
+    if(v1 && v1.length){ txCacheSet(sig, v1); migrated.push(sig); }
+  }
+  try{ if(old.length) localStorage.removeItem(HIST_INDEX_PREFIX_V2+me); }catch(_){}
+  return migrated;
 }
-function txCacheSet(sig, evs){
-  try{ localStorage.setItem(TX_CACHE_PREFIX+sig, JSON.stringify(evs.map(function(e){ return {owner:e.owner, idx:String(e.idx),
-    principal:String(e.principal), anl:String(e.anl), xnt:String(e.xnt), capy:String(e.capy), ts:e.ts, kind:e.kind}; }))); }catch(_){}
+// Dyskryminatory zdarzen Anchora: sha256("event:<Nazwa>")[..8]
+const DISC_CAPYCLAIMED = [142,110,65,203,124,86,120,162];   // CapyClaimed
+const DISC_UNSTAKED    = [4,57,157,21,172,149,126,240];     // PositionUnstakedEarly
+const DISC_OPENED      = [237,175,243,230,147,117,101,121]; // PositionOpened
+function _evBuf(b64, disc){
+  const buf = Uint8Array.from(atob(b64), function(c){return c.charCodeAt(0);});
+  for(let i=0;i<8;i++) if(buf[i]!==disc[i]) return null;
+  return buf;
+}
+function decodeCapyClaimed(b64){
+  const buf=_evBuf(b64, DISC_CAPYCLAIMED); if(!buf) return null;
+  const dv=new DataView(buf.buffer, buf.byteOffset); let o=8;
+  const owner=new PublicKey(buf.subarray(o,o+32)); o+=32;
+  const amount=dv.getBigUint64(o,true); o+=8;
+  o+=8; // pending_remaining
+  const ts=dv.getBigInt64(o,true);
+  return { owner:owner.toBase58(), idx:0n, principal:0n, anl:0n, xnt:0n, capy:amount, ts:Number(ts), kind:"capy" };
+}
+function decodeUnstaked(b64){
+  const buf=_evBuf(b64, DISC_UNSTAKED); if(!buf) return null;
+  const dv=new DataView(buf.buffer, buf.byteOffset); let o=8;
+  const owner=new PublicKey(buf.subarray(o,o+32)); o+=32;
+  const idx=dv.getBigUint64(o,true); o+=8;
+  const principal=dv.getBigUint64(o,true); o+=8;
+  const fAnl=dv.getBigUint64(o,true); o+=8;
+  const fXnt=dv.getBigUint64(o,true); o+=8;
+  const ts=dv.getBigInt64(o,true);
+  return { owner:owner.toBase58(), idx, principal, anl:0n, xnt:0n, capy:0n, forfeitAnl:fAnl, forfeitXnt:fXnt, ts:Number(ts), kind:"unstake" };
+}
+function decodeOpened(b64){
+  const buf=_evBuf(b64, DISC_OPENED); if(!buf) return null;
+  const dv=new DataView(buf.buffer, buf.byteOffset); let o=8;
+  const owner=new PublicKey(buf.subarray(o,o+32)); o+=32;
+  const pool=buf[o]; o+=1;
+  const idx=dv.getBigUint64(o,true); o+=8;
+  const amount=dv.getBigUint64(o,true); o+=8;
+  const apy=dv.getUint16(o,true); o+=2;
+  const days=dv.getUint32(o,true); o+=4;
+  const start=dv.getBigInt64(o,true);
+  return { owner:owner.toBase58(), idx, principal:amount, anl:0n, xnt:0n, capy:0n, pool:pool, days:days, apy:apy, ts:Number(start), kind:"stake" };
 }
 function decodeTxEvents(tx){
   const out = [];
   for(const l of ((tx && tx.meta && tx.meta.logMessages) || [])){
     const m = l.match(/^Program data: (.+)$/); if(!m) continue;
-    let ev = null; try{ ev = decodeClaimed(m[1]) || decodeWindow(m[1]); }catch(_){ ev = null; }
+    let ev = null;
+    try{ ev = decodeClaimed(m[1]) || decodeWindow(m[1]) || decodeCapyClaimed(m[1]) || decodeUnstaked(m[1]) || decodeOpened(m[1]); }catch(_){ ev = null; }
     if(ev) out.push(ev);
   }
   return out;
 }
-// Zrodlo historii: sygnatury PORTFELA uzytkownika (nie programu — limit 25 sygnatur programu
-// wypelnialy cudze tx). Strony po 200 przez `before` (max HISTORY_MAX_PAGES), stop na pierwszej
-// sygnaturze juz w cache (starsze byly przetworzone wczesniej). Kazda nieznana sygnatura:
-// getTransaction (sekwencyjnie), filtr "tx dotyka PROGRAM_ID" (accountKeys / logi), wynik
-// dekodowania do cache per sygnatura (takze pusty [] dla zwyklych transferow — nie pobieramy
-// ich drugi raz). Indeks sygnatur programu per portfel w localStorage => sumy i tabela z PELNEJ
-// historii lokalnej, nie z ostatniej strony. 429 -> przerwij i pokaz to, co jest.
-const HISTORY_PAGE = 200, HISTORY_MAX_PAGES = 5;
-const HIST_INDEX_PREFIX = "anlHist:v2:";
-function histIndexGet(me){ try{ const r=localStorage.getItem(HIST_INDEX_PREFIX+me); return r ? JSON.parse(r) : []; }catch(_){ return []; } }
-function histIndexSet(me, sigs){ try{ localStorage.setItem(HIST_INDEX_PREFIX+me, JSON.stringify(sigs)); }catch(_){} }
 function txTouchesProgram(tx){
+  const pid = PROGRAM_ID.toBase58();
   try{
     const msg = tx.transaction.message;
     const keys = (msg.staticAccountKeys || msg.accountKeys || []).map(function(k){ return k.toBase58 ? k.toBase58() : (k.pubkey ? k.pubkey.toBase58() : String(k)); });
-    if(keys.indexOf(PROGRAM_ID.toBase58())>=0) return true;
+    if(keys.indexOf(pid)>=0) return true;
   }catch(_){}
-  const pid = PROGRAM_ID.toBase58();
   return ((tx && tx.meta && tx.meta.logMessages) || []).some(function(l){ return l.indexOf(pid)>=0; });
 }
 async function fetchClaimEvents(){
   const me = pubkey.toBase58();
-  const known = new Set(histIndexGet(me));      // sygnatury programu juz w indeksie
-  const newProgSigs = []; let partial = false, before = undefined;
+  const migrated = histMigrate(me);
+  let scanned = false; try{ scanned = localStorage.getItem(HIST_SCANNED_PREFIX+me)==="1"; }catch(_){}
+  const fullScan = !scanned;   // jednorazowo po wdrozeniu v2/v3: przejdz wszystkie strony, nie zatrzymuj sie na znanych
+  const known = new Set(histIndexGet(me).concat(migrated));
+  const newProgSigs = migrated.slice(); let partial = false, before = undefined, exhausted = false;
   outer:
   for(let page=0; page<HISTORY_MAX_PAGES; page++){
     let sigs;
     try{ sigs = await conn.getSignaturesForAddress(pubkey, before ? {limit:HISTORY_PAGE, before:before} : {limit:HISTORY_PAGE}); }
     catch(e){ if(isRateLimited(e)){ partial = true; break; } throw e; }
-    if(!sigs.length) break;
+    if(!sigs.length){ exhausted = true; break; }
     for(const s of sigs){
       if(s.err) continue;
-      if(known.has(s.signature)) break outer;    // w indeksie => starsze juz przetworzone
+      if(known.has(s.signature)){ if(fullScan) continue; break outer; }
       const cached = txCacheGet(s.signature);
-      if(cached){ if(cached.length) newProgSigs.push(s.signature); continue; }   // migracja starego cache do indeksu, bez RPC
+      if(cached){ if(cached.length) newProgSigs.push(s.signature); continue; }
+      const v1 = txCacheGetRaw(TX_CACHE_PREFIX_V1, s.signature);
+      if(v1 && v1.length){ txCacheSet(s.signature, v1); newProgSigs.push(s.signature); continue; }   // migracja bez RPC
       let tx;
       try{ tx = await conn.getTransaction(s.signature, {commitment:"confirmed", maxSupportedTransactionVersion:0}); }
       catch(e){ if(isRateLimited(e)){ partial = true; break outer; } continue; }
-      if(!tx){ continue; }                       // RPC nie ma tx (retencja) — sprobujemy nastepnym razem
-      if(!txTouchesProgram(tx)){ txCacheSet(s.signature, []); continue; }   // zwykly transfer: cache [] i dalej
+      if(!tx){ continue; }                                                 // poza retencja RPC — nastepnym razem
+      if(!txTouchesProgram(tx)){ txCacheSet(s.signature, []); continue; }  // zwykly transfer
       const evs = decodeTxEvents(tx); txCacheSet(s.signature, evs);
-      newProgSigs.push(s.signature);
+      if(evs.length) newProgSigs.push(s.signature);
     }
-    if(sigs.length < HISTORY_PAGE) break;
+    if(sigs.length < HISTORY_PAGE){ exhausted = true; break; }
     before = sigs[sigs.length-1].signature;
   }
-  // indeks per portfel: stare + nowe (deduplikacja), potem wiersze z PELNEGO cache
+  if(fullScan && !partial && exhausted){ try{ localStorage.setItem(HIST_SCANNED_PREFIX+me, "1"); }catch(_){} }
   const index = Array.from(new Set(newProgSigs.concat(histIndexGet(me))));
   histIndexSet(me, index);
   const rows = [];
@@ -1776,55 +1830,71 @@ async function fetchClaimEvents(){
 async function loadHistory(){
   if(!pubkey) return;
   const res = await fetchClaimEvents();
-  window.__histRows = res.rows; window.__histPartial = res.partial; // do re-renderu przy zmianie jezyka (bez RPC)
-  renderHistory(res.rows.slice(), res.partial);
+  window.__histRows = res.rows; window.__histPartial = res.partial; // do re-renderu (jezyk, checkbox) bez RPC
+  renderHistory(res.rows, res.partial);
   renderClaimedTotals(res.rows);
 }
+// DD.MM.YYYY HH:MM — spojnie z tabela pozycji, niezaleznie od jezyka
+function fmtDT(ts){ const d=new Date(ts*1000); const p=function(n){ return String(n).padStart(2,"0"); };
+  return p(d.getDate())+"."+p(d.getMonth()+1)+"."+d.getFullYear()+" "+p(d.getHours())+":"+p(d.getMinutes()); }
+// Sumy: WYLACZNIE realnie odebrane — Claim (ANL + XNT), XNT Claim (XNT), CAPY Claim (CAPY).
+// Przepadki (Unstake) i Stake nie wchodza; CAPY z eventu Claim to rezerwacja, wyplata = CAPY Claim.
+function histTotals(rows){
+  let anl=0n, xnt=0n, xntWindow=0n, capy=0n;
+  rows.forEach(function(r){
+    if(r.kind==="end"){ anl+=r.anl; xnt+=r.xnt; }
+    else if(r.kind==="window"){ xnt+=r.xnt; xntWindow+=r.xnt; }
+    else if(r.kind==="capy"){ capy+=r.capy; }
+  });
+  return {anl:anl, xnt:xnt, xntWindow:xntWindow, capy:capy};
+}
+function histShowStake(){ try{ return localStorage.getItem("anlHistShowStake")==="1"; }catch(_){ return false; } }
 function renderHistory(rows, partial){
   const tb = $("histBody"), box = $("histBox");
   if(!tb || !box) return;
   if(rows.length===0){ box.style.display="none"; return; }
-  rows.sort(function(a,b){ return b.ts - a.ts; });
-  const EXP = "https://explorer.x1.xyz/tx/";
-  tb.innerHTML = rows.map(function(r,i){
-    const d = new Date(r.ts*1000).toLocaleDateString((function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl"?"pl-PL":"en-US";}catch(e){return "en-US";}})(),{dateStyle:"short"});
-    const _pl = (function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl";}catch(e){return false;}})();
-    const typ = r.kind==="window" ? "XNT Claim" : (_pl?"Odbiór":"Claim");
-    const prc = r.kind==="window" ? "—" : fmtAnl(r.principal)+" ANL";
-    const anlC = r.kind==="window" ? "—" : fmtAnl(r.anl)+" ANL";
-    return "<tr><td>"+(i+1)+"</td>"+
-      "<td>"+typ+"</td>"+
-      "<td>"+prc+"</td>"+
-      "<td>"+anlC+"</td>"+
-      "<td>"+fmtXnt(r.xnt)+" XNT</td>"+
-      "<td>"+(r.kind==="window" ? "—" : (r.capy>0n ? fmtAnl(r.capy)+" CAPY" : "—"))+"</td>"+
-      "<td>"+d+"</td>"+
+  const showStake = histShowStake();
+  const hasStake = rows.some(function(r){ return r.kind==="stake"; });
+  const vis = rows.filter(function(r){ return showStake || r.kind!=="stake"; }).sort(function(a,b){ return b.ts - a.ts; });
+  const EXP = "https://explorer.x1.xyz/tx/"; const dash = '<span class="mut">—</span>';
+  tb.innerHTML = vis.map(function(r,i){
+    let typ, prc, anlC, xntC, capyC;
+    if(r.kind==="window"){ typ=T("histWindow"); prc=dash; anlC=dash; xntC=fmtXnt(r.xnt)+" XNT"; capyC=dash; }
+    else if(r.kind==="capy"){ typ=T("histCapy"); prc=dash; anlC=dash; xntC=dash; capyC=fmtAnl(r.capy)+" CAPY"; }
+    else if(r.kind==="unstake"){
+      const fA = r.forfeitAnl||0n, fX = r.forfeitXnt||0n;
+      const tip = T("histForfeit")+" "+fmtAnl(fA)+" ANL, "+fmtXnt(fX)+" XNT";
+      typ=T("histUnstake"); prc=fmtAnl(r.principal)+" ANL";
+      anlC='<span class="mut" title="'+tip+'">'+T("histForfeitShort")+" "+fmtAnl(fA)+" ANL</span>";
+      xntC='<span class="mut" title="'+tip+'">'+T("histForfeitShort")+" "+fmtXnt(fX)+" XNT</span>"; capyC=dash;
+    }
+    else if(r.kind==="stake"){ typ=T("histStake")+" · "+(r.pool===1?"Genesis":"Flexible")+" · "+r.days+" "+T("days"); prc=fmtAnl(r.principal)+" ANL"; anlC=dash; xntC=dash; capyC=dash; }
+    else { typ=T("histClaim"); prc=fmtAnl(r.principal)+" ANL"; anlC=fmtAnl(r.anl)+" ANL"; xntC=fmtXnt(r.xnt)+" XNT";
+      capyC = r.capy>0n ? '<span title="'+T("histCapyReserved")+'">'+fmtAnl(r.capy)+' CAPY*</span>' : dash; }
+    return "<tr><td>"+(i+1)+"</td><td>"+typ+"</td><td>"+prc+"</td><td>"+anlC+"</td><td>"+xntC+"</td><td>"+capyC+"</td>"+
+      "<td>"+fmtDT(r.ts)+"</td>"+
       "<td><a href=\""+EXP+r.sig+"\" target=\"_blank\" rel=\"noopener\" style=\"color:var(--amber)\">"+r.sig.slice(0,6)+"…</a></td></tr>";
   }).join("");
-  // suma nagrod (tylko nagrody: ANL reward + XNT + CAPY, BEZ principal)
-  var _plS=(function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl";}catch(e){return false;}})();
-  var sumAnl=0n,sumXnt=0n,sumCapy=0n;
-  rows.forEach(function(r){ if(r.kind!=="window"){sumAnl+=r.anl;} sumXnt+=r.xnt; sumCapy+=(r.capy||0n); });
+  const t = histTotals(rows);
   tb.innerHTML += '<tr style="border-top:2px solid var(--edge);font-weight:700">'+
-    '<td colspan="3">'+(_plS?"Suma nagr\u00f3d":"Total rewards")+(partial?' <span class="mut" style="font-weight:400">('+T("rpcPartial")+')</span>':'')+'</td>'+
-    '<td>'+fmtAnl(sumAnl)+' ANL</td>'+
-    '<td>'+fmtXnt(sumXnt)+' XNT</td>'+
-    '<td>'+fmtAnl(sumCapy)+' CAPY</td>'+
-    '<td colspan="2"></td></tr>';
+    '<td colspan="3">'+T("histTotal")+(partial?' <span class="mut" style="font-weight:400">('+T("rpcPartial")+')</span>':'')+'</td>'+
+    '<td>'+fmtAnl(t.anl)+' ANL</td><td>'+fmtXnt(t.xnt)+' XNT</td><td>'+fmtAnl(t.capy)+' CAPY</td><td colspan="2"></td></tr>';
   let note = document.getElementById("histNote");
   if(!note){ note = document.createElement("p"); note.id = "histNote"; note.className = "mut"; note.style.cssText = "font-size:12px;margin:8px 0 0"; box.appendChild(note); }
-  note.textContent = T("histNote") + (partial ? " · " + T("rpcPartial") : "");
+  note.innerHTML = (hasStake ? '<label style="cursor:pointer;margin-right:12px"><input type="checkbox" id="histShowStake"'+(showStake?' checked':'')+'> '+T("histShowStake")+'</label>' : '')
+    + T("histNote") + (partial ? " · " + T("rpcPartial") : "");
+  const cb = document.getElementById("histShowStake");
+  if(cb) cb.onchange = function(){ try{ localStorage.setItem("anlHistShowStake", cb.checked ? "1" : "0"); }catch(_){} renderHistory(window.__histRows || rows, window.__histPartial); };
   box.style.display="block";
 }
 function renderClaimedTotals(rows){
   const setTxt = (id, v)=>{ const e=document.getElementById(id); if(e) e.textContent = v; };
-  let anlClaimed=0n, xntEnd=0n, xntWindow=0n;
-  rows.forEach(function(r){ if(r.kind==="window"){ xntWindow+=r.xnt; } else { anlClaimed+=r.anl; xntEnd+=r.xnt; } });
+  const t = histTotals(rows);
   const _pl=(function(){try{return (window.anlCurrentLang&&window.anlCurrentLang())==="pl";}catch(e){return false;}})();
-  setTxt("wsAnlClaimed", fmtAnl(anlClaimed)+" ANL");
-  setTxt("wsXntClaimed", fmtXnt(xntEnd+xntWindow)+" XNT");
+  setTxt("wsAnlClaimed", fmtAnl(t.anl)+" ANL");
+  setTxt("wsXntClaimed", fmtXnt(t.xnt)+" XNT");
   const sub=$("wsXntClaimedSub");
-  if(sub && (xntWindow>0n)) sub.textContent = (_pl?"w tym z okien: ":"from windows: ")+fmtXnt(xntWindow)+" XNT";
+  if(sub && (t.xntWindow>0n)) sub.textContent = (_pl?"w tym z okien: ":"from windows: ")+fmtXnt(t.xntWindow)+" XNT";
 }
 window.__posSort = {key:null, dir:1};
 function anlRenderPositions(){
@@ -2386,7 +2456,7 @@ const DPT = {
      lockedG:"do końca okresu", lockedGT:"Pozycje Genesis są zablokowane do końca zadeklarowanego okresu — bez opcji zerwania (WP v1.1).",
      errGas:"Nie udało się wysłać transakcji. Sprawdź, czy masz XNT na opłaty sieciowe w portfelu.", errRejected:"Transakcja odrzucona w portfelu.", errNetwork:"Problem z siecią — spróbuj ponownie za chwilę.", errGeneric:"Nie udało się zrealizować operacji. Spróbuj ponownie.", unstakeConfirm:"Zerwać pozycję przed czasem? Kapitał wróci od razu w całości, ale WSZYSTKIE nagrody (ANL, XNT i CAPY) bezpowrotnie przepadną.",
      dayW:"dzień", winW:"okna 31/91 dni",
-     refreshing:"Odświeżam…", rpcBusy:"RPC przeciążone (429) — pokazuję dane częściowe, spróbuj za chwilę.", rpcPartial:"historia częściowa — limit RPC", histNote:"Historia z RPC (retencja ok. 2 dni) + lokalny cache przeglądarki — po wyczyszczeniu danych strony bardzo stare odbiory mogą zniknąć. Docelowo: indekser."},
+     refreshing:"Odświeżam…", rpcBusy:"RPC przeciążone (429) — pokazuję dane częściowe, spróbuj za chwilę.", rpcPartial:"historia częściowa — limit RPC", histNote:"Historia z RPC (retencja ok. 2 dni) + lokalny cache przeglądarki — po wyczyszczeniu danych strony bardzo stare odbiory mogą zniknąć. Docelowo: indekser.", histClaim:"Odbiór", histWindow:"XNT Claim", histCapy:"Odbiór CAPY", histUnstake:"Zerwanie", histStake:"Stake", histForfeit:"przepadło:", histForfeitShort:"przepadło", histShowStake:"pokaż stake", histTotal:"Suma nagród", histCapyReserved:"CAPY zarezerwowane przy odbiorze — wypłata osobno (Odbiór CAPY); nie wliczane do sumy"},
  en:{noWallet:"No wallet detected. Install Phantom, Backpack or X1 Wallet and refresh the page.",
      rejected:"Connection rejected: ", connected:"Connected: ",
      noPos:"No positions yet — open your first one above.", noPos2:"No positions.",
@@ -2402,7 +2472,7 @@ const DPT = {
      lockedG:"until period end", lockedGT:"Genesis positions are locked until the end of the declared period — no early exit (WP v1.1).",
      errGas:"Could not send the transaction. Check that you have XNT for network fees in your wallet.", errRejected:"Transaction rejected in the wallet.", errNetwork:"Network issue — please try again in a moment.", errGeneric:"Could not complete the operation. Please try again.", unstakeConfirm:"Break this position early? Principal returns immediately in full, but ALL rewards (ANL and XNT) are forfeited forever.",
      dayW:"day", winW:"windows 31/91 days",
-     refreshing:"Refreshing…", rpcBusy:"RPC rate-limited (429) — showing partial data, try again shortly.", rpcPartial:"partial history — RPC limit", histNote:"History from RPC (~2-day retention) + local browser cache — very old claims may disappear after clearing site data. Indexer planned."}
+     refreshing:"Refreshing…", rpcBusy:"RPC rate-limited (429) — showing partial data, try again shortly.", rpcPartial:"partial history — RPC limit", histNote:"History from RPC (~2-day retention) + local browser cache — very old claims may disappear after clearing site data. Indexer planned.", histClaim:"Claim", histWindow:"XNT Claim", histCapy:"CAPY Claim", histUnstake:"Unstake", histStake:"Stake", histForfeit:"forfeited:", histForfeitShort:"forfeited", histShowStake:"show stakes", histTotal:"Total rewards", histCapyReserved:"CAPY reserved at claim — paid separately (CAPY Claim); not counted in the total"}
 };
 let DPL = (window.anlCurrentLang && window.anlCurrentLang()==="pl")?"pl":"en";
 const T = (k)=>{
