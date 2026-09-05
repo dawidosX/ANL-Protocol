@@ -62,7 +62,7 @@ Metoda: `cargo tree -i <crate> -e normal` (graf hosta) oraz **`cargo +solana tre
 | RUSTSEC-2025-0009 | ring 0.16.20 | vulnerability | TLS klienta RPC | NIE | dev-deps |
 | RUSTSEC-2022-0093 | ed25519-dalek 1.0.1 | vulnerability | solana-sdk (podpisywanie) | NIE | SDK/testy; program nie podpisuje |
 | RUSTSEC-2024-0344 | curve25519-dalek 3.2.1 | vulnerability | solana-zk-token-sdk pod `cfg(not(solana))` | NIE | poza artefaktem |
-| RUSTSEC-2023-0033 | **borsh 0.9.3** | unsound (ZST) | solana-program 1.18 (moduł kompatybilności `borsh0_9`) | **TAK** | program deserializuje konta borsh **0.10.4** (Anchor 0.30.1); ZST nie występują w naszych strukturach; ryzyko: brak, do potwierdzenia przez Recenzenta |
+| RUSTSEC-2023-0033 | **borsh 0.9.3** | unsound (ZST) | solana-program 1.18 (moduł kompatybilności `borsh0_9`) | **TAK** | **nieosiągalne (potwierdzone przez Recenzenta):** advisory = deserializacja `Vec<T>` dla ZST bez `Copy` (dzielenie przez `size_of::<T>() == 0`); nasze konta/argumenty nie mają ZST ani `Vec<ZST>` (u8…u128/i64/bool/Pubkey/enum/[u8;N]); Anchor 0.30.1 deserializuje borsh 0.10.x; borsh 0.9 tylko dla legacy API `solana-program`, którego nie wołamy |
 | RUSTSEC-2025-0141 | **bincode 1.3.3** | unmaintained | solana-program, anchor-lang | **TAK** | brak podatności; znika z upgrade'em stosu |
 | RUSTSEC-2023-0126, 2026-0248 | im 15.1.0 | unsound / unmaintained | solana-frozen-abi ← solana-sdk (`cfg(not(solana))`) | NIE | host |
 | RUSTSEC-2026-0251/0255 | sized-chunks 0.6.5 | unmaintained / unsound | im | NIE | host |
