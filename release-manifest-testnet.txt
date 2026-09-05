@@ -4,3 +4,5 @@ head: 814e16b6087d942bea4bde9de4fbeec47591bcad
 features: network-testnet,test-periods
 sha256: 332553d4236f3c75949980aeba5d9fcec1a08fafed69d9dba2adf4857cbd8b37
 rustc: rustc 1.97.1 (8bab26f4f 2026-07-14)
+deployed_slot: 185887287
+deploy_date_utc: 2026-09-05T13:22:02Z
