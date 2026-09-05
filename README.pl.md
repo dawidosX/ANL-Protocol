@@ -100,6 +100,10 @@ Statystyki live (TVL, salda skarbców, walidator) czytane wprost z łańcucha.
 
 ## Bezpieczeństwo
 
+**Security / Bug bounty:** zamrożony kod testnetu (`v1.0-testnet-freeze`, `src_tree 4c225639…`) objęty jest bug bounty
+do **1 000 000 ANL** (Critical). Zakres, wykluczenia, wymagany dowód i zasady prywatnego zgłaszania:
+**[SECURITY.md](SECURITY.md)**.
+
 Protokół przeszedł **wiele rund przeglądu bezpieczeństwa**, z ustaleniami naprawionymi
 i niezależnie zweryfikowanymi — pełny ślad w
 **[docs/SECURITY-AUDITS.pl.md](docs/SECURITY-AUDITS.pl.md)**, raporty audytorów

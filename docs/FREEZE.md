@@ -27,8 +27,8 @@ bez pinu `initialize` nie uruchomi się pod `4Cpx…`.
 
 | Audytor | A (Program ID / pin) | B (provenance) | C (CAPY 20M) | Regresja 7.1→7.2 | FREEZE | Ocena | Plik |
 |---|---|---|---|---|---|---|---|
-| Kimi | Czyste | Czyste (Uwaga: osobny manifest mainnet) | Czyste | Czyste | **TAK** | **9 / 10** | `docs/audits/2026-09-05_audyt-r7.2_kimi.md` |
-| B | Czyste | Czyste | Czyste | Czyste | **TAK** | **9 / 10** | przekazany konwersacyjnie (plik do uzupełnienia) |
+| Kimi | Czyste | Czyste (weryfikacja wprost na bundle) | Czyste | Czyste | **TAK** | **9 / 10** | `docs/audits/2026-09-05_audyt-r7.2_kimi.md` |
+| B | Czyste | Czyste (Uwaga: osobny manifest mainnet) | Czyste | Czyste | **TAK** | **9 / 10** | `docs/audits/2026-09-05_audyt-r7.2_B.md` |
 | C | CLOSED | CLOSED (+ `cargo_lock_sha`/`root_cargo_toml_sha` w manifeście mainnet) | CLOSED | Czyste | **TAK** | **9.3 / 10** | `docs/audits/2026-09-05_audyt-r7.2_C.md` |
 
 Findingów Critical/High/Medium/Low w delcie 7.2: **0** (wszyscy trzej). Punkty odjęte wyłącznie za F-02 (jeden hot key)
