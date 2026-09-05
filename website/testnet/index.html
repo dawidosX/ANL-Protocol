@@ -1392,25 +1392,32 @@ const DEC = 1_000_000_000n;
 // disableRetryOnRateLimit: web3.js domyslnie powtarza 429 co 500 ms w petli — to
 // dawalo "martwa" strone. Teraz 429 wraca jako blad, a limiter nizej pilnuje tempa.
 const _rawConn = new Connection(RPC_URL, {commitment:"confirmed", disableRetryOnRateLimit:true});
-// Globalny limiter RPC: max RPC_MAX_PARALLEL rownoleglych zapytan, RPC_GAP_MS
-// odstepu miedzy startami. Prosty semafor owiniety wokol KAZDEJ metody conn.*.
-const RPC_MAX_PARALLEL = 4, RPC_GAP_MS = 150;
-let _rpcActive = 0, _rpcLastStart = 0; const _rpcQueue = [];
-window.__rpcCalls = 0; // licznik zapytan (diagnostyka: console)
-function _rpcPump(){
-  if(_rpcActive >= RPC_MAX_PARALLEL || _rpcQueue.length === 0) return;
-  const wait = _rpcLastStart + RPC_GAP_MS - Date.now();
-  if(wait > 0){ setTimeout(_rpcPump, wait); return; }
-  _rpcLastStart = Date.now(); _rpcActive++; window.__rpcCalls++;
-  const go = _rpcQueue.shift(); go();
-  if(_rpcQueue.length) setTimeout(_rpcPump, RPC_GAP_MS);
+// Limitery RPC (semafor + minimalny odstep miedzy startami), owiniete wokol KAZDEJ metody conn.*:
+//  - conn:     ogolny (pozycje, salda, checkpointy, transakcje) — 4 rownolegle, 150 ms,
+//  - connHist: tylko indeksowanie historii (getSignaturesForAddress/getTransaction) — 8 rownolegle, 60 ms.
+// Osobne kolejki, wspolny licznik window.__rpcCalls (diagnostyka: console).
+window.__rpcCalls = 0;
+function makeLimitedConn(raw, maxParallel, gapMs){
+  let active = 0, lastStart = 0; const queue = [];
+  function pump(){
+    if(active >= maxParallel || queue.length === 0) return;
+    const wait = lastStart + gapMs - Date.now();
+    if(wait > 0){ setTimeout(pump, wait); return; }
+    lastStart = Date.now(); active++; window.__rpcCalls++;
+    const go = queue.shift(); go();
+    if(queue.length) setTimeout(pump, gapMs);
+  }
+  const slot = function(){ return new Promise(function(res){ queue.push(res); pump(); }); };
+  const done = function(){ active--; pump(); };
+  return new Proxy(raw, { get(t, k){
+    const v = t[k]; if(typeof v !== "function") return v;
+    return async function(...args){ await slot(); try{ return await v.apply(t, args); } finally{ done(); } };
+  }});
 }
-function _rpcSlot(){ return new Promise(function(res){ _rpcQueue.push(res); _rpcPump(); }); }
-function _rpcDone(){ _rpcActive--; _rpcPump(); }
-const conn = new Proxy(_rawConn, { get(t, k){
-  const v = t[k]; if(typeof v !== "function") return v;
-  return async function(...args){ await _rpcSlot(); try{ return await v.apply(t, args); } finally{ _rpcDone(); } };
-}});
+const RPC_MAX_PARALLEL = 4, RPC_GAP_MS = 150;
+const HIST_MAX_PARALLEL = 8, HIST_GAP_MS = 60;
+const conn = makeLimitedConn(_rawConn, RPC_MAX_PARALLEL, RPC_GAP_MS);
+const connHist = makeLimitedConn(_rawConn, HIST_MAX_PARALLEL, HIST_GAP_MS);
 function isRateLimited(e){ return /429|Too Many Requests|rate limit/i.test(String((e && e.message) || e)); }
 const enc = (s)=>new TextEncoder().encode(s);
 const pda = (seeds)=>PublicKey.findProgramAddressSync(seeds, PROGRAM_ID)[0];
@@ -1701,7 +1708,7 @@ function decodeWindow(b64){
 // indeks anlProg:v1 = uporzadkowana lista [sig, blockTime]. Widok portfela = filtr po ownerze zdarzenia.
 // Pierwsze ladowanie: pasek postepu "Indeksowanie historii: n/N"; 429 -> przerwij, pokaz co jest,
 // indeks zostaje NIEKOMPLETNY (nastepny refresh dociaga brakujace). Potem: 1 strona + tylko nowe sygnatury.
-const HISTORY_PAGE = 1000, HISTORY_MAX_PAGES = 20, HISTORY_PARALLEL = 4;
+const HISTORY_PAGE = 1000, HISTORY_MAX_PAGES = 20, HISTORY_PARALLEL = 8; // = HIST_MAX_PARALLEL (connHist)
 const TX_CACHE_PREFIX = "anlTx:v3:", TX_CACHE_LEGACY = ["anlTx:v2:", "anlTx:v1:"];
 const PROG_INDEX_KEY = "anlProg:v1", PROG_COMPLETE_KEY = "anlProg:v1:complete";
 const EV_BIG = ["idx","principal","anl","xnt","capy","forfeitAnl","forfeitXnt"];
@@ -1782,15 +1789,6 @@ function decodeTxEvents(tx){
   }
   return out;
 }
-function txTouchesProgram(tx){
-  const pid = PROGRAM_ID.toBase58();
-  try{
-    const msg = tx.transaction.message;
-    const keys = (msg.staticAccountKeys || msg.accountKeys || []).map(function(k){ return k.toBase58 ? k.toBase58() : (k.pubkey ? k.pubkey.toBase58() : String(k)); });
-    if(keys.indexOf(pid)>=0) return true;
-  }catch(_){}
-  return ((tx && tx.meta && tx.meta.logMessages) || []).some(function(l){ return l.indexOf(pid)>=0; });
-}
 async function fetchClaimEvents(){
   const me = pubkey.toBase58();
   const idx = progIndexGet(); const known = new Map(idx.map(function(e){ return [e[0], e[1]]; }));
@@ -1799,7 +1797,7 @@ async function fetchClaimEvents(){
   outer:
   for(let page=0; page<HISTORY_MAX_PAGES; page++){
     let sigs;
-    try{ sigs = await conn.getSignaturesForAddress(PROGRAM_ID, before ? {limit:HISTORY_PAGE, before:before} : {limit:HISTORY_PAGE}); }
+    try{ sigs = await connHist.getSignaturesForAddress(PROGRAM_ID, before ? {limit:HISTORY_PAGE, before:before} : {limit:HISTORY_PAGE}); }
     catch(e){ if(isRateLimited(e)){ partial = true; break; } throw e; }
     if(!sigs.length){ reachedEnd = true; break; }
     for(const s of sigs){
@@ -1810,7 +1808,7 @@ async function fetchClaimEvents(){
     if(sigs.length < HISTORY_PAGE){ reachedEnd = true; break; }
     before = sigs[sigs.length-1].signature;
   }
-  // brakujace tx: cache legacy bez RPC, reszta getTransaction (HISTORY_PARALLEL naraz; globalny limiter pilnuje tempa)
+  // brakujace tx: cache legacy bez RPC, reszta getTransaction przez connHist (8 rownolegle, 60 ms)
   const total = pending.length; let done = 0; const fetched = [];
   if(total > 0) histProgress(0, total);
   for(let i=0; i<pending.length && !partial; i+=HISTORY_PARALLEL){
@@ -1820,7 +1818,7 @@ async function fetchClaimEvents(){
       if(txCacheGet(sig)) return {ok:true, sig:sig, bt:bt};
       const leg = txCacheLegacy(sig); if(leg){ txCacheSet(sig, leg.ev, leg.keys); return {ok:true, sig:sig, bt:bt}; }
       try{
-        const tx = await conn.getTransaction(sig, {commitment:"confirmed", maxSupportedTransactionVersion:0});
+        const tx = await connHist.getTransaction(sig, {commitment:"confirmed", maxSupportedTransactionVersion:0});
         if(!tx) return {ok:false, sig:sig, bt:bt, rate:false};
         txCacheSet(sig, decodeTxEvents(tx), txAccountKeys(tx));
         return {ok:true, sig:sig, bt:(tx.blockTime || bt)};
