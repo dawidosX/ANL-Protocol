@@ -1,6 +1,6 @@
 release: testnet
-date: 2026-09-04T14:20:59Z
-head: 125f4307b48eaa80e1d233c182904c1dbf8459aa
+date: 2026-09-05T12:00:37Z
+head: e16c634cbb484ad4ec4fc1899e1d4fa31b64e3c7
 features: network-testnet,test-periods
-sha256: 8e0403b33c4df2bd7fb8d96c96bd1c345714ba2858e2ffd7e09ff46785771f93
+sha256: 6ae00e641ee144f811244e21601bc2acd8fb7175cc4c6ef811fb0a642fd817c4
 rustc: rustc 1.97.1 (8bab26f4f 2026-07-14)
