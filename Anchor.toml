@@ -5,14 +5,14 @@ anchor_version = "0.30.1"
 seeds = false
 skip-lint = false
 
+# Localnet/testy = build BEZ feature sieciowego = testowy Program ID (R7.2 A;
+# keypair poza repo: target/test-program-id.json). Zrodlem prawdy jest declare_id! w lib.rs.
 [programs.localnet]
-anl_staking = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
+anl_staking = "ChG81WApHgpbWjt4r8wmJ57WS3MkXyMGzJ2tBbC8pcov"
 
-# Testnet X1 (build: scripts/build-testnet.sh; klaster przez provider.cluster)
-# UWAGA: testnetowy Program ID jest EFEMERYCZNY (resety środowiska);
-# źródłem prawdy jest declare_id! w lib.rs pod feature network-testnet.
+# Testnet X1 (build: scripts/build-testnet.sh, feature network-testnet) - wdrozony program.
 [programs.testnet]
-anl_staking = "49vhBowGFDHoX9te8MmvFjFyyKQyFsDZCPmd8uA635XB"
+anl_staking = "4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM"
 
 # Mainnet: placeholder bez keypaira — do ceremonii Program ID
 [programs.mainnet]

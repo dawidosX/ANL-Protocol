@@ -6,6 +6,20 @@ TAG="${1:-audit}"
 cd "$(git rev-parse --show-toplevel)"
 if [ -n "$(git status --porcelain)" ]; then echo "BLAD: drzewo nie jest czyste" >&2; git status --short >&2; exit 1; fi
 HEAD_FULL=$(git rev-parse HEAD); HEAD=$(git rev-parse --short HEAD)
+# R7.2 (B): provenance FAIL-CLOSED - manifest musi opisywac DOKLADNIE ten kod i te binarke.
+MAN=release-manifest-testnet.txt; BIN=target/deploy/anl_staking.so
+[ -f "$MAN" ] || { echo "BLAD provenance: brak $MAN (uruchom build-testnet.sh)" >&2; exit 1; }
+[ -f "$BIN" ] || { echo "BLAD provenance: brak $BIN (uruchom build-testnet.sh)" >&2; exit 1; }
+prov_check() { # nazwa, wartosc z manifestu, wartosc rzeczywista
+  if [ -z "$2" ]; then echo "BLAD provenance: manifest nie zawiera pola $1" >&2; exit 1; fi
+  if [ "$2" != "$3" ]; then echo "BLAD provenance: $1 nie zgadza sie: manifest=$2 aktualne=$3" >&2; exit 1; fi
+}
+mf() { sed -n "s/^$1: //p" "$MAN" | head -1; }
+prov_check src_tree  "$(mf src_tree)"  "$(git rev-parse HEAD:programs/anl_staking/src)"
+prov_check code_tree "$(mf code_tree)" "$(git rev-parse HEAD:programs)"
+prov_check math_tree "$(mf math_tree)" "$(git rev-parse HEAD:crates/anl-math)"
+prov_check sha256    "$(mf sha256)"    "$(shasum -a 256 "$BIN" | cut -d' ' -f1)"
+echo "provenance OK: src_tree/code_tree/math_tree/sha256 zgodne z HEAD i binarka"
 ZIP="$HOME/Downloads/ANL-Protocol-audyt-${TAG}-${HEAD}.zip"; MAN="${ZIP%.zip}.manifest.txt"
 rm -f "$ZIP" "$MAN"
 zip -r -q "$ZIP" programs/anl_staking/src programs/anl_staking/tests programs/anl_staking/Cargo.toml \

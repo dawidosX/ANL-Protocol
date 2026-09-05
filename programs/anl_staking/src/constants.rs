@@ -50,6 +50,13 @@ pub const EXPECTED_XNT_MINT: anchor_lang::prelude::Pubkey =
 /// entitlement = anl_reward * available_capy / remaining_anl
 pub const ANL_REWARD_POOL: u128 = 200_000_000_000_000_000;
 
+/// AUDYT R7.2 (C): tokenomika WP jako inwariant on-chain — całkowita podaż CAPY
+/// = 20 000 000 × 10^9 (decimals 9). Sprawdzana w `init_capy_vault` WYŁĄCZNIE w
+/// buildzie `network-mainnet` (authority wypalona ⇒ podaż niezmienna, więc
+/// jednorazowa kontrola przy setupie wystarcza). Testnet (1B CAPY testowych)
+/// bez tej bramki.
+pub const CAPY_TOTAL_SUPPLY: u64 = 20_000_000 * 1_000_000_000;
+
 /// AUDYT R7 — strażniki kompilowane z feature sieciowym (CI: `cargo test -p
 /// anl_staking --lib --features network-testnet,test-periods` oraz
 /// `--features network-mainnet`). Test pinu `initialize` nie jest możliwy w
@@ -64,6 +71,18 @@ mod init_authority_guard_testnet {
             super::EXPECTED_INIT_AUTHORITY.to_string(),
             "Dx2vEpVdMh2qScz4vEHAXquTm6QYocKbmPRdcXHLzvEm",
             "testnet: EXPECTED_INIT_AUTHORITY = klucz deployera testnetu"
+        );
+    }
+}
+
+#[cfg(all(test, feature = "network-mainnet"))]
+mod capy_supply_guard_mainnet {
+    #[test]
+    fn capy_supply_constant() {
+        assert_eq!(
+            super::CAPY_TOTAL_SUPPLY,
+            20_000_000_000_000_000,
+            "mainnet: podaz CAPY 20M x 10^9 (WP)"
         );
     }
 }
