@@ -98,9 +98,13 @@ proptest! {
             );
 
             // INWARIANT 4: strata zaokrągleń ograniczona — na każde zdarzenie
-            // co najwyżej max_shares/PRECISION + 2 jednostki.
+            // co najwyżej max_shares/PRECISION + 2 jednostki, PLUS floor przy
+            // sumowaniu `pending` per żywa pozycja (AUDYT R6 I-06: kontrprzykład
+            // proptest — n żywych pozycji gubi do n jednostek w `owed`, co nie
+            // jest stratą zdarzenia, tylko zaokrągleniem odczytu należności).
             let loss = funded - accounted;
-            let bound = events * ((max_shares as u128) / PRECISION + 2);
+            let live_positions = positions.iter().filter(|p| p.alive).count() as u128;
+            let bound = events * ((max_shares as u128) / PRECISION + 2) + live_positions;
             prop_assert!(loss <= bound, "strata {} > granica {}", loss, bound);
         }
     }
