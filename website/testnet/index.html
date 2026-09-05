@@ -1392,25 +1392,32 @@ const DEC = 1_000_000_000n;
 // disableRetryOnRateLimit: web3.js domyslnie powtarza 429 co 500 ms w petli — to
 // dawalo "martwa" strone. Teraz 429 wraca jako blad, a limiter nizej pilnuje tempa.
 const _rawConn = new Connection(RPC_URL, {commitment:"confirmed", disableRetryOnRateLimit:true});
-// Globalny limiter RPC: max RPC_MAX_PARALLEL rownoleglych zapytan, RPC_GAP_MS
-// odstepu miedzy startami. Prosty semafor owiniety wokol KAZDEJ metody conn.*.
-const RPC_MAX_PARALLEL = 4, RPC_GAP_MS = 150;
-let _rpcActive = 0, _rpcLastStart = 0; const _rpcQueue = [];
-window.__rpcCalls = 0; // licznik zapytan (diagnostyka: console)
-function _rpcPump(){
-  if(_rpcActive >= RPC_MAX_PARALLEL || _rpcQueue.length === 0) return;
-  const wait = _rpcLastStart + RPC_GAP_MS - Date.now();
-  if(wait > 0){ setTimeout(_rpcPump, wait); return; }
-  _rpcLastStart = Date.now(); _rpcActive++; window.__rpcCalls++;
-  const go = _rpcQueue.shift(); go();
-  if(_rpcQueue.length) setTimeout(_rpcPump, RPC_GAP_MS);
+// Limitery RPC (semafor + minimalny odstep miedzy startami), owiniete wokol KAZDEJ metody conn.*:
+//  - conn:     ogolny (pozycje, salda, checkpointy, transakcje) — 4 rownolegle, 150 ms,
+//  - connHist: tylko indeksowanie historii (getSignaturesForAddress/getTransaction) — 8 rownolegle, 60 ms.
+// Osobne kolejki, wspolny licznik window.__rpcCalls (diagnostyka: console).
+window.__rpcCalls = 0;
+function makeLimitedConn(raw, maxParallel, gapMs){
+  let active = 0, lastStart = 0; const queue = [];
+  function pump(){
+    if(active >= maxParallel || queue.length === 0) return;
+    const wait = lastStart + gapMs - Date.now();
+    if(wait > 0){ setTimeout(pump, wait); return; }
+    lastStart = Date.now(); active++; window.__rpcCalls++;
+    const go = queue.shift(); go();
+    if(queue.length) setTimeout(pump, gapMs);
+  }
+  const slot = function(){ return new Promise(function(res){ queue.push(res); pump(); }); };
+  const done = function(){ active--; pump(); };
+  return new Proxy(raw, { get(t, k){
+    const v = t[k]; if(typeof v !== "function") return v;
+    return async function(...args){ await slot(); try{ return await v.apply(t, args); } finally{ done(); } };
+  }});
 }
-function _rpcSlot(){ return new Promise(function(res){ _rpcQueue.push(res); _rpcPump(); }); }
-function _rpcDone(){ _rpcActive--; _rpcPump(); }
-const conn = new Proxy(_rawConn, { get(t, k){
-  const v = t[k]; if(typeof v !== "function") return v;
-  return async function(...args){ await _rpcSlot(); try{ return await v.apply(t, args); } finally{ _rpcDone(); } };
-}});
+const RPC_MAX_PARALLEL = 4, RPC_GAP_MS = 150;
+const HIST_MAX_PARALLEL = 8, HIST_GAP_MS = 60;
+const conn = makeLimitedConn(_rawConn, RPC_MAX_PARALLEL, RPC_GAP_MS);
+const connHist = makeLimitedConn(_rawConn, HIST_MAX_PARALLEL, HIST_GAP_MS);
 function isRateLimited(e){ return /429|Too Many Requests|rate limit/i.test(String((e && e.message) || e)); }
 const enc = (s)=>new TextEncoder().encode(s);
 const pda = (seeds)=>PublicKey.findProgramAddressSync(seeds, PROGRAM_ID)[0];
@@ -1693,38 +1700,43 @@ function decodeWindow(b64){
   const ts = dv.getBigInt64(o,true);
   return { owner:owner.toBase58(), idx, principal:0n, anl:0n, xnt:xntPaid, capy:0n, ts:Number(ts), kind:"window" };
 }
-// ===== Historia zdarzen programu dla portfela =====
-// Zrodlo: sygnatury PORTFELA (200/strona, do HISTORY_MAX_PAGES przez `before`; stop na sygnaturze
-// juz w indeksie, chyba ze trwa jednorazowy pelny skan po migracji). Nieznana sygnatura ->
-// getTransaction sekwencyjnie, filtr "tx dotyka PROGRAM_ID", dekodowanie WSZYSTKICH zdarzen
-// programu (Claim, XNT Claim, CAPY Claim, Unstake, Stake) do cache per sygnatura (anlTx:v2;
-// [] dla zwyklych transferow). Indeks sygnatur programu per portfel (anlHist:v3) => tabela i sumy
-// z PELNEJ historii lokalnej. Migracja z v1: wpisy z zdarzeniami kopiowane bez RPC; wpisy v1 == []
-// (mogly byc CAPY/Unstake/Stake, ktorych v1 nie dekodowal) pobierane ponownie, o ile RPC je ma.
-// 429 -> przerwij i pokaz to, co jest.
-const HISTORY_PAGE = 200, HISTORY_MAX_PAGES = 5;
-const TX_CACHE_PREFIX = "anlTx:v2:", TX_CACHE_PREFIX_V1 = "anlTx:v1:";
-const HIST_INDEX_PREFIX = "anlHist:v3:", HIST_INDEX_PREFIX_V2 = "anlHist:v2:", HIST_SCANNED_PREFIX = "anlHistV3Scanned:";
+// ===== Historia zdarzen programu (indeks per PROGRAM, wspolny cache) =====
+// Indeks sygnatur per adres PORTFELA na X1 jest niepelny (zwracal 9 z dzis), per PROGRAM jest pelny
+// w oknie retencji RPC (~2 dni). Zrodlo: getSignaturesForAddress(PROGRAM_ID), strony po 1000 przez
+// `before` do konca listy albo — gdy indeks jest KOMPLETNY — do pierwszej sygnatury juz w cache.
+// Kazda tx programu dekodowana RAZ do wspolnego cache anlTx:v3:<sig> = {ev:[zdarzenia], keys:[accountKeys]};
+// indeks anlProg:v1 = uporzadkowana lista [sig, blockTime]. Widok portfela = filtr po ownerze zdarzenia.
+// Pierwsze ladowanie: pasek postepu "Indeksowanie historii: n/N"; 429 -> przerwij, pokaz co jest,
+// indeks zostaje NIEKOMPLETNY (nastepny refresh dociaga brakujace). Potem: 1 strona + tylko nowe sygnatury.
+const HISTORY_PAGE = 1000, HISTORY_MAX_PAGES = 20, HISTORY_PARALLEL = 8; // = HIST_MAX_PARALLEL (connHist)
+const TX_CACHE_PREFIX = "anlTx:v3:", TX_CACHE_LEGACY = ["anlTx:v2:", "anlTx:v1:"];
+const PROG_INDEX_KEY = "anlProg:v1", PROG_COMPLETE_KEY = "anlProg:v1:complete";
 const EV_BIG = ["idx","principal","anl","xnt","capy","forfeitAnl","forfeitXnt"];
 function evToJson(e){ const o={}; for(const k in e){ o[k] = (typeof e[k]==="bigint") ? String(e[k]) : e[k]; } return o; }
 function evFromJson(o){ const e={}; for(const k in o){ e[k] = (EV_BIG.indexOf(k)>=0 && o[k]!==null && o[k]!==undefined) ? BigInt(o[k]) : o[k]; } return e; }
-function txCacheGetRaw(prefix, sig){ try{ const r=localStorage.getItem(prefix+sig); return r ? JSON.parse(r).map(evFromJson) : null; }catch(_){ return null; } }
-function txCacheGet(sig){ return txCacheGetRaw(TX_CACHE_PREFIX, sig); }
-function txCacheSet(sig, evs){ try{ localStorage.setItem(TX_CACHE_PREFIX+sig, JSON.stringify(evs.map(evToJson))); }catch(_){} }
-function histIndexGet(me){ try{ const r=localStorage.getItem(HIST_INDEX_PREFIX+me); return r ? JSON.parse(r) : []; }catch(_){ return []; } }
-function histIndexSet(me, sigs){ try{ localStorage.setItem(HIST_INDEX_PREFIX+me, JSON.stringify(sigs)); }catch(_){} }
-// Migracja indeksu v2 -> v3: sygnatury z cache v1 (zdarzenia Claim/XNT Claim) kopiowane do v2 bez RPC,
-// zeby nie zniknely odbiory starsze niz retencja RPC. Zwraca liste zmigrowanych sygnatur.
-function histMigrate(me){
-  let old=[]; try{ const r=localStorage.getItem(HIST_INDEX_PREFIX_V2+me); old = r ? JSON.parse(r) : []; }catch(_){}
-  const migrated=[];
-  for(const sig of old){
-    if(txCacheGet(sig)){ migrated.push(sig); continue; }
-    const v1 = txCacheGetRaw(TX_CACHE_PREFIX_V1, sig);
-    if(v1 && v1.length){ txCacheSet(sig, v1); migrated.push(sig); }
+function txCacheGet(sig){ try{ const r=localStorage.getItem(TX_CACHE_PREFIX+sig); if(!r) return null; const o=JSON.parse(r); return {ev:(o.ev||[]).map(evFromJson), keys:o.keys||[]}; }catch(_){ return null; } }
+function txCacheSet(sig, ev, keys){ try{ localStorage.setItem(TX_CACHE_PREFIX+sig, JSON.stringify({ev:ev.map(evToJson), keys:keys||[]})); }catch(_){} }
+// migracja v1/v2 (tablica zdarzen) -> v3 bez RPC; klucze = ownerzy zdarzen. Puste [] => brak (v1 nie dekodowal CAPY/Unstake/Stake) => pobierz ponownie.
+function txCacheLegacy(sig){
+  for(const pre of TX_CACHE_LEGACY){
+    try{ const r=localStorage.getItem(pre+sig); if(!r) continue; const arr=JSON.parse(r);
+      if(Array.isArray(arr) && arr.length){ const ev=arr.map(evFromJson); return {ev:ev, keys:Array.from(new Set(ev.map(function(e){ return e.owner; })))}; } }catch(_){}
   }
-  try{ if(old.length) localStorage.removeItem(HIST_INDEX_PREFIX_V2+me); }catch(_){}
-  return migrated;
+  return null;
+}
+function progIndexGet(){ try{ const r=localStorage.getItem(PROG_INDEX_KEY); return r ? JSON.parse(r) : []; }catch(_){ return []; } }
+function progIndexSet(list){ try{ localStorage.setItem(PROG_INDEX_KEY, JSON.stringify(list)); }catch(_){} }
+function progComplete(){ try{ return localStorage.getItem(PROG_COMPLETE_KEY)==="1"; }catch(_){ return false; } }
+function histProgress(done, total){
+  let el = document.getElementById("histProgress"); const box = $("histBox");
+  if(!el){ if(!box || !box.parentNode) return; el = document.createElement("p"); el.id = "histProgress"; el.className = "mut"; el.style.cssText = "font-size:12px;margin:10px 0 0"; box.parentNode.insertBefore(el, box); }
+  if(total === null){ el.style.display = "none"; return; }
+  el.style.display = "block"; el.textContent = T("histIndexing")+" "+done+"/"+total;
+}
+function txAccountKeys(tx){
+  try{ const msg = tx.transaction.message;
+    return (msg.staticAccountKeys || msg.accountKeys || []).map(function(k){ return k.toBase58 ? k.toBase58() : (k.pubkey ? k.pubkey.toBase58() : String(k)); });
+  }catch(_){ return []; }
 }
 // Dyskryminatory zdarzen Anchora: sha256("event:<Nazwa>")[..8]
 const DISC_CAPYCLAIMED = [142,110,65,203,124,86,120,162];   // CapyClaimed
@@ -1777,66 +1789,71 @@ function decodeTxEvents(tx){
   }
   return out;
 }
-function txTouchesProgram(tx){
-  const pid = PROGRAM_ID.toBase58();
-  try{
-    const msg = tx.transaction.message;
-    const keys = (msg.staticAccountKeys || msg.accountKeys || []).map(function(k){ return k.toBase58 ? k.toBase58() : (k.pubkey ? k.pubkey.toBase58() : String(k)); });
-    if(keys.indexOf(pid)>=0) return true;
-  }catch(_){}
-  return ((tx && tx.meta && tx.meta.logMessages) || []).some(function(l){ return l.indexOf(pid)>=0; });
-}
 async function fetchClaimEvents(){
   const me = pubkey.toBase58();
-  const migrated = histMigrate(me);
-  let scanned = false; try{ scanned = localStorage.getItem(HIST_SCANNED_PREFIX+me)==="1"; }catch(_){}
-  const fullScan = !scanned;   // jednorazowo po wdrozeniu v2/v3: przejdz wszystkie strony, nie zatrzymuj sie na znanych
-  const known = new Set(histIndexGet(me).concat(migrated));
-  const newProgSigs = migrated.slice(); let partial = false, before = undefined, exhausted = false;
+  const idx = progIndexGet(); const known = new Map(idx.map(function(e){ return [e[0], e[1]]; }));
+  const complete = progComplete();
+  let partial = false, before = undefined, reachedEnd = false; const pending = [];   // [sig, blockTime]
   outer:
   for(let page=0; page<HISTORY_MAX_PAGES; page++){
     let sigs;
-    try{ sigs = await conn.getSignaturesForAddress(pubkey, before ? {limit:HISTORY_PAGE, before:before} : {limit:HISTORY_PAGE}); }
+    try{ sigs = await connHist.getSignaturesForAddress(PROGRAM_ID, before ? {limit:HISTORY_PAGE, before:before} : {limit:HISTORY_PAGE}); }
     catch(e){ if(isRateLimited(e)){ partial = true; break; } throw e; }
-    if(!sigs.length){ exhausted = true; break; }
+    if(!sigs.length){ reachedEnd = true; break; }
     for(const s of sigs){
       if(s.err) continue;
-      if(known.has(s.signature)){ if(fullScan) continue; break outer; }
-      const cached = txCacheGet(s.signature);
-      if(cached){ if(cached.length) newProgSigs.push(s.signature); continue; }
-      const v1 = txCacheGetRaw(TX_CACHE_PREFIX_V1, s.signature);
-      if(v1 && v1.length){ txCacheSet(s.signature, v1); newProgSigs.push(s.signature); continue; }   // migracja bez RPC
-      let tx;
-      try{ tx = await conn.getTransaction(s.signature, {commitment:"confirmed", maxSupportedTransactionVersion:0}); }
-      catch(e){ if(isRateLimited(e)){ partial = true; break outer; } continue; }
-      if(!tx){ continue; }                                                 // poza retencja RPC — nastepnym razem
-      if(!txTouchesProgram(tx)){ txCacheSet(s.signature, []); continue; }  // zwykly transfer
-      const evs = decodeTxEvents(tx); txCacheSet(s.signature, evs);
-      if(evs.length) newProgSigs.push(s.signature);
+      if(known.has(s.signature) && txCacheGet(s.signature)){ if(complete) break outer; continue; }
+      pending.push([s.signature, s.blockTime || 0]);
     }
-    if(sigs.length < HISTORY_PAGE){ exhausted = true; break; }
+    if(sigs.length < HISTORY_PAGE){ reachedEnd = true; break; }
     before = sigs[sigs.length-1].signature;
   }
-  if(fullScan && !partial && exhausted){ try{ localStorage.setItem(HIST_SCANNED_PREFIX+me, "1"); }catch(_){} }
-  const index = Array.from(new Set(newProgSigs.concat(histIndexGet(me))));
-  histIndexSet(me, index);
-  const rows = [];
-  for(const sig of index){
-    const evs = txCacheGet(sig); if(!evs) continue;
-    for(const ev of evs){ if(ev.owner === me) rows.push(Object.assign({}, ev, {sig:sig})); }
+  // brakujace tx: cache legacy bez RPC, reszta getTransaction przez connHist (8 rownolegle, 60 ms)
+  const total = pending.length; let done = 0; const fetched = [];
+  if(total > 0) histProgress(0, total);
+  for(let i=0; i<pending.length && !partial; i+=HISTORY_PARALLEL){
+    const chunk = pending.slice(i, i+HISTORY_PARALLEL);
+    const res = await Promise.all(chunk.map(async function(p){
+      const sig = p[0], bt = p[1];
+      if(txCacheGet(sig)) return {ok:true, sig:sig, bt:bt};
+      const leg = txCacheLegacy(sig); if(leg){ txCacheSet(sig, leg.ev, leg.keys); return {ok:true, sig:sig, bt:bt}; }
+      try{
+        const tx = await connHist.getTransaction(sig, {commitment:"confirmed", maxSupportedTransactionVersion:0});
+        if(!tx) return {ok:false, sig:sig, bt:bt, rate:false};
+        txCacheSet(sig, decodeTxEvents(tx), txAccountKeys(tx));
+        return {ok:true, sig:sig, bt:(tx.blockTime || bt)};
+      }catch(e){ return {ok:false, sig:sig, bt:bt, rate:isRateLimited(e)}; }
+    }));
+    for(const r of res){ if(r.ok) fetched.push([r.sig, r.bt]); else if(r.rate) partial = true; }
+    done += chunk.length; histProgress(Math.min(done, total), total);
   }
-  return {rows, partial};
+  histProgress(0, null);
+  const merged = new Map(idx.map(function(e){ return [e[0], e[1]]; }));
+  for(const f of fetched) merged.set(f[0], f[1]);
+  const list = Array.from(merged.entries()).sort(function(a,b){ return b[1]-a[1]; });
+  progIndexSet(list);
+  const allDone = !partial && reachedEnd && fetched.length === pending.length;
+  try{ localStorage.setItem(PROG_COMPLETE_KEY, allDone ? "1" : "0"); }catch(_){}
+  // widok portfela z PELNEGO wspolnego cache
+  const rows = []; let oldest = null;
+  for(const e of list){
+    const sig = e[0], bt = e[1]; const c = txCacheGet(sig); if(!c) continue;
+    if(bt && (oldest === null || bt < oldest)) oldest = bt;
+    for(const ev of c.ev){ if(ev.owner === me) rows.push(Object.assign({}, ev, {sig:sig})); }
+  }
+  return {rows:rows, partial:partial, oldest:oldest, indexed:list.length};
 }
 async function loadHistory(){
   if(!pubkey) return;
   const res = await fetchClaimEvents();
-  window.__histRows = res.rows; window.__histPartial = res.partial; // do re-renderu (jezyk, checkbox) bez RPC
-  renderHistory(res.rows, res.partial);
+  window.__histRows = res.rows; window.__histPartial = res.partial; window.__histOldest = res.oldest; // re-render (jezyk, checkbox) bez RPC
+  renderHistory(res.rows, res.partial, res.oldest);
   renderClaimedTotals(res.rows);
 }
 // DD.MM.YYYY HH:MM — spojnie z tabela pozycji, niezaleznie od jezyka
 function fmtDT(ts){ const d=new Date(ts*1000); const p=function(n){ return String(n).padStart(2,"0"); };
   return p(d.getDate())+"."+p(d.getMonth()+1)+"."+d.getFullYear()+" "+p(d.getHours())+":"+p(d.getMinutes()); }
+function fmtD(ts){ return fmtDT(ts).slice(0,10); }
 // Sumy: WYLACZNIE realnie odebrane — Claim (ANL + XNT), XNT Claim (XNT), CAPY Claim (CAPY).
 // Przepadki (Unstake) i Stake nie wchodza; CAPY z eventu Claim to rezerwacja, wyplata = CAPY Claim.
 function histTotals(rows){
@@ -1849,7 +1866,7 @@ function histTotals(rows){
   return {anl:anl, xnt:xnt, xntWindow:xntWindow, capy:capy};
 }
 function histShowStake(){ try{ return localStorage.getItem("anlHistShowStake")==="1"; }catch(_){ return false; } }
-function renderHistory(rows, partial){
+function renderHistory(rows, partial, oldest){
   const tb = $("histBody"), box = $("histBox");
   if(!tb || !box) return;
   if(rows.length===0){ box.style.display="none"; return; }
@@ -1881,10 +1898,11 @@ function renderHistory(rows, partial){
     '<td>'+fmtAnl(t.anl)+' ANL</td><td>'+fmtXnt(t.xnt)+' XNT</td><td>'+fmtAnl(t.capy)+' CAPY</td><td colspan="2"></td></tr>';
   let note = document.getElementById("histNote");
   if(!note){ note = document.createElement("p"); note.id = "histNote"; note.className = "mut"; note.style.cssText = "font-size:12px;margin:8px 0 0"; box.appendChild(note); }
+  const src = T("histNoteRpc").replace("{d}", oldest ? fmtD(oldest) : "—");
   note.innerHTML = (hasStake ? '<label style="cursor:pointer;margin-right:12px"><input type="checkbox" id="histShowStake"'+(showStake?' checked':'')+'> '+T("histShowStake")+'</label>' : '')
-    + T("histNote") + (partial ? " · " + T("rpcPartial") : "");
+    + src + (partial ? " · " + T("rpcPartial") : "");
   const cb = document.getElementById("histShowStake");
-  if(cb) cb.onchange = function(){ try{ localStorage.setItem("anlHistShowStake", cb.checked ? "1" : "0"); }catch(_){} renderHistory(window.__histRows || rows, window.__histPartial); };
+  if(cb) cb.onchange = function(){ try{ localStorage.setItem("anlHistShowStake", cb.checked ? "1" : "0"); }catch(_){} renderHistory(window.__histRows || rows, window.__histPartial, window.__histOldest); };
   box.style.display="block";
 }
 function renderClaimedTotals(rows){
@@ -2287,7 +2305,7 @@ window.anlClaim = claimPosition;
 window.anlRerenderHistory = function(){
   if(!pubkey) return;
   // zmiana jezyka: re-render z pamieci, zero zapytan RPC; fallback do loadHistory gdy brak danych
-  if(window.__histRows){ renderHistory(window.__histRows.slice(), window.__histPartial); renderClaimedTotals(window.__histRows); }
+  if(window.__histRows){ renderHistory(window.__histRows.slice(), window.__histPartial, window.__histOldest); renderClaimedTotals(window.__histRows); }
   else loadHistory().catch(function(){});
 };
 window.anlSortPositions = anlSortPositions;
@@ -2456,7 +2474,7 @@ const DPT = {
      lockedG:"do końca okresu", lockedGT:"Pozycje Genesis są zablokowane do końca zadeklarowanego okresu — bez opcji zerwania (WP v1.1).",
      errGas:"Nie udało się wysłać transakcji. Sprawdź, czy masz XNT na opłaty sieciowe w portfelu.", errRejected:"Transakcja odrzucona w portfelu.", errNetwork:"Problem z siecią — spróbuj ponownie za chwilę.", errGeneric:"Nie udało się zrealizować operacji. Spróbuj ponownie.", unstakeConfirm:"Zerwać pozycję przed czasem? Kapitał wróci od razu w całości, ale WSZYSTKIE nagrody (ANL, XNT i CAPY) bezpowrotnie przepadną.",
      dayW:"dzień", winW:"okna 31/91 dni",
-     refreshing:"Odświeżam…", rpcBusy:"RPC przeciążone (429) — pokazuję dane częściowe, spróbuj za chwilę.", rpcPartial:"historia częściowa — limit RPC", histNote:"Historia z RPC (retencja ok. 2 dni) + lokalny cache przeglądarki — po wyczyszczeniu danych strony bardzo stare odbiory mogą zniknąć. Docelowo: indekser.", histClaim:"Odbiór", histWindow:"XNT Claim", histCapy:"Odbiór CAPY", histUnstake:"Zerwanie", histStake:"Stake", histForfeit:"przepadło:", histForfeitShort:"przepadło", histShowStake:"pokaż stake", histTotal:"Suma nagród", histCapyReserved:"CAPY zarezerwowane przy odbiorze — wypłata osobno (Odbiór CAPY); nie wliczane do sumy"},
+     refreshing:"Odświeżam…", rpcBusy:"RPC przeciążone (429) — pokazuję dane częściowe, spróbuj za chwilę.", rpcPartial:"historia częściowa — limit RPC", histNoteRpc:"Historia z RPC X1 (dostępne od {d}) + lokalny cache przeglądarki — po wyczyszczeniu danych strony starsze wpisy mogą zniknąć. Docelowo: indekser.", histIndexing:"Indeksowanie historii:", histClaim:"Odbiór", histWindow:"XNT Claim", histCapy:"Odbiór CAPY", histUnstake:"Zerwanie", histStake:"Stake", histForfeit:"przepadło:", histForfeitShort:"przepadło", histShowStake:"pokaż stake", histTotal:"Suma nagród", histCapyReserved:"CAPY zarezerwowane przy odbiorze — wypłata osobno (Odbiór CAPY); nie wliczane do sumy"},
  en:{noWallet:"No wallet detected. Install Phantom, Backpack or X1 Wallet and refresh the page.",
      rejected:"Connection rejected: ", connected:"Connected: ",
      noPos:"No positions yet — open your first one above.", noPos2:"No positions.",
@@ -2472,7 +2490,7 @@ const DPT = {
      lockedG:"until period end", lockedGT:"Genesis positions are locked until the end of the declared period — no early exit (WP v1.1).",
      errGas:"Could not send the transaction. Check that you have XNT for network fees in your wallet.", errRejected:"Transaction rejected in the wallet.", errNetwork:"Network issue — please try again in a moment.", errGeneric:"Could not complete the operation. Please try again.", unstakeConfirm:"Break this position early? Principal returns immediately in full, but ALL rewards (ANL and XNT) are forfeited forever.",
      dayW:"day", winW:"windows 31/91 days",
-     refreshing:"Refreshing…", rpcBusy:"RPC rate-limited (429) — showing partial data, try again shortly.", rpcPartial:"partial history — RPC limit", histNote:"History from RPC (~2-day retention) + local browser cache — very old claims may disappear after clearing site data. Indexer planned.", histClaim:"Claim", histWindow:"XNT Claim", histCapy:"CAPY Claim", histUnstake:"Unstake", histStake:"Stake", histForfeit:"forfeited:", histForfeitShort:"forfeited", histShowStake:"show stakes", histTotal:"Total rewards", histCapyReserved:"CAPY reserved at claim — paid separately (CAPY Claim); not counted in the total"}
+     refreshing:"Refreshing…", rpcBusy:"RPC rate-limited (429) — showing partial data, try again shortly.", rpcPartial:"partial history — RPC limit", histNoteRpc:"History from X1 RPC (available from {d}) + local browser cache — older entries may disappear after clearing site data. Indexer planned.", histIndexing:"Indexing history:", histClaim:"Claim", histWindow:"XNT Claim", histCapy:"CAPY Claim", histUnstake:"Unstake", histStake:"Stake", histForfeit:"forfeited:", histForfeitShort:"forfeited", histShowStake:"show stakes", histTotal:"Total rewards", histCapyReserved:"CAPY reserved at claim — paid separately (CAPY Claim); not counted in the total"}
 };
 let DPL = (window.anlCurrentLang && window.anlCurrentLang()==="pl")?"pl":"en";
 const T = (k)=>{
