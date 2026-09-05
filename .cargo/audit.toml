@@ -19,4 +19,8 @@ ignore = [
   "RUSTSEC-2026-0098", # rustls-webpki 0.101.7 — walidacja certow; TLS klienta RPC
   "RUSTSEC-2026-0099", # rustls-webpki 0.101.7 — jw.
   "RUSTSEC-2026-0104", # rustls-webpki 0.101.7 — jw.
+  # R7 (2026-09-05): h2 0.3.27 — HTTP/2 klienta RPC (reqwest <- solana-client /
+  # solana-program-test, wylacznie dev-dependencies). Weryfikacja: cargo tree
+  # --target sbf-solana-solana nie zawiera h2 (graf SBF: 0 wystapien).
+  "RUSTSEC-2026-0258", # h2 0.3.27 — unbounded empty DATA frames; klient HTTP/2 RPC, dev-deps
 ]
