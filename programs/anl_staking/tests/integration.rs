@@ -3573,3 +3573,71 @@ async fn regresja_r7_n_dni_dokladnie_n_koszykow() {
         "R7: doba wyjscia nie jest zaliczana"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// AUDYT R8 (GPT, I-01 residual): zwrot principalu NIE MOZE zalezec od rachunku
+// XNT. Stan xnt_window_claimed > xnt_accrued jest teoretyczny (okna Genesis bez
+// rolla + finalny cap), ale gdyby wystapil, checked_sub w claim zwracal
+// MathOverflow i blokowal principal + ANL na stale. Po fixie: XNT do wyplaty = 0
+// (saturating_sub), principal + anl_reward wracaja w calosci, konto zamkniete.
+// Stan wstrzykiwany bezposrednio do konta (program-test set_account), bo
+// legalnymi instrukcjami nie da sie go osiagnac (inwariant window_claimed <= accrued).
+// ═══════════════════════════════════════════════════════════════════
+#[tokio::test]
+async fn regresja_r8_window_claimed_ponad_accrued_nie_blokuje_principalu() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let (a, a_anl, a_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+    let p0 = env.position(pos).await;
+    env.advance((min_d as i64) * DAY + 60).await;
+    // settle bez fundingu: xnt_accrued = 0, settled = true (claim pojdzie prosto do odejmowania)
+    env.settle(pos, PoolType::Genesis, None).await.unwrap();
+    // wstrzyknij xnt_window_claimed = 1 (> xnt_accrued = 0) — offset 131 (u64 LE) w UserPosition
+    let mut acc = env
+        .ctx
+        .banks_client
+        .get_account(pos)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(acc.data.len(), 155);
+    acc.data[131..139].copy_from_slice(&1u64.to_le_bytes());
+    env.ctx
+        .set_account(&pos, &solana_sdk::account::AccountSharedData::from(acc));
+    let p = env.position(pos).await;
+    assert!(
+        p.settled && p.xnt_accrued == 0 && p.xnt_window_claimed == 1,
+        "stan testowy"
+    );
+
+    let anl_before = env.token_balance(a_anl).await;
+    let xnt_before = env.token_balance(a_xnt).await;
+    // PRZED FIXEM: MathOverflow (6022) — principal i ANL uwiezione na stale.
+    env.claim(&a, a_anl, a_xnt, pos, PoolType::Genesis, None)
+        .await
+        .expect("R8: claim MUSI przejsc — principal nie moze zalezec od rachunku XNT");
+    assert_eq!(
+        env.token_balance(a_anl).await - anl_before,
+        100 * ONE_ANL + p0.anl_reward,
+        "R8: principal + nagroda ANL w calosci"
+    );
+    assert_eq!(
+        env.token_balance(a_xnt).await,
+        xnt_before,
+        "R8: XNT do wyplaty = 0"
+    );
+    assert!(
+        env.ctx
+            .banks_client
+            .get_account(pos)
+            .await
+            .unwrap()
+            .is_none(),
+        "R8: konto pozycji zamkniete"
+    );
+}

@@ -330,12 +330,16 @@ pub fn claim(ctx: Context<Claim>) -> Result<()> {
 
     let amount = ctx.accounts.user_position.amount;
     let anl_reward = ctx.accounts.user_position.anl_reward;
+    // AUDYT R8 (GPT, obrona w głąb dla residualu I-01): zwrot principalu NIE MOŻE
+    // zależeć od rachunku XNT. Jeśli xnt_window_claimed > xnt_accrued (stan
+    // teoretyczny po oknach Genesis bez rolla), XNT do wypłaty = 0, ale principal
+    // + nagroda ANL zawsze wracają. checked_sub → MathOverflow blokowałby claim
+    // na stałe.
     let xnt_accrued = ctx
         .accounts
         .user_position
         .xnt_accrued
-        .checked_sub(ctx.accounts.user_position.xnt_window_claimed)
-        .ok_or(AnlError::MathOverflow)?;
+        .saturating_sub(ctx.accounts.user_position.xnt_window_claimed);
 
     require!(
         ctx.accounts.reward_vault.amount >= anl_reward,
