@@ -94,6 +94,8 @@ pub enum AnlError {
     SetupIncomplete,
     #[msg("Early exit cooldown not elapsed since position start")]
     EarlyExitCooldown,
+    #[msg("CAPY mint supply must equal the 20,000,000 tokenomics cap")]
+    InvalidCapySupply,
 }
 
 impl From<anl_math::MathError> for AnlError {

@@ -321,7 +321,7 @@ pub fn init_capy_vault_handler(ctx: Context<InitCapyVault>) -> Result<()> {
         #[cfg(feature = "network-mainnet")]
         require!(
             state.base.supply == CAPY_TOTAL_SUPPLY,
-            AnlError::InvalidMint
+            AnlError::InvalidCapySupply
         );
     }
 
