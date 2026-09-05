@@ -18,7 +18,7 @@ pub enum AnlError {
     BelowMinimumStake,
     #[msg("Amount overflow")]
     AmountOverflow,
-    #[msg("Declared period out of bounds (7..=3650 days)")]
+    #[msg("Declared period out of bounds (7..=3650 days; Flexible at most 365)")]
     InvalidPeriod,
     #[msg("Position period has already ended - use claim")]
     PeriodAlreadyEnded,
