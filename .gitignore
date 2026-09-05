@@ -10,7 +10,8 @@ test-ledger/
 id.json
 .env
 .DS_Store
-scripts/
+# R7: ignorujemy TYLKO node_modules skryptow (wpis scripts/ cicho pomijal nowe skrypty)
+scripts/node_modules/
 website/testnet/*_01.html
 
 Cargo.lock.DZIALAJACY

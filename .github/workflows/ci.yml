@@ -38,6 +38,10 @@ jobs:
         run: cargo test -p anl_staking --features test-periods --test integration
       - name: integracja — wariant PRODUKCYJNY (audyt #3)
         run: cargo test -p anl_staking --test integration
+      - name: straznik pinu initialize (R7) — stala EXPECTED_INIT_AUTHORITY w buildach sieciowych
+        run: |
+          cargo test -p anl_staking --lib --features network-testnet,test-periods init_authority_pinned
+          cargo test -p anl_staking --lib --features network-mainnet init_authority_pinned
 
   release-guards:
     runs-on: ubuntu-latest

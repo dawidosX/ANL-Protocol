@@ -9,6 +9,16 @@
 # kluczem prywatnym ani polaczen TLS/QUIC; powierzchnia ryzyka to narzedzia
 # deweloperskie i testy, nie wdrozony program.
 
+# RUSTSEC-2023-0033 (borsh 0.9.3, unsound) — NIE na liscie ignore (cargo-audit
+# traktuje unsound jako ostrzezenie), ale jest w grafie SBF przez solana-program,
+# wiec dokumentujemy ocene (R7, potwierdzona przez Recenzenta): advisory dotyczy
+# deserializacji Vec<T> dla T o rozmiarze zero (ZST) bez Copy — petla dzieli
+# przez size_of::<T>() == 0. Nasze konta i argumenty nie maja pol ZST ani
+# Vec<ZST> (wylacznie u8/u16/u32/u64/u128/i64/bool/Pubkey/enum/[u8; N]);
+# Anchor 0.30.1 deserializuje przez borsh 0.10.x; borsh 0.9 to zaleznosc
+# solana-program dla legacy API (borsh0_9), ktorego program nie wola.
+# Wniosek: sciezka nieosiagalna. Znika z upgrade'em stosu Solana.
+
 [advisories]
 ignore = [
   "RUSTSEC-2022-0093", # ed25519-dalek 1.0.1 — signing oracle; podpisy tylko w SDK/testach
