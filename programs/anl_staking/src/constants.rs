@@ -49,3 +49,35 @@ pub const EXPECTED_XNT_MINT: anchor_lang::prelude::Pubkey =
 /// remaining_anl = ANL_REWARD_POOL - total_anl_paid
 /// entitlement = anl_reward * available_capy / remaining_anl
 pub const ANL_REWARD_POOL: u128 = 200_000_000_000_000_000;
+
+/// AUDYT R7 — strażniki kompilowane z feature sieciowym (CI: `cargo test -p
+/// anl_staking --lib --features network-testnet,test-periods` oraz
+/// `--features network-mainnet`). Test pinu `initialize` nie jest możliwy w
+/// suite integracyjnej (bramka działa tylko w buildach sieciowych), więc
+/// dowodem jest asercja na WARTOŚĆ stałej: zmiana klucza w ceremonii mainnet
+/// (multisig) MUSI zmienić oczekiwany string poniżej w tym samym commicie.
+#[cfg(all(test, feature = "network-testnet"))]
+mod init_authority_guard_testnet {
+    #[test]
+    fn init_authority_pinned_testnet() {
+        assert_eq!(
+            super::EXPECTED_INIT_AUTHORITY.to_string(),
+            "Dx2vEpVdMh2qScz4vEHAXquTm6QYocKbmPRdcXHLzvEm",
+            "testnet: EXPECTED_INIT_AUTHORITY = klucz deployera testnetu"
+        );
+    }
+}
+
+#[cfg(all(test, feature = "network-mainnet"))]
+mod init_authority_guard_mainnet {
+    /// MAINNET: dziś ta sama stała co testnet — ceremonia deployu podmienia
+    /// ją na multisig i aktualizuje ten string (sha binarki w manifeście).
+    #[test]
+    fn init_authority_pinned_mainnet() {
+        assert_eq!(
+            super::EXPECTED_INIT_AUTHORITY.to_string(),
+            "Dx2vEpVdMh2qScz4vEHAXquTm6QYocKbmPRdcXHLzvEm",
+            "mainnet: przed ceremonia podmien na multisig i zaktualizuj straznika"
+        );
+    }
+}
