@@ -52,3 +52,21 @@ i za brak ceremonii mainnet — nie za luki w instrukcjach. Historia rund: `docs
 7. **WP:** cooldown 3 dni i ≤ 365 dni Flexible, limit emisji 200M, polityka orphanów (żywi w chwili settle), `initialize` przypięty,
    SLA bota `close_day → settle_expired` w tej samej dobie.
 8. **Proces:** wyłączyć bypass status-checków na `main`; zmiany `programs/`/`crates/` wyłącznie przez branch + raport dla Recenzenta.
+
+## 4. Aktualizacja po R8 (2026-09-05, wieczór) — testnet `src_tree 7ab2a745…`
+
+Drain-challenge trzech niezależnych audytorów (GPT, Grok, Kimi): **brak drenażu, blokady i double-spend**; jedyny wskazany
+punkt (`checked_sub` w `claim` przy `xnt_window_claimed > xnt_accrued`, residual I-01) naprawiony w `fix/r8-principal-fail-open`
+(`saturating_sub` + `InvariantAlarm kind 2`, test `regresja_r8_window_claimed_ponad_accrued_nie_blokuje_principalu`),
+OK Recenzenta, merge `2582b9d`.
+
+| Element | Wartość |
+|---|---|
+| `src_tree` | `7ab2a7455eca9f9efc7a83699f9aee4616017efa` (zmiana wyłącznie w `lifecycle.rs::claim`) |
+| `code_tree` / `math_tree` | `2842efaf75bb255ea0d7567f3280e83f3f33e0dd` / `6fb61151f3e10b0a5d68249a941721500b34a5b3` |
+| Evidence | `docs/TEST-LOG.txt` na `2582b9d`: integracja 53/53 × 2 reżimy, lib 13/13, core 34+2 / 30+2, clippy ×2, fmt, `cargo audit` 0 |
+| Binarka `.so` | sha256 `1d44959176da39a83a42cadd835b108795d7fee4a0aed706c00e9f24b9a6ba0a`, 676 840 B, platform-tools v1.41 |
+| Deploy testnet | slot **185933070**, program `4Cpx…`; dump on-chain == binarka (0 bajtów różnicy) |
+
+Tag `v1.0-testnet-freeze` (`272750d`, `src_tree 4c225639…`) pozostaje punktem freeze logiki ekonomicznej; R8 to obrona w głąb
+bez zmiany ekonomiki. Baza mainnetu = `src_tree 7ab2a745…` (decyzja o tagu `v1.0.1-testnet` po stronie Dawida).
