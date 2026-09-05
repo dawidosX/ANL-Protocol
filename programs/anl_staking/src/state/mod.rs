@@ -205,9 +205,13 @@ impl PoolConfig {
         debt_index: u128,
         cap_index: u128,
     ) -> std::result::Result<u64, anl_math::MathError> {
-        let delta = cap_index
-            .checked_sub(debt_index)
-            .ok_or(anl_math::MathError::Overflow)?;
+        // AUDYT R7 (obrona w głąb dla R6-01): cap poniżej debt oznacza „brak
+        // zafundowanej doby od wejścia" ⇒ pending 0, cały udział pozycji w
+        // indeksie to orphan dla żywych. Miejsce kanoniczne to `cap_index_at`
+        // (lifecycle.rs); tu zabezpieczamy model, by ŻADEN wołający nie mógł
+        // zablokować rozliczenia błędem Overflow.
+        let cap_index = cap_index.max(debt_index);
+        let delta = cap_index - debt_index;
         let pending_u128 = delta
             .checked_mul(shares as u128)
             .ok_or(anl_math::MathError::Overflow)?
@@ -271,9 +275,8 @@ impl PoolConfig {
         debt_index: u128,
         cap_index: u128,
     ) -> std::result::Result<u64, anl_math::MathError> {
-        let delta = cap_index
-            .checked_sub(debt_index)
-            .ok_or(anl_math::MathError::Overflow)?;
+        // AUDYT R7 (obrona w głąb dla R6-01): jak w settle_position_at.
+        let delta = cap_index.max(debt_index) - debt_index;
         let acc_u128 = delta
             .checked_mul(shares as u128)
             .ok_or(anl_math::MathError::Overflow)?
@@ -690,6 +693,42 @@ mod wariant_a_tests {
         assert_eq!(forfeited, DAY_XNT / 2, "A traci swoje 50");
         assert_eq!(pool.xnt_undistributed, 0);
         assert_eq!(pending(&pool, M, debt), DAY_XNT, "B ma cale 100 od razu");
+    }
+
+    // ===== AUDYT R7: obrona w glab R6-01 na poziomie modelu =====
+    #[test]
+    fn test_r7_cap_ponizej_debt_daje_zero_bez_overflow() {
+        let p = anl_math::PRECISION;
+        // Po redystrybucji indeks = 200, wchodzi pozycja (debt 200); jej cap
+        // wskazuje na checkpoint sfinalizowany wczesniej (100). Przed R7 model
+        // zwracal Overflow (blokada claim); teraz: pending 0, orphan = udzial
+        // od wejscia (0 tutaj), indeks i zywi nietknieci.
+        let mut pool = empty_pool(PoolType::Genesis);
+        pool.total_shares = 2 * M;
+        pool.xnt_reward_index = 200 * p;
+        assert_eq!(pool.accrued_to_cap(M, 200 * p, 100 * p).unwrap(), 0);
+        let paid = pool.settle_position_at(M, 200 * p, 100 * p).unwrap();
+        assert_eq!(paid, 0, "cap < debt => nic nie nalezne");
+        assert_eq!(pool.total_shares, M, "shares wychodzacego zdjete");
+        assert_eq!(
+            pool.xnt_reward_index,
+            200 * p,
+            "orphan 0 => indeks bez zmian"
+        );
+        assert_eq!(pool.xnt_undistributed, 0);
+        // Przypadek normalny (cap > debt) bez zmian semantyki:
+        let mut p2 = empty_pool(PoolType::Genesis);
+        p2.total_shares = M;
+        p2.xnt_reward_index = 300 * p;
+        assert_eq!(p2.accrued_to_cap(M, 100 * p, 250 * p).unwrap(), 150 * M);
+        let paid2 = p2.settle_position_at(M, 100 * p, 250 * p).unwrap();
+        assert_eq!(paid2, 150 * M, "(250-100) x shares");
+        assert_eq!(p2.total_shares, 0);
+        assert_eq!(
+            p2.xnt_undistributed,
+            50 * M,
+            "orphan (300-250) x shares do bufora (pusta pula)"
+        );
     }
 
     // ===== AUDYT R6: property-test KONSERWACJI XNT (Inwariant 10) =====
