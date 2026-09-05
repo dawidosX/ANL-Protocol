@@ -1532,6 +1532,9 @@ async fn ts_split_init_intermediate_state_guards() {
 
     // (f) pełny setup ⇒ stake przechodzi
     env.init_capy_vault().await;
+    // AUDYT R6 (I-05): stake (e) i (f) to IDENTYCZNE transakcje — bez nowego
+    // slotu BanksClient zwraca zapamiętany wynik (e) = SetupIncomplete (flake).
+    env.advance(1).await;
     env.stake(&user, user_anl, PoolType::Genesis, 1_000 * ONE_ANL, days, 0)
         .await
         .unwrap();
@@ -3211,5 +3214,245 @@ async fn atak_f01c_rezerwacja_nie_blokuje_puli_po_limicie() {
     assert!(
         r.is_ok(),
         "F-01c: ofiara moze stakowac — rezerwacja griefera to 10%, nie 100%"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// AUDYT R6 (adwersarialny, 2026-09-05) — PoC/regresje R6-01, R6-02, I-03.
+//
+// R6-01 [High, liveness]: cap < debt. Pozycja otwarta PO redystrybucji
+//   (orphan z settle / przepadek z unstake_early) i PRZED kolejnym fund_xnt ma
+//   xnt_debt_index > indeks juz SFINALIZOWANEGO checkpointu, na ktory wskazuje
+//   jej cap (ostatni funding <= end_epoch). settle_position_at / accrued_to_cap
+//   robia cap.checked_sub(debt) -> MathOverflow (6022) -> settle_expired,
+//   claim i claim_genesis_window odbijaja. Stan „naprawia" dopiero kolejny
+//   fund_xnt (write_final_index podnosi checkpoint). Gdy funding ustaje
+//   (wind-down, utrata klucza operatora, awaria bota) principal jest
+//   zablokowany na stale — na immutable mainnecie nieodwracalnie.
+//
+// R6-02 [Low, inwariant 9]: fund_xnt -> write_final_index nadpisuje JUZ
+//   sfinalizowany checkpoint biezacym indeksem, ktory zawiera redystrybucje
+//   wykonane PO domknieciu tej doby. Dojrzala pozycja z capem na tym
+//   checkpoincie dostaje wtedy udzial w orphanie/przepadku z doby po swoim
+//   end_epoch — wyplata zalezy od kolejnosci fund_xnt vs settle.
+//
+// I-03 [Info, pozytywny]: to samo konto podane jako prev_day_ckpt i
+//   xnt_checkpoint (zapis w rollu przed odczytem capu) — dowod, ze duplikat
+//   nie podwaja ani nie zeruje wyplaty.
+// ═══════════════════════════════════════════════════════════════════
+
+/// Prefiks R6: A (5×MIN dni) i Z (MIN dni) stakuja Genesis w polowie doby 0.
+/// Funding dopiero w dobie MIN (PO end_epoch Z = MIN-1), doba MIN domknieta
+/// publicznym close_day (ckpt(MIN) sfinalizowany), settle Z -> caly udzial Z
+/// w dobie MIN to orphan -> natychmiast do zywych (A). Skutek: indeks puli
+/// (200/share) > ckpt(MIN).index (100/share). Zwraca (env, pos_a, MIN).
+async fn r6_prefix() -> (Env, Pubkey, u64) {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    env.advance(DAY / 2).await;
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let (a, a_anl, _) = env.user_with_anl(100 * ONE_ANL).await;
+    let (z, z_anl, _) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos_a = env
+        .stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, 5 * min_d, 0)
+        .await
+        .unwrap();
+    let pos_z = env
+        .stake(&z, z_anl, PoolType::Genesis, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+    env.advance((min_d as i64) * DAY).await; // doba MIN (+0.5)
+    env.fund_xnt(20_000).await.unwrap(); // ckpt(MIN), koszyk 20 000
+    env.advance(DAY).await; // doba MIN+1
+    let min_e = min_d as u64;
+    // close_day(MIN): indeks 100/share, ckpt(MIN).index = 100 (sfinalizowany).
+    env.close_day(PoolType::Genesis, min_e).await.unwrap();
+    // Z: end_epoch = MIN-1 < first_funded ⇒ cap = debt, checkpoint niewymagany;
+    // orphan Z (10 000) natychmiast do A ⇒ indeks 200/share.
+    env.settle(pos_z, PoolType::Genesis, None).await.unwrap();
+    let pool = env.pool(env.genesis_pool).await;
+    let ck_acc = env
+        .ctx
+        .banks_client
+        .get_account(env.ckpt_pda(PoolType::Genesis, min_e))
+        .await
+        .unwrap()
+        .unwrap();
+    let ck =
+        anl_staking::state::XntCheckpoint::try_deserialize(&mut ck_acc.data.as_slice()).unwrap();
+    assert!(
+        pool.xnt_reward_index > ck.index,
+        "prefiks R6: indeks puli ({}) musi byc > sfinalizowany ckpt(MIN) ({})",
+        pool.xnt_reward_index,
+        ck.index
+    );
+    assert_eq!(
+        pool.xnt_undistributed, 0,
+        "prefiks R6: orphan do zywych, nie do bufora"
+    );
+    (env, pos_a, min_e)
+}
+
+/// R6-01: ofiara V wchodzi po redystrybucji i przed kolejnym fundingiem
+/// (debt V = 200 > ckpt(MIN) = 100). Operator NIE funduje do dojrzenia V.
+/// PRZED FIXEM: settle_expired i claim odbijaja MathOverflow (6022) —
+/// principal V uwieziony do nastepnego fund_xnt (na stale, gdy funding ustal).
+/// PO FIXIE (cap = max(ckpt, debt)): V dostaje principal + ANL, 0 XNT,
+/// a ksiega A jest nietknieta.
+#[tokio::test]
+async fn regresja_r6_01_cap_ponizej_debt_nie_blokuje_claim() {
+    let (mut env, pos_a, min_e) = r6_prefix().await;
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let (v, v_anl, v_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos_v = env
+        .stake(&v, v_anl, PoolType::Genesis, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+    let pv = env.position(pos_v).await;
+    let pool = env.pool(env.genesis_pool).await;
+    assert_eq!(
+        pv.xnt_debt_index, pool.xnt_reward_index,
+        "debt V = indeks po orphanie"
+    );
+
+    // Cisza operatora az do dojrzenia V (min. okres). end_epoch V = 2·MIN;
+    // ostatni funding <= end_epoch to nadal ckpt(MIN) o indeksie 100 < debt 200.
+    env.advance((min_d as i64) * DAY + 60).await;
+
+    let settle_res = env.settle(pos_v, PoolType::Genesis, Some(min_e)).await;
+    assert!(
+        settle_res.is_ok(),
+        "R6-01: settle_expired ofiary MUSI dzialac (przed fixem: MathOverflow 6022): {:?}",
+        settle_res.err()
+    );
+    let anl_before = env.token_balance(v_anl).await;
+    let xnt_before = env.token_balance(v_xnt).await;
+    env.claim(&v, v_anl, v_xnt, pos_v, PoolType::Genesis, Some(min_e))
+        .await
+        .expect("R6-01: claim ofiary MUSI dzialac — principal nie moze byc uwieziony");
+    assert_eq!(
+        env.token_balance(v_anl).await - anl_before,
+        100 * ONE_ANL + pv.anl_reward,
+        "R6-01: principal + nagroda ANL w calosci"
+    );
+    assert_eq!(
+        env.token_balance(v_xnt).await,
+        xnt_before,
+        "R6-01: V nie ma prawa do zadnej zafundowanej doby ⇒ 0 XNT (nie wiecej!)"
+    );
+    // Konserwacja: A ma nadal cale 20 000 (koszyk doby MIN + orphan Z), bufor pusty.
+    let pool = env.pool(env.genesis_pool).await;
+    let pa = env.position(pos_a).await;
+    assert_eq!(
+        b_claimable(&pool, &pa),
+        20_000,
+        "R6-01: ksiega A nietknieta"
+    );
+    assert_eq!(pool.xnt_undistributed, 0);
+}
+
+/// R6-02: M (end_epoch = MIN, cap = ckpt(MIN)) rozliczana w dwu kolejnosciach:
+/// settle M -> fund_xnt(MIN+1)  vs  fund_xnt(MIN+1) -> settle M.
+/// Orphan Z (po domknieciu doby MIN) podniosl indeks 100 -> 150. PRZED FIXEM
+/// fund_xnt(MIN+1) nadpisuje ckpt(MIN).index = 150 (write_final_index bez
+/// warunku „doba faktycznie domknieta") ⇒ M dostaje 15 000 zamiast 10 000.
+async fn r6_02_scenario(fund_first: bool) -> u64 {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    env.advance(DAY / 2).await;
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let min_e = min_d as u64;
+    let (a, a_anl, _) = env.user_with_anl(100 * ONE_ANL).await;
+    let (m, m_anl, _) = env.user_with_anl(100 * ONE_ANL).await;
+    let (z, z_anl, _) = env.user_with_anl(100 * ONE_ANL).await;
+    let _pos_a = env
+        .stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, 5 * min_d, 0)
+        .await
+        .unwrap();
+    let pos_m = env
+        .stake(&m, m_anl, PoolType::Genesis, 100 * ONE_ANL, min_d + 1, 0)
+        .await
+        .unwrap(); // koniec w srodku doby MIN+1 ⇒ end_epoch = MIN
+    let pos_z = env
+        .stake(&z, z_anl, PoolType::Genesis, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap(); // end_epoch = MIN-1
+    env.advance((min_d as i64) * DAY).await; // doba MIN
+    env.fund_xnt(30_000).await.unwrap(); // ckpt(MIN), koszyk 30 000 na 3×100
+    env.advance(DAY + 60).await; // doba MIN+1: M i Z dojrzale
+    env.close_day(PoolType::Genesis, min_e).await.unwrap(); // indeks 100, ckpt(MIN)=100
+    env.settle(pos_z, PoolType::Genesis, None).await.unwrap(); // orphan Z 10 000 -> A+M: indeks 150
+    if fund_first {
+        env.fund_xnt(1).await.unwrap();
+    }
+    env.settle(pos_m, PoolType::Genesis, Some(min_e))
+        .await
+        .unwrap();
+    if !fund_first {
+        env.fund_xnt(1).await.unwrap();
+    }
+    env.position(pos_m).await.xnt_accrued
+}
+
+#[tokio::test]
+async fn regresja_r6_02_wyplata_niezalezna_od_kolejnosci_fund_vs_settle() {
+    let settle_first = r6_02_scenario(false).await;
+    let fund_first = r6_02_scenario(true).await;
+    assert_eq!(
+        settle_first, 10_000,
+        "R6-02: M ma prawo do 1/3 koszyka doby MIN i do NICZEGO po end_epoch"
+    );
+    assert_eq!(
+        fund_first, settle_first,
+        "R6-02: wyplata M zalezy od kolejnosci fund_xnt vs settle (inwariant 9)"
+    );
+}
+
+/// I-03: doba MIN-1 zafundowana i NIEDOMKNIETA; claim A (end_epoch = MIN-1)
+/// domyka ja w rollu (prev_day_ckpt = ckpt(MIN-1)) i liczy cap z ckpt(MIN-1)
+/// — ten sam pubkey w obu polach. Oczekiwane: A dostaje dokladnie polowe
+/// koszyka, B ma druga polowe, bufor pusty.
+#[tokio::test]
+async fn r6_i03_ten_sam_ckpt_jako_prev_day_i_xnt_checkpoint() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    env.advance(DAY / 2).await;
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let min_e = min_d as u64;
+    let (a, a_anl, a_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let (b, b_anl, _) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos_a = env
+        .stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+    let pos_b = env
+        .stake(&b, b_anl, PoolType::Genesis, 100 * ONE_ANL, 5 * min_d, 0)
+        .await
+        .unwrap();
+    env.advance((min_d as i64 - 1) * DAY).await; // doba MIN-1
+    env.fund_xnt(10_000).await.unwrap(); // ckpt(MIN-1), koszyk 10 000 — nikt nie domyka
+    env.advance(DAY + 60).await; // doba MIN (+0.5+60s): A dojrzala
+    let prev = env.roll_ckpt_for(PoolType::Genesis).await;
+    assert_eq!(
+        prev,
+        Some(env.ckpt_pda(PoolType::Genesis, min_e - 1)),
+        "I-03: claim A musi domknac dobe MIN-1 (prev_day_ckpt = ckpt(MIN-1))"
+    );
+    let xnt_before = env.token_balance(a_xnt).await;
+    env.claim(&a, a_anl, a_xnt, pos_a, PoolType::Genesis, Some(min_e - 1))
+        .await
+        .unwrap();
+    assert_eq!(
+        env.token_balance(a_xnt).await - xnt_before,
+        5_000,
+        "I-03: duplikat konta nie podwaja ani nie zeruje — A dostaje polowe koszyka"
+    );
+    let pool = env.pool(env.genesis_pool).await;
+    let pb = env.position(pos_b).await;
+    assert_eq!(b_claimable(&pool, &pb), 5_000, "I-03: B ma druga polowe");
+    assert_eq!(pool.xnt_undistributed, 0);
+    assert_eq!(
+        pool.current_day_basket, 0,
+        "I-03: doba MIN-1 domknieta przez roll"
     );
 }

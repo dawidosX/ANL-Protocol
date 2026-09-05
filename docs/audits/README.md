@@ -15,6 +15,7 @@ status of every finding lives one directory up.
 | `audit-3-verification-grok.pdf` | Weryfikacja poprawek po rundzie #3 (Grok) / round-3 fix verification |
 | `audit-4-verification-gpt.md` | Runda #4 — re-weryfikacja paczki `audit4` (GPT) / round-4 re-verification |
 | `audit-4-verification-grok.pdf` | Runda #4 — re-weryfikacja paczki `audit4` (Grok) / round-4 re-verification |
+| `2026-09-05_audyt-r6-adwersarialny_claude-fable5.md` | Runda #6 — audyt adwersarialny paczki `91418cc` (Claude Fable 5.1): R6-01 cap<debt (High), R6-02 nadpisanie checkpointu (Low), PoC w harnessie / round-6 adversarial audit |
 
 Raport rundy #2 (Grok, 8,5/10) został przekazany w formie konwersacyjnej i nie
 zachował się jako plik; jego wnioski są streszczone w §4 historii. / The

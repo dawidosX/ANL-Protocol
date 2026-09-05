@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2b8685d14c190a4a68fe10a40a75cce4cc533d05d819fff21cd4646d74786689 # shrinks to ops = [Stake(224689751439), Stake(83533372787), Stake(751657232498), Stake(135601268352), Fund(468837742729)]

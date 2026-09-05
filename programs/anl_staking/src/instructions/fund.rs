@@ -381,29 +381,43 @@ pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
         ctx.program_id,
     )?;
 
-    ctx.accounts
+    let g_closed = ctx
+        .accounts
         .genesis_pool
         .add_to_basket(genesis_part, epoch)
         .map_err(AnlError::from)?;
-    ctx.accounts
+    let f_closed = ctx
+        .accounts
         .flexible_pool
         .add_to_basket(flexible_part, epoch)
         .map_err(AnlError::from)?;
 
-    write_final_index(
-        ctx.accounts.genesis_prev_ckpt.as_ref(),
-        PoolType::Genesis,
-        ctx.accounts.genesis_pool.last_funded_epoch,
-        ctx.accounts.genesis_pool.xnt_reward_index,
-        ctx.program_id,
-    )?;
-    write_final_index(
-        ctx.accounts.flexible_prev_ckpt.as_ref(),
-        PoolType::Flexible,
-        ctx.accounts.flexible_pool.last_funded_epoch,
-        ctx.accounts.flexible_pool.xnt_reward_index,
-        ctx.program_id,
-    )?;
+    // AUDYT R6 (R6-02): finalny indeks trafia do checkpointu poprzedniej doby
+    // WYŁĄCZNIE gdy TEN funding faktycznie ją domknął (koszyk > 0). Doba
+    // domknięta wcześniej (close_day / roll w stake-claim-settle) ma już
+    // sfinalizowany checkpoint; nadpisanie go bieżącym indeksem wstrzykiwało
+    // do niego redystrybucje (orphan / przepadek) wykonane PO domknięciu i
+    // uzależniało wypłatę dojrzałych pozycji od kolejności fund_xnt vs settle.
+    // Domknięta doba == last_funded_epoch (koszyk > 0 ⇒ current_day ==
+    // epoka ostatniego fundingu), więc konto prev_ckpt bota pozostaje to samo.
+    if let Some(closed_epoch) = g_closed {
+        write_final_index(
+            ctx.accounts.genesis_prev_ckpt.as_ref(),
+            PoolType::Genesis,
+            closed_epoch,
+            ctx.accounts.genesis_pool.xnt_reward_index,
+            ctx.program_id,
+        )?;
+    }
+    if let Some(closed_epoch) = f_closed {
+        write_final_index(
+            ctx.accounts.flexible_prev_ckpt.as_ref(),
+            PoolType::Flexible,
+            closed_epoch,
+            ctx.accounts.flexible_pool.xnt_reward_index,
+            ctx.program_id,
+        )?;
+    }
 
     ctx.accounts.genesis_ckpt.index = ctx.accounts.genesis_pool.xnt_reward_index;
     ctx.accounts.flexible_ckpt.index = ctx.accounts.flexible_pool.xnt_reward_index;

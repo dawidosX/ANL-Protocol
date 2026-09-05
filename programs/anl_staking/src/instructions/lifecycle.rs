@@ -121,7 +121,16 @@ fn cap_index_at(
         program_id,
     );
     require_keys_eq!(ai.key(), pda, AnlError::CheckpointMismatch);
-    Ok(ck.index)
+    // AUDYT R6 (R6-01): checkpoint sfinalizowany PRZED wejściem pozycji może
+    // mieć indeks NIŻSZY niż jej xnt_debt_index — redystrybucja orphana /
+    // przepadku (redistribute_to_live) podniosła indeks puli PO domknięciu
+    // doby, a kolejny fund_xnt jeszcze nie „przepisał" checkpointu. Taka
+    // pozycja nie ma prawa do żadnej zafundowanej doby ⇒ cap = debt
+    // (pending 0, cały jej udział w indeksie to orphan dla żywych). Bez tego
+    // checked_sub w settle_position_at / accrued_to_cap zwracał MathOverflow
+    // i blokował settle_expired / claim / claim_genesis_window aż do
+    // następnego fund_xnt (na stałe, gdy funding ustał).
+    Ok(ck.index.max(pos.xnt_debt_index))
 }
 
 pub fn settle_expired(ctx: Context<SettleExpired>) -> Result<()> {

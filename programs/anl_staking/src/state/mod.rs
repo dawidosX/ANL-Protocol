@@ -128,12 +128,21 @@ impl PoolConfig {
 
     /// Wariant A — dodaje XNT do koszyka BIEŻĄCEJ doby. Nowa doba → najpierw
     /// zamyka poprzednią (rozdziela jej koszyk). NIE rusza index natychmiast.
+    /// AUDYT R6 (R6-02): zwraca `Some(domknięta_doba)` WYŁĄCZNIE gdy ten
+    /// wywołanie faktycznie rozdzieliło niepusty koszyk (jak
+    /// `roll_day_if_needed`). Wołający zapisuje finalny indeks do checkpointu
+    /// tylko wtedy — doba domknięta wcześniej ma już sfinalizowany checkpoint
+    /// i nie może być nadpisana indeksem z późniejszymi redystrybucjami.
     pub fn add_to_basket(
         &mut self,
         part: u64,
         epoch: u64,
-    ) -> std::result::Result<(), anl_math::MathError> {
+    ) -> std::result::Result<Option<u64>, anl_math::MathError> {
+        let mut closed = None;
         if self.current_day != epoch {
+            if self.current_day_basket > 0 {
+                closed = Some(self.current_day);
+            }
             self.close_day()?;
             self.current_day = epoch;
         }
@@ -141,7 +150,7 @@ impl PoolConfig {
             .current_day_basket
             .checked_add(part)
             .ok_or(anl_math::MathError::Overflow)?;
-        Ok(())
+        Ok(closed)
     }
 
     /// Wariant A — wymusza zamknięcie doby, jeśli epoch jest nowszy niż doba
