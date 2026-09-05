@@ -70,3 +70,16 @@ OK Recenzenta, merge `2582b9d`.
 
 Tag `v1.0-testnet-freeze` (`272750d`, `src_tree 4c225639…`) pozostaje punktem freeze logiki ekonomicznej; R8 to obrona w głąb
 bez zmiany ekonomiki. Baza mainnetu = `src_tree 7ab2a745…` (decyzja o tagu `v1.0.1-testnet` po stronie Dawida).
+
+## 5. R8 mini-runda: 2/2 potwierdzenie freeze na `src_tree 7ab2a745…`
+
+Recenzja jednej zmiany (`claim`: `saturating_sub` + `InvariantAlarm kind 2`, prompt `R8-CLAIM-SATURATING-SUB`), po drain-challenge
+GPT/Grok/Kimi bez findingów:
+
+| Audytor | Fix zweryfikowany | DRAINABLE | FREEZE na `7ab2a745…` | Plik |
+|---|---|---|---|---|
+| Kimi | TAK | **NIEUDOWODNIONE** (NOT PROVEN SAFE) | **TAK** | `docs/audits/2026-09-05_r8-weryfikacja_kimi.md` |
+| Grok | TAK | **NIE** | **TAK** | `docs/audits/2026-09-05_r8-weryfikacja_grok.md` |
+
+Tag `v1.1-testnet-freeze` → `6113493` (komplet: kod `7ab2a745…`, manifest sha `1d449591…`, TEST-LOG 53/53 × 2, FREEZE.md).
+Provenance zweryfikowane 2026-09-05: `src_tree` kodu = manifest = TEST-LOG; sha manifestu = dump z łańcucha; slot 185933070.

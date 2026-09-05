@@ -23,6 +23,8 @@ status of every finding lives one directory up.
 | `2026-09-05_audyt-r7.2_kimi.md` | Runda #7.2 (release-path) — werdykt Kimi: weryfikacja wprost na bundle, A/B/C Czyste, FREEZE TAK, 9/10 / round-7.2 verdict (Kimi) |
 | `2026-09-05_audyt-r7.2_B.md` | Runda #7.2 (release-path) — werdykt B: A/B/C Czyste, FREEZE TAK, 9/10; odhaczenie zadań R5/R7 / round-7.2 verdict (B) |
 | `2026-09-05_audyt-r7.2_C.md` | Runda #7.2 (release-path) — werdykt C: A/B/C CLOSED, FREEZE TAK, 9.3/10 / round-7.2 verdict (C) |
+| `2026-09-05_r8-weryfikacja_kimi.md` | R8 mini-runda — werdykt Kimi: fix `saturating_sub` zweryfikowany, DRAINABLE NIEUDOWODNIONE, FREEZE TAK (zapis konwersacyjny) / round-8 verdict (Kimi) |
+| `2026-09-05_r8-weryfikacja_grok.md` | R8 mini-runda — werdykt Grok: fix zweryfikowany, DRAINABLE NIE, FREEZE TAK (zapis konwersacyjny) / round-8 verdict (Grok) |
 
 Raport rundy #2 (Grok, 8,5/10) został przekazany w formie konwersacyjnej i nie
 zachował się jako plik; jego wnioski są streszczone w §4 historii. / The
