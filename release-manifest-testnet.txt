@@ -1,13 +1,13 @@
 release: testnet
-date: 2026-09-05T14:33:30Z
-head: aea9a6ae4e338ac7300d2db840ebb8efbe91beea
-code_tree: 7dbf3de415685767654ad8e068f6034e27e51e53
+date: 2026-09-05T17:50:42Z
+head: 224200ef5a6b57d97bc5302c4be499a5be1a528a
+code_tree: 2842efaf75bb255ea0d7567f3280e83f3f33e0dd
 math_tree: 6fb61151f3e10b0a5d68249a941721500b34a5b3
-src_tree: 4c2256398137bb417a1b769316137852d14ec4d5
+src_tree: 7ab2a7455eca9f9efc7a83699f9aee4616017efa
 features: network-testnet,test-periods
-sha256: 87b431d43280e4eccfca71725bbfafda2f1fbd2fb2d95a94cd2715fd4ae530a3
+sha256: 1d44959176da39a83a42cadd835b108795d7fee4a0aed706c00e9f24b9a6ba0a
 rustc_host: rustc 1.97.1 (8bab26f4f 2026-07-14)
 build_sbf: solana-cargo-build-sbf 1.18.17 platform-tools v1.41 rustc 1.75.0 
-deployed_slot: 185899744
-deploy_date_utc: 2026-09-05T14:36:00Z
-deploy_note: deploy przez Dawida; dump on-chain == binarka sha 87b431d4 (0 bajtow roznicy), authority Dx2vEpVdMh2qScz4vEHAXquTm6QYocKbmPRdcXHLzvEm
+deployed_slot: 185933070
+deploy_date_utc: 2026-09-05T17:55:00Z
+deploy_note: deploy przez Dawida; dump on-chain == binarka sha 1d449591 (0 bajtow roznicy), authority Dx2vEpVdMh2qScz4vEHAXquTm6QYocKbmPRdcXHLzvEm
