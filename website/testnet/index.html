@@ -1453,26 +1453,44 @@ function openPicker(){
   });
   $("dpModal").classList.add("open");
 }
-async function pick(w){
+async function pick(w, silent){
   try{
     if(w.kind==="std"){
-      const res = await w.w.features["standard:connect"].connect();
+      const res = await w.w.features["standard:connect"].connect(silent ? {silent:true} : undefined);
       const acc = res.accounts[0];
+      if(!acc) throw new Error("no account");
       pubkey = new PublicKey(acc.address);
       walletAdapter = {kind:"std", w:w.w, account:acc};
     }else{
-      const res = await w.p.connect();
+      const res = await w.p.connect(silent ? {onlyIfTrusted:true} : undefined);
       pubkey = (res && res.publicKey) || w.p.publicKey;
+      if(!pubkey) throw new Error("no pubkey");
       walletAdapter = {kind:"leg", p:w.p};
     }
+    try{ localStorage.setItem("anlWallet", w.name); }catch(_){}
     const cta=document.querySelector("nav .btn-gold"); if(cta) cta.style.display="none";
     const bc=$("btnConnect"); delete bc.dataset.dp; bc.classList.add("chip");
     bc.textContent = pubkey.toBase58().slice(0,4)+"…"+pubkey.toBase58().slice(-4)+" ✕";
     bc.title = T("discHint");
     $("btnStake").disabled=false; $("btnRefresh").disabled=false;
     await refresh();
-  }catch(e){ log(T("rejected")+(e.message||e), "err"); }
+  }catch(e){ if(!silent) log(T("rejected")+(e.message||e), "err"); }
 }
+// Cichy reconnect po odswiezeniu: portfel zapamietany w localStorage,
+// connect tylko jesli user juz zaufal stronie (onlyIfTrusted / silent) -
+// zero okienek. Retry, bo rozszerzenia rejestruja sie z opoznieniem.
+async function anlAutoReconnect(){
+  let name = null;
+  try{ name = localStorage.getItem("anlWallet"); }catch(_){}
+  if(!name || pubkey) return;
+  for(let i=0;i<8 && !pubkey;i++){
+    legacyScan();
+    const w = foundWallets.find(function(x){ return x.name===name; });
+    if(w){ await pick(w, true); if(pubkey) return; }
+    await new Promise(function(r){ setTimeout(r, 400); });
+  }
+}
+window.addEventListener("load", function(){ setTimeout(anlAutoReconnect, 300); });
 async function signAndSendViaX1(tx){
   let raw;
   if(walletAdapter.kind==="leg"){
@@ -2187,6 +2205,7 @@ function dappDisconnect(){
     }
   }catch(_){}
   pubkey=null; walletAdapter=null;
+  try{ localStorage.removeItem("anlWallet"); }catch(_){}
   $("availAnl").textContent="";
   const cta=document.querySelector("nav .btn-gold"); if(cta) cta.style.display="";
   $("btnStake").disabled=true; $("btnRefresh").disabled=true;
