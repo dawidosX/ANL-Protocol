@@ -315,6 +315,14 @@ pub fn init_capy_vault_handler(ctx: Context<InitCapyVault>) -> Result<()> {
             msg!("CAPY mint ma aktywna mint_authority - odrzucone (pula 20M)");
             return err!(AnlError::MintHasMintAuthority);
         }
+        // AUDYT R7.2 (C): tokenomika WP jako inwariant on-chain — na mainnecie
+        // podaż CAPY musi wynosić DOKŁADNIE 20 000 000 (authority wypalona ⇒
+        // wartość niezmienna po tej kontroli). Testnet (1B CAPY) bez bramki.
+        #[cfg(feature = "network-mainnet")]
+        require!(
+            state.base.supply == CAPY_TOTAL_SUPPLY,
+            AnlError::InvalidMint
+        );
     }
 
     let cfg = &mut ctx.accounts.global_config;
