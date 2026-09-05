@@ -274,8 +274,10 @@ impl PoolConfig {
             .map_err(|_| anl_math::MathError::Overflow)
     }
 
-    /// Wcześniejsze zerwanie (WP §7): naliczone XNT wracają do puli
-    /// dystrybucji koszyka (`xnt_undistributed`), shares schodzą.
+    /// Wcześniejsze zerwanie (WP §7): naliczone XNT przepadają na rzecz
+    /// pozostałych — AUDYT R5: rozdzielone natychmiast żywym shares
+    /// (`settle_position` już zdjął shares wychodzącego), bufor tylko przy
+    /// pustej puli.
     pub fn forfeit_position(
         &mut self,
         shares: u64,
@@ -679,5 +681,115 @@ mod wariant_a_tests {
         assert_eq!(forfeited, DAY_XNT / 2, "A traci swoje 50");
         assert_eq!(pool.xnt_undistributed, 0);
         assert_eq!(pending(&pool, M, debt), DAY_XNT, "B ma cale 100 od razu");
+    }
+
+    // ===== AUDYT R6: property-test KONSERWACJI XNT (Inwariant 10) =====
+    //
+    // Losowe sekwencje {stake, fund, roll, settle_expired(cap), forfeit}
+    // na modelu puli z deterministycznym LCG. Po KAZDYM kroku:
+    //   wyplacone + pending(zywi) + undistributed + basket + dust == zafundowane
+    // gdzie dust >= 0 (floor) i dust jest OGRANICZONY liczba operacji
+    // dzielenia * total_shares/PRECISION (kazde dzielenie gubi < 1 jednostke
+    // na share). Zaden krok nie moze zwiekszyc sumy roszczen ponad wplaty.
+
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0 >> 33
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    #[test]
+    fn test_r6_property_konserwacja_xnt_losowe_sekwencje() {
+        for seed in 1u64..=40 {
+            let mut rng = Lcg(seed);
+            let mut pool = empty_pool(PoolType::Genesis);
+            // pozycje: (shares, debt, cap_epoch) ; cap = indeks na koniec cap_epoch
+            let mut live: Vec<(u64, u128, u64)> = Vec::new();
+            let mut ckpt_final: Vec<u128> = Vec::new(); // indeks po domknieciu doby e
+            let mut funded: u64 = 0;
+            let mut paid: u64 = 0;
+            let mut epoch: u64 = 0;
+            let mut divisions: u64 = 0;
+            pool.current_day = 0;
+            for _step in 0..120 {
+                match rng.below(5) {
+                    0 => {
+                        // stake: shares w [1e9, 5e12]
+                        let sh = 1_000_000_000 + rng.below(5_000_000_000_000);
+                        pool.total_shares += sh;
+                        let cap_e = epoch + 1 + rng.below(6);
+                        live.push((sh, pool.xnt_reward_index, cap_e));
+                    }
+                    1 => {
+                        // funding biezacej doby (moze byc kilka)
+                        let amt = 1 + rng.below(50_000_000_000);
+                        pool.add_to_basket(amt, epoch).unwrap();
+                        funded += amt;
+                    }
+                    2 => {
+                        // koniec doby: roll (close_day) + zapis "checkpointu"
+                        if pool.current_day_basket > 0 && pool.total_shares > 0 {
+                            divisions += 1;
+                        }
+                        epoch += 1;
+                        let _ = pool.roll_day_if_needed(epoch).unwrap();
+                        while ckpt_final.len() < epoch as usize {
+                            ckpt_final.push(pool.xnt_reward_index);
+                        }
+                    }
+                    3 => {
+                        // settle_expired pozycji, ktorej cap_epoch juz minal
+                        if let Some(i) = live.iter().position(|p| p.2 < epoch) {
+                            let (sh, debt, cap_e) = live.remove(i);
+                            let cap = ckpt_final[cap_e as usize].max(debt);
+                            let out = pool.settle_position_at(sh, debt, cap).unwrap();
+                            paid += out;
+                            if pool.total_shares > 0 {
+                                divisions += 1;
+                            }
+                        }
+                    }
+                    _ => {
+                        // forfeit (early exit) losowej zywej pozycji
+                        if !live.is_empty() {
+                            let i = rng.below(live.len() as u64) as usize;
+                            let (sh, debt, _) = live.remove(i);
+                            let _ = pool.forfeit_position(sh, debt).unwrap();
+                            if pool.total_shares > 0 {
+                                divisions += 1;
+                            }
+                        }
+                    }
+                }
+                // ---- INWARIANT 10 po kazdym kroku ----
+                let pending_live: u64 = live
+                    .iter()
+                    .map(|(sh, debt, _)| pending(&pool, *sh, *debt))
+                    .sum();
+                let claims = paid + pending_live + pool.xnt_undistributed + pool.current_day_basket;
+                assert!(
+                    claims <= funded,
+                    "seed {seed}: roszczenia {claims} > wplaty {funded} (WYCIEK)"
+                );
+                // dust: kazde dzielenie gubi < total_shares/PRECISION jednostek;
+                // shares <= 40*5e12 => < 1 jednostka na dzielenie przy 1e12
+                let dust = funded - claims;
+                let bound = divisions
+                    .saturating_mul(1 + pool.total_shares / anl_math::PRECISION as u64)
+                    + live.len() as u64; // + floor per pending
+                assert!(
+                    dust <= bound + 200,
+                    "seed {seed}: dust {dust} > ograniczenie {bound} (zaginione XNT)"
+                );
+            }
+        }
     }
 }

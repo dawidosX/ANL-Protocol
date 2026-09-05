@@ -709,6 +709,18 @@ pub fn unstake_early(ctx: Context<UnstakeEarly>) -> Result<()> {
         now < ctx.accounts.user_position.end_ts,
         AnlError::PeriodAlreadyEnded
     );
+    // AUDYT R6 (F-01): cooldown — wyjscie z Flexible mozliwe dopiero po
+    // EARLY_EXIT_COOLDOWN_SECS od otwarcia. Griefing rezerwacja (stake ->
+    // blokada innym -> natychmiastowy unstake bez kosztu) dostaje koszt
+    // kapitalowy: srodki zablokowane na caly cooldown w kazdym cyklu.
+    require!(
+        now >= ctx
+            .accounts
+            .user_position
+            .start_ts
+            .saturating_add(EARLY_EXIT_COOLDOWN_SECS),
+        AnlError::EarlyExitCooldown
+    );
 
     let (shares, debt, amount, anl_reward) = (
         ctx.accounts.user_position.shares,

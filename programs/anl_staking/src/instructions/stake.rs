@@ -107,6 +107,15 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
         (MIN_PERIOD_DAYS..=MAX_PERIOD_DAYS).contains(&declared_days),
         AnlError::InvalidPeriod
     );
+    // AUDYT R6 (F-01): Flexible — rezerwacja liniowa w dniach + wyjscie bez
+    // kary => 10-letnia pozycja rezerwowala 80% kapitalu z reward pool i
+    // blokowala stake innym za darmo. Limit 365 dni: rezerwacja <= 8%.
+    if ctx.accounts.pool_config.pool_type == PoolType::Flexible {
+        require!(
+            declared_days <= MAX_PERIOD_DAYS_FLEXIBLE,
+            AnlError::InvalidPeriod
+        );
+    }
 
     let now = Clock::get()?.unix_timestamp;
     let elapsed = now

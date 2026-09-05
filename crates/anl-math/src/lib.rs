@@ -38,6 +38,17 @@ pub const MIN_PERIOD_DAYS: i64 = 7;
 #[cfg(feature = "test-periods")]
 pub const MIN_PERIOD_DAYS: i64 = 1;
 pub const MAX_PERIOD_DAYS: i64 = 3_650;
+/// AUDYT R6 F-01: Flexible — maksymalny okres (rezerwacja ANL ≤ 8% kapitału
+/// pozycji zamiast 80% przy 10 latach). Genesis zostaje na MAX_PERIOD_DAYS —
+/// tam kapitał jest realnie zablokowany (brak unstake_early).
+pub const MAX_PERIOD_DAYS_FLEXIBLE: i64 = 365;
+/// AUDYT R6 F-01: minimalny czas od otwarcia pozycji Flexible do
+/// `unstake_early` — griefing rezerwacją przestaje być bezkosztowy
+/// (kapitał zablokowany na cały cooldown w każdym cyklu).
+#[cfg(not(feature = "test-periods"))]
+pub const EARLY_EXIT_COOLDOWN_SECS: i64 = 3 * SECONDS_PER_DAY;
+#[cfg(feature = "test-periods")]
+pub const EARLY_EXIT_COOLDOWN_SECS: i64 = 3_600;
 
 /// WP okna Genesis: okienkowa wypłata XNT co pełny blok N-dniowy liczony od
 /// genesis protokołu. Produkcyjnie 30 dni; w `test-periods` skrócone do 3 dni
@@ -182,6 +193,8 @@ mod tests {
         assert_eq!(WINDOW_1_END, 31 * SECONDS_PER_DAY);
         assert_eq!(WINDOW_2_END, 91 * SECONDS_PER_DAY);
         assert_eq!(MIN_PERIOD_DAYS, 7);
+        assert_eq!(MAX_PERIOD_DAYS_FLEXIBLE, 365);
+        assert_eq!(EARLY_EXIT_COOLDOWN_SECS, 3 * SECONDS_PER_DAY);
         assert_eq!(genesis_apy_bps(30 * SECONDS_PER_DAY).unwrap(), 2_000);
         assert_eq!(genesis_apy_bps(31 * SECONDS_PER_DAY).unwrap(), 1_500);
         assert_eq!(genesis_apy_bps(91 * SECONDS_PER_DAY).unwrap(), 800);

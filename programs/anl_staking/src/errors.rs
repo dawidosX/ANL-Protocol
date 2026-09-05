@@ -92,6 +92,8 @@ pub enum AnlError {
     DayNotClosed,
     #[msg("Protocol setup incomplete: CAPY vault must be initialized before staking")]
     SetupIncomplete,
+    #[msg("Early exit cooldown not elapsed since position start")]
+    EarlyExitCooldown,
 }
 
 impl From<anl_math::MathError> for AnlError {

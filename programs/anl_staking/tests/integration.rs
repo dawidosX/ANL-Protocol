@@ -1156,7 +1156,8 @@ async fn ts_early_exit_forfeits_and_redistributes() {
     env.fund_xnt(1_000_000).await.unwrap();
 
     // TS-08: claim przed końcem okresu — odrzucony
-    env.advance(DAY).await;
+    env.advance(DAY.max(anl_math::EARLY_EXIT_COOLDOWN_SECS))
+        .await; // R6: cooldown
     let err = env
         .claim(
             &alice,
@@ -1204,9 +1205,10 @@ async fn ts_early_exit_forfeits_and_redistributes() {
     );
 
     // kolejny funding: przepadek + nowa transza w całości dla B
+    let ep2 = env.current_epoch().await; // R6: epoka drugiego fundingu (prod: po cooldownie)
     env.fund_xnt(1_000_000).await.unwrap();
     env.advance((days as i64) * DAY).await;
-    env.settle(pos_b, PoolType::Flexible, Some(1))
+    env.settle(pos_b, PoolType::Flexible, Some(ep2))
         .await
         .unwrap();
     let pb = env.position(pos_b).await;
@@ -2084,6 +2086,7 @@ async fn atak_d2_claim_po_zerwaniu() {
         .unwrap();
 
     // Zerwanie (Flexible dozwolone) — kapitał wraca, pozycja zamknięta.
+    env.advance(anl_math::EARLY_EXIT_COOLDOWN_SECS).await; // R6: cooldown
     env.unstake_early(&user, user_a, pos, PoolType::Flexible)
         .await
         .unwrap();
@@ -2295,6 +2298,7 @@ async fn atak_f1_pauza_nie_wiezi_uzytkownika() {
 
     // (b) KLUCZOWE: wyjście (unstake_early Flexible) MUSI działać mimo pauzy —
     // użytkownik nie może być uwięziony ze swoim kapitałem.
+    env.advance(anl_math::EARLY_EXIT_COOLDOWN_SECS).await; // R6: cooldown (pauza nadal trwa)
     let bal_przed = env.token_balance(user_a).await;
     env.unstake_early(&user, user_a, pos, PoolType::Flexible)
         .await
@@ -2428,6 +2432,7 @@ async fn atak_g2_dwa_osobne_unstake() {
         .unwrap();
 
     // Transakcja #1: legalne zerwanie (Flexible dozwolone). Kapitał wraca.
+    env.advance(anl_math::EARLY_EXIT_COOLDOWN_SECS).await; // R6: cooldown
     env.unstake_early(&user, user_a, pos, PoolType::Flexible)
         .await
         .unwrap();
@@ -3107,4 +3112,104 @@ async fn regresja_h5_orphan_do_zywych_nie_do_pozniejszego_stakera() {
         "H5: Celina TYLKO 5 000 - zero z doby MIN"
     );
     assert_eq!(pool.xnt_undistributed, 0, "H5: bufor pusty");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// AUDYT R6 — F-01: griefing rezerwacja reward pool (liveness).
+// Przed fixem: stake Flexible 3650d rezerwowal 80% kapitalu z reward_vault,
+// blokowal stake innym, a unstake_early natychmiast zwracal 100% bez kosztu.
+// Po fixie: Flexible max 365d (rezerwacja <= 8%) + cooldown przed unstake.
+// ═══════════════════════════════════════════════════════════════════
+
+#[tokio::test]
+async fn atak_f01a_flexible_ponad_365_dni_odrzucony() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let (u, u_anl, _) = env.user_with_anl(1_000 * ONE_ANL).await;
+    let r = env
+        .stake(&u, u_anl, PoolType::Flexible, 100 * ONE_ANL, 366, 0)
+        .await;
+    assert!(
+        r.is_err(),
+        "F-01a: Flexible 366d musi zostac odrzucone (InvalidPeriod)"
+    );
+    let r = env
+        .stake(&u, u_anl, PoolType::Flexible, 100 * ONE_ANL, 365, 0)
+        .await;
+    assert!(r.is_ok(), "F-01a: Flexible 365d dozwolone");
+    // Genesis nadal do MAX_PERIOD_DAYS (kapital realnie zablokowany)
+    let r = env
+        .stake(
+            &u,
+            u_anl,
+            PoolType::Genesis,
+            100 * ONE_ANL,
+            anl_math::MAX_PERIOD_DAYS as u32,
+            1,
+        )
+        .await;
+    assert!(r.is_ok(), "F-01a: Genesis 3650d dozwolone");
+}
+
+#[tokio::test]
+async fn atak_f01b_unstake_early_przed_cooldownem_odrzucony() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let days = anl_math::MIN_PERIOD_DAYS as u32 + 30;
+    let (u, u_anl, _) = env.user_with_anl(1_000 * ONE_ANL).await;
+    let pos = env
+        .stake(&u, u_anl, PoolType::Flexible, 100 * ONE_ANL, days, 0)
+        .await
+        .unwrap();
+    // natychmiastowe wyjscie (bezkosztowy griefing) — odrzucone
+    let r = env.unstake_early(&u, u_anl, pos, PoolType::Flexible).await;
+    assert!(
+        r.is_err(),
+        "F-01b: unstake_early tuz po stake musi odbic (EarlyExitCooldown)"
+    );
+    // tuz PRZED koncem cooldownu — nadal odrzucone
+    env.advance(anl_math::EARLY_EXIT_COOLDOWN_SECS - 60).await;
+    let r = env.unstake_early(&u, u_anl, pos, PoolType::Flexible).await;
+    assert!(
+        r.is_err(),
+        "F-01b: sekunda przed cooldownem nadal odrzucone"
+    );
+    // po cooldownie — wyjscie dziala (WP: wyjscie zawsze mozliwe)
+    env.advance(120).await;
+    let before = env.token_balance(u_anl).await;
+    env.unstake_early(&u, u_anl, pos, PoolType::Flexible)
+        .await
+        .unwrap();
+    assert_eq!(
+        env.token_balance(u_anl).await - before,
+        100 * ONE_ANL,
+        "F-01b: 100% principal po cooldownie"
+    );
+}
+
+#[tokio::test]
+async fn atak_f01c_rezerwacja_nie_blokuje_puli_po_limicie() {
+    // 1,25x wolnej rezerwy w Flexible: PRZED fixem (3650d) rezerwowalo 100% puli.
+    // PO fixie (365d) rezerwuje 10% -> ofiara stakuje normalnie.
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let (g, g_anl, _) = env.user_with_anl(1_250_000 * ONE_ANL).await;
+    let (v, v_anl, _) = env.user_with_anl(1_000 * ONE_ANL).await;
+    env.stake(&g, g_anl, PoolType::Flexible, 1_250_000 * ONE_ANL, 365, 0)
+        .await
+        .unwrap();
+    let r = env
+        .stake(
+            &v,
+            v_anl,
+            PoolType::Genesis,
+            1_000 * ONE_ANL,
+            anl_math::MIN_PERIOD_DAYS as u32,
+            0,
+        )
+        .await;
+    assert!(
+        r.is_ok(),
+        "F-01c: ofiara moze stakowac — rezerwacja griefera to 10%, nie 100%"
+    );
 }

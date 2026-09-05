@@ -16,6 +16,8 @@ pub const MIN_STAKE_AMOUNT: u64 = 1_000_000_000;
 /// Źródłem prawdy jest `anl-math` (tam działa feature `test-periods`).
 pub const MIN_PERIOD_DAYS: u32 = anl_math::MIN_PERIOD_DAYS as u32;
 pub const MAX_PERIOD_DAYS: u32 = anl_math::MAX_PERIOD_DAYS as u32;
+pub const MAX_PERIOD_DAYS_FLEXIBLE: u32 = anl_math::MAX_PERIOD_DAYS_FLEXIBLE as u32;
+pub const EARLY_EXIT_COOLDOWN_SECS: i64 = anl_math::EARLY_EXIT_COOLDOWN_SECS;
 
 pub const XNT_SHARE_GENESIS_BPS: u16 = 6_500;
 pub const XNT_SHARE_FLEXIBLE_BPS: u16 = 3_500;
