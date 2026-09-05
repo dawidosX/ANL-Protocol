@@ -1696,7 +1696,6 @@ function decodeWindow(b64){
 // Zdarzenia claim/okno: JEDEN przebieg dla historii i sum (bylo: 80 + 100 getTransaction
 // rownolegle w dwu petlach). Limit 25 sygnatur, getTransaction SEKWENCYJNIE, wynik dekodowania
 // per sygnatura w localStorage (stara transakcja nigdy sie nie zmienia). 429 -> przerwij i pokaz to, co jest.
-const HISTORY_SIG_LIMIT = 25;
 const TX_CACHE_PREFIX = "anlTx:v1:";
 function txCacheGet(sig){
   try{
@@ -1718,21 +1717,59 @@ function decodeTxEvents(tx){
   }
   return out;
 }
+// Zrodlo historii: sygnatury PORTFELA uzytkownika (nie programu — limit 25 sygnatur programu
+// wypelnialy cudze tx). Strony po 200 przez `before` (max HISTORY_MAX_PAGES), stop na pierwszej
+// sygnaturze juz w cache (starsze byly przetworzone wczesniej). Kazda nieznana sygnatura:
+// getTransaction (sekwencyjnie), filtr "tx dotyka PROGRAM_ID" (accountKeys / logi), wynik
+// dekodowania do cache per sygnatura (takze pusty [] dla zwyklych transferow — nie pobieramy
+// ich drugi raz). Indeks sygnatur programu per portfel w localStorage => sumy i tabela z PELNEJ
+// historii lokalnej, nie z ostatniej strony. 429 -> przerwij i pokaz to, co jest.
+const HISTORY_PAGE = 200, HISTORY_MAX_PAGES = 5;
+const HIST_INDEX_PREFIX = "anlHist:v2:";
+function histIndexGet(me){ try{ const r=localStorage.getItem(HIST_INDEX_PREFIX+me); return r ? JSON.parse(r) : []; }catch(_){ return []; } }
+function histIndexSet(me, sigs){ try{ localStorage.setItem(HIST_INDEX_PREFIX+me, JSON.stringify(sigs)); }catch(_){} }
+function txTouchesProgram(tx){
+  try{
+    const msg = tx.transaction.message;
+    const keys = (msg.staticAccountKeys || msg.accountKeys || []).map(function(k){ return k.toBase58 ? k.toBase58() : (k.pubkey ? k.pubkey.toBase58() : String(k)); });
+    if(keys.indexOf(PROGRAM_ID.toBase58())>=0) return true;
+  }catch(_){}
+  const pid = PROGRAM_ID.toBase58();
+  return ((tx && tx.meta && tx.meta.logMessages) || []).some(function(l){ return l.indexOf(pid)>=0; });
+}
 async function fetchClaimEvents(){
   const me = pubkey.toBase58();
-  const sigs = await conn.getSignaturesForAddress(PROGRAM_ID, {limit:HISTORY_SIG_LIMIT});
-  const rows = []; let partial = false;
-  for(const s of sigs){
-    if(s.err) continue;
-    let evs = txCacheGet(s.signature);
-    if(!evs){
+  const known = new Set(histIndexGet(me));      // sygnatury programu juz w indeksie
+  const newProgSigs = []; let partial = false, before = undefined;
+  outer:
+  for(let page=0; page<HISTORY_MAX_PAGES; page++){
+    let sigs;
+    try{ sigs = await conn.getSignaturesForAddress(pubkey, before ? {limit:HISTORY_PAGE, before:before} : {limit:HISTORY_PAGE}); }
+    catch(e){ if(isRateLimited(e)){ partial = true; break; } throw e; }
+    if(!sigs.length) break;
+    for(const s of sigs){
+      if(s.err) continue;
+      if(known.has(s.signature)) break outer;    // w indeksie => starsze juz przetworzone
+      const cached = txCacheGet(s.signature);
+      if(cached){ if(cached.length) newProgSigs.push(s.signature); continue; }   // migracja starego cache do indeksu, bez RPC
       let tx;
       try{ tx = await conn.getTransaction(s.signature, {commitment:"confirmed", maxSupportedTransactionVersion:0}); }
-      catch(e){ if(isRateLimited(e)){ partial = true; break; } continue; }
-      if(!tx){ continue; } // brak tx na RPC — nie cache'ujemy, sprobujemy nastepnym razem
-      evs = decodeTxEvents(tx); txCacheSet(s.signature, evs);
+      catch(e){ if(isRateLimited(e)){ partial = true; break outer; } continue; }
+      if(!tx){ continue; }                       // RPC nie ma tx (retencja) — sprobujemy nastepnym razem
+      if(!txTouchesProgram(tx)){ txCacheSet(s.signature, []); continue; }   // zwykly transfer: cache [] i dalej
+      const evs = decodeTxEvents(tx); txCacheSet(s.signature, evs);
+      newProgSigs.push(s.signature);
     }
-    for(const ev of evs){ if(ev.owner === me) rows.push(Object.assign({}, ev, {sig:s.signature})); }
+    if(sigs.length < HISTORY_PAGE) break;
+    before = sigs[sigs.length-1].signature;
+  }
+  // indeks per portfel: stare + nowe (deduplikacja), potem wiersze z PELNEGO cache
+  const index = Array.from(new Set(newProgSigs.concat(histIndexGet(me))));
+  histIndexSet(me, index);
+  const rows = [];
+  for(const sig of index){
+    const evs = txCacheGet(sig); if(!evs) continue;
+    for(const ev of evs){ if(ev.owner === me) rows.push(Object.assign({}, ev, {sig:sig})); }
   }
   return {rows, partial};
 }
@@ -1774,6 +1811,9 @@ function renderHistory(rows, partial){
     '<td>'+fmtXnt(sumXnt)+' XNT</td>'+
     '<td>'+fmtAnl(sumCapy)+' CAPY</td>'+
     '<td colspan="2"></td></tr>';
+  let note = document.getElementById("histNote");
+  if(!note){ note = document.createElement("p"); note.id = "histNote"; note.className = "mut"; note.style.cssText = "font-size:12px;margin:8px 0 0"; box.appendChild(note); }
+  note.textContent = T("histNote") + (partial ? " · " + T("rpcPartial") : "");
   box.style.display="block";
 }
 function renderClaimedTotals(rows){
@@ -2346,7 +2386,7 @@ const DPT = {
      lockedG:"do końca okresu", lockedGT:"Pozycje Genesis są zablokowane do końca zadeklarowanego okresu — bez opcji zerwania (WP v1.1).",
      errGas:"Nie udało się wysłać transakcji. Sprawdź, czy masz XNT na opłaty sieciowe w portfelu.", errRejected:"Transakcja odrzucona w portfelu.", errNetwork:"Problem z siecią — spróbuj ponownie za chwilę.", errGeneric:"Nie udało się zrealizować operacji. Spróbuj ponownie.", unstakeConfirm:"Zerwać pozycję przed czasem? Kapitał wróci od razu w całości, ale WSZYSTKIE nagrody (ANL, XNT i CAPY) bezpowrotnie przepadną.",
      dayW:"dzień", winW:"okna 31/91 dni",
-     refreshing:"Odświeżam…", rpcBusy:"RPC przeciążone (429) — pokazuję dane częściowe, spróbuj za chwilę.", rpcPartial:"historia częściowa — limit RPC"},
+     refreshing:"Odświeżam…", rpcBusy:"RPC przeciążone (429) — pokazuję dane częściowe, spróbuj za chwilę.", rpcPartial:"historia częściowa — limit RPC", histNote:"Historia z RPC (retencja ok. 2 dni) + lokalny cache przeglądarki — po wyczyszczeniu danych strony bardzo stare odbiory mogą zniknąć. Docelowo: indekser."},
  en:{noWallet:"No wallet detected. Install Phantom, Backpack or X1 Wallet and refresh the page.",
      rejected:"Connection rejected: ", connected:"Connected: ",
      noPos:"No positions yet — open your first one above.", noPos2:"No positions.",
@@ -2362,7 +2402,7 @@ const DPT = {
      lockedG:"until period end", lockedGT:"Genesis positions are locked until the end of the declared period — no early exit (WP v1.1).",
      errGas:"Could not send the transaction. Check that you have XNT for network fees in your wallet.", errRejected:"Transaction rejected in the wallet.", errNetwork:"Network issue — please try again in a moment.", errGeneric:"Could not complete the operation. Please try again.", unstakeConfirm:"Break this position early? Principal returns immediately in full, but ALL rewards (ANL and XNT) are forfeited forever.",
      dayW:"day", winW:"windows 31/91 days",
-     refreshing:"Refreshing…", rpcBusy:"RPC rate-limited (429) — showing partial data, try again shortly.", rpcPartial:"partial history — RPC limit"}
+     refreshing:"Refreshing…", rpcBusy:"RPC rate-limited (429) — showing partial data, try again shortly.", rpcPartial:"partial history — RPC limit", histNote:"History from RPC (~2-day retention) + local browser cache — very old claims may disappear after clearing site data. Indexer planned."}
 };
 let DPL = (window.anlCurrentLang && window.anlCurrentLang()==="pl")?"pl":"en";
 const T = (k)=>{
