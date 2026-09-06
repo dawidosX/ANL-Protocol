@@ -6,6 +6,8 @@
 **Audyty:** 7 rund (2026-08/09), czterech niezależnych audytorów — raporty w `docs/audits/`. Trzy potwierdzenia freeze (9 / 9 / 9,3 z 10).
 
 Nagradzamy znalezienie błędów w **zamrożonym kodzie**, który stanie się bazą mainnetu. Kto znajdzie coś teraz — pomaga naprawić, zanim będzie na to za późno.
+**Rejestr zgłoszeń (publiczny, bez danych osobowych):** [`docs/BOUNTY-LEDGER.md`](docs/BOUNTY-LEDGER.md).
+
 
 ---
 

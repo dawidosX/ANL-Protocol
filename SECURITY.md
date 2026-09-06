@@ -6,6 +6,8 @@
 **Audits:** 7 rounds (2026-08/09), four independent auditors — reports in `docs/audits/`. Three freeze confirmations (9 / 9 / 9.3 out of 10).
 
 We reward bugs found in the **frozen code** that will become the mainnet base. Whoever finds something now helps fix it before it is too late.
+**Public bounty ledger (no personal data):** [`docs/BOUNTY-LEDGER.md`](docs/BOUNTY-LEDGER.md).
+
 
 ---
 
