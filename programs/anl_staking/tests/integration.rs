@@ -494,9 +494,42 @@ impl Env {
         self.ctx.set_sysvar(&c);
     }
 
-    #[allow(dead_code)]
     async fn now(&mut self) -> i64 {
         clock(&mut self.ctx.banks_client).await.unix_timestamp
+    }
+
+    /// R9.1: ustaw zegar DOKLADNIE na `ts` (advance dodaje sekundy do czasu
+    /// po warpie, wiec nie nadaje sie do testow granicy co do sekundy).
+    async fn set_time(&mut self, ts: i64) {
+        let mut c = clock(&mut self.ctx.banks_client).await;
+        self.ctx.warp_to_slot(c.slot + 500).unwrap();
+        c = clock(&mut self.ctx.banks_client).await;
+        c.unix_timestamp = ts;
+        self.ctx.set_sysvar(&c);
+    }
+
+    /// R9.1: epoka NAJWYZSZEGO istniejacego checkpointu puli <= `target`
+    /// (logika bota: cap = ostatni funding <= end_epoch); None = pula bez
+    /// fundingu <= target (checkpoint niewymagany).
+    async fn last_ckpt_epoch_le(&mut self, pool_type: PoolType, target: u64) -> Option<u64> {
+        let mut e = target;
+        loop {
+            let pda = self.ckpt_pda(pool_type, e);
+            if self
+                .ctx
+                .banks_client
+                .get_account(pda)
+                .await
+                .unwrap()
+                .is_some()
+            {
+                return Some(e);
+            }
+            if e == 0 {
+                return None;
+            }
+            e -= 1;
+        }
     }
 
     // -------------------- tokeny --------------------
@@ -3899,5 +3932,366 @@ async fn regresja_v12_horyzont_xnt_pozycja_dluzsza_rozlicza_sie_bez_rewertu() {
         env.token_balance(a_xnt).await - xnt_before,
         4 * 10_000,
         "XNT dokladnie do ostatniego fundingu w horyzoncie"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// R9.1 — domkniecia po mini-rundzie R9 (trojka: v1.2 bezpieczne):
+// (B) legacy bufor xnt_undistributed, (C) off-by-one horyzontu,
+// (I-02 C) property skarbiec >= roszczenia na harnessie.
+// ═══════════════════════════════════════════════════════════════════
+
+/// Kod bledu Anchora z wyniku transakcji (6000 + indeks wariantu AnlError).
+fn custom_code(e: &BanksClientError) -> Option<u32> {
+    use solana_sdk::{instruction::InstructionError, transaction::TransactionError};
+    match e {
+        BanksClientError::TransactionError(TransactionError::InstructionError(
+            _,
+            InstructionError::Custom(c),
+        )) => Some(*c),
+        _ => None,
+    }
+}
+
+/// R9.1 (C, Low): granica horyzontu co do sekundy. Okno polotwarte [T0, T0+H):
+/// T0+H-1 PASS, T0+H FAIL (XntFundingEnded, NIE EpochMismatch), T0+H+1 FAIL.
+/// Przed fixem (`<=`) T0+H przechodzil — pierwsza sekunda doby H poza horyzontem.
+#[tokio::test]
+async fn regresja_r9_horyzont_granica_t0_plus_h() {
+    let mut env = Env::new().await;
+    let h = anl_math::XNT_FUNDING_HORIZON_SECS;
+    let t0 = env.genesis_start_ts;
+    let code_ended = u32::from(anl_staking::errors::AnlError::XntFundingEnded);
+    assert_eq!(
+        code_ended, 6047,
+        "XntFundingEnded = 6047 (koniec enumu przed SweepExceedsRevenue)"
+    );
+    env.fund_xnt(1_000).await.unwrap(); // doba 0
+    env.set_time(t0 + h - 1).await;
+    assert_eq!(
+        env.current_epoch().await as i64,
+        h / DAY - 1,
+        "T0+H-1 to ostatnia sekunda doby H-1"
+    );
+    env.fund_xnt(1_000)
+        .await
+        .expect("T0+H-1: ostatnia sekunda horyzontu MUSI przejsc");
+    env.set_time(t0 + h).await;
+    assert_eq!(
+        env.current_epoch().await as i64,
+        h / DAY,
+        "T0+H to pierwsza sekunda doby H"
+    );
+    let r = env.fund_xnt(1_000).await;
+    assert_eq!(
+        custom_code(&r.unwrap_err()),
+        Some(code_ended),
+        "T0+H: XntFundingEnded (bylo: przechodzil przy `<=`)"
+    );
+    env.set_time(t0 + h + 1).await;
+    let r = env.fund_xnt(1_000).await;
+    assert_eq!(
+        custom_code(&r.unwrap_err()),
+        Some(code_ended),
+        "T0+H+1: XntFundingEnded"
+    );
+    assert_eq!(
+        env.global_total_xnt_funded().await,
+        2_000,
+        "tylko dwa fundingi w horyzoncie"
+    );
+}
+
+/// R9.1 (B, Medium): stan on-chain sprzed v1.2 z legacy `xnt_undistributed` > 0
+/// (offset 45 w PoolConfig, u64 LE) przy shares > 0 — uwalnia sie DOKLADNIE raz
+/// przy najblizszym domknieciu doby (legacy + koszyk w jednym podziale), kolejne
+/// domkniecie nie podwaja, revenue nietkniete. Odczyt on-chain 2026-09-06 (slot
+/// 186117962): Genesis = 0, Flexible = 0 => migracja zbedna; test broni sciezki.
+#[tokio::test]
+async fn regresja_r9_legacy_bufor_on_chain_uwalnia_sie_raz() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let (a, a_anl, a_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+    // wstrzyknij legacy 1 000 (offset 45) + pokrycie w skarbcu (jak po historycznym fund_xnt)
+    let legacy = 1_000u64;
+    let mut acc = env
+        .ctx
+        .banks_client
+        .get_account(env.genesis_pool)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(acc.data.len(), PoolConfig::LEN);
+    assert_eq!(PoolConfig::LEN, 126);
+    assert_eq!(u64::from_le_bytes(acc.data[45..53].try_into().unwrap()), 0);
+    acc.data[45..53].copy_from_slice(&legacy.to_le_bytes());
+    let gp = env.genesis_pool;
+    env.ctx
+        .set_account(&gp, &solana_sdk::account::AccountSharedData::from(acc));
+    let xv = env.xnt_vault;
+    env.xnt_credit(xv, legacy).await;
+    let g = env.pool(env.genesis_pool).await;
+    assert_eq!(g.xnt_undistributed, legacy, "offset 45 = xnt_undistributed");
+    assert_eq!(
+        g.xnt_protocol_revenue, 0,
+        "offset 94 = xnt_protocol_revenue"
+    );
+    // doba 0: 10 000 (Flexible pusty -> 100% Genesis); doba 1: 10 000 domyka dobe 0
+    env.fund_xnt(10_000).await.unwrap();
+    env.advance(DAY).await;
+    env.fund_xnt(10_000).await.unwrap();
+    let g = env.pool(env.genesis_pool).await;
+    assert_eq!(
+        g.xnt_undistributed, 0,
+        "legacy uwolnione przy pierwszym domknieciu z shares"
+    );
+    assert_eq!(g.xnt_protocol_revenue, 0, "legacy NIE trafia do revenue");
+    env.advance(min_d as i64 * DAY + 60).await;
+    let end_epoch = env.position(pos).await.end_epoch;
+    let ck = env.last_ckpt_epoch_le(PoolType::Genesis, end_epoch).await;
+    let before = env.token_balance(a_xnt).await;
+    env.claim(&a, a_anl, a_xnt, pos, PoolType::Genesis, ck)
+        .await
+        .unwrap();
+    let paid = env.token_balance(a_xnt).await - before;
+    // test-periods (MIN=1): end_epoch 0 -> doba 0 (legacy + 10 000); prod (MIN=7): doby 0 i 1
+    let expected = legacy + 10_000 + if end_epoch >= 1 { 10_000 } else { 0 };
+    assert_eq!(paid, expected, "legacy policzone dokladnie raz");
+    let g = env.pool(env.genesis_pool).await;
+    assert_eq!(g.xnt_undistributed, 0);
+    assert_eq!(
+        g.xnt_protocol_revenue,
+        if end_epoch >= 1 { 0 } else { 10_000 },
+        "doba 1 po end_epoch (test-periods): orphan przy pustej puli -> revenue"
+    );
+}
+
+struct Lcg(u64);
+impl Lcg {
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        self.0 >> 33
+    }
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+}
+
+struct LivePos {
+    owner: Keypair,
+    anl: Pubkey,
+    xnt: Pubkey,
+    pda: Pubkey,
+    pool: PoolType,
+}
+
+/// R9.1 (I-02 C): property na PRAWDZIWYM skarbcu — losowe sekwencje
+/// stake / fund_xnt / uplyw czasu / close_day / settle / claim / unstake_early
+/// (przepadek) / sweep_revenue. Po KAZDYM kroku:
+///   xnt_vault.amount >= sum(pending zywych lub xnt_accrued rozliczonych)
+///                       + legacy + revenue + koszyk (obie pule)
+///   xnt_vault.amount + wyplacone + sweep == total_xnt_funded.
+#[tokio::test]
+async fn property_r9_skarbiec_xnt_pokrywa_roszczenia_losowe_sekwencje() {
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let h = anl_math::XNT_FUNDING_HORIZON_SECS;
+    let cooldown = anl_math::EARLY_EXIT_COOLDOWN_SECS;
+    let mut totals = [0u64; 8];
+    for seed in 1u64..=3 {
+        let mut rng = Lcg(seed);
+        let mut env = Env::new().await;
+        env.fund_rewards(10_000_000 * ONE_ANL).await;
+        let auth_kp = Keypair::from_bytes(&env.authority.to_bytes()).unwrap();
+        let auth_xnt = create_token_account(
+            &mut env.ctx,
+            &env.authority.pubkey(),
+            &env.xnt_mint,
+            spl_token::id(),
+        )
+        .await;
+        let mut live: Vec<LivePos> = Vec::new();
+        let (mut paid, mut swept, mut funded) = (0u64, 0u64, 0u64);
+        let mut ops = [0u64; 8];
+        for step in 0..80 {
+            env.advance(1).await; // I-05: nowy slot => brak deduplikacji identycznych tx
+            let now = env.now().await;
+            let op = rng.below(10);
+            match op {
+                0 | 1 => {
+                    let pool = if rng.below(2) == 0 {
+                        PoolType::Genesis
+                    } else {
+                        PoolType::Flexible
+                    };
+                    let amount = (1 + rng.below(100)) * ONE_ANL;
+                    let days = min_d + rng.below(3) as u32;
+                    let (u, u_anl, u_xnt) = env.user_with_anl(amount).await;
+                    let pda = env.stake(&u, u_anl, pool, amount, days, 0).await.unwrap();
+                    live.push(LivePos {
+                        owner: u,
+                        anl: u_anl,
+                        xnt: u_xnt,
+                        pda,
+                        pool,
+                    });
+                    ops[0] += 1;
+                }
+                2 | 3 => {
+                    if now < env.genesis_start_ts + h {
+                        let amt = 1 + rng.below(50_000);
+                        env.fund_xnt(amt).await.unwrap();
+                        funded += amt;
+                        ops[1] += 1;
+                    }
+                }
+                4 | 5 => {
+                    // test-periods: horyzont 9 d, MIN 1 d => krotsze skoki; prod: MIN 7 d => dluzsze
+                    let max_days = if cfg!(feature = "test-periods") { 2 } else { 4 };
+                    env.advance(rng.below(max_days) as i64 * DAY + 3_600).await;
+                    ops[2] += 1;
+                }
+                6 => {
+                    let pt = if rng.below(2) == 0 {
+                        PoolType::Genesis
+                    } else {
+                        PoolType::Flexible
+                    };
+                    let pk = if pt == PoolType::Genesis {
+                        env.genesis_pool
+                    } else {
+                        env.flexible_pool
+                    };
+                    let p = env.pool(pk).await;
+                    let cur = env.current_epoch().await;
+                    if p.current_day != cur && p.current_day_basket > 0 {
+                        env.close_day(pt, p.current_day).await.unwrap();
+                        ops[3] += 1;
+                    }
+                }
+                7 => {
+                    let mut pick = None;
+                    for (i, lp) in live.iter().enumerate() {
+                        let pos = env.position(lp.pda).await;
+                        if !pos.settled && now >= pos.end_ts {
+                            pick = Some((i, pos.end_epoch));
+                            break;
+                        }
+                    }
+                    if let Some((i, end_epoch)) = pick {
+                        let ck = env.last_ckpt_epoch_le(live[i].pool, end_epoch).await;
+                        env.settle(live[i].pda, live[i].pool, ck).await.unwrap();
+                        ops[4] += 1;
+                    }
+                }
+                8 => {
+                    let mut pick = None;
+                    for (i, lp) in live.iter().enumerate() {
+                        let pos = env.position(lp.pda).await;
+                        if now >= pos.end_ts {
+                            pick = Some((i, pos.end_epoch));
+                            break;
+                        }
+                    }
+                    if let Some((i, end_epoch)) = pick {
+                        let ck = env.last_ckpt_epoch_le(live[i].pool, end_epoch).await;
+                        let lp = live.remove(i);
+                        let before = env.token_balance(lp.xnt).await;
+                        env.claim(&lp.owner, lp.anl, lp.xnt, lp.pda, lp.pool, ck)
+                            .await
+                            .unwrap();
+                        paid += env.token_balance(lp.xnt).await - before;
+                        ops[5] += 1;
+                    }
+                }
+                _ => {
+                    // na przemian: unstake_early (Flexible po cooldownie, przed koncem) / sweep
+                    if rng.below(2) == 0 {
+                        let mut pick = None;
+                        for (i, lp) in live.iter().enumerate() {
+                            if lp.pool != PoolType::Flexible {
+                                continue;
+                            }
+                            let pos = env.position(lp.pda).await;
+                            if now >= pos.start_ts + cooldown && now < pos.end_ts {
+                                pick = Some(i);
+                                break;
+                            }
+                        }
+                        if let Some(i) = pick {
+                            // XNT-01 (v1.2): otwarta poprzednia doba => DayNotClosed, klient domyka
+                            let p = env.pool(env.flexible_pool).await;
+                            let cur = env.current_epoch().await;
+                            if p.current_day != cur && p.current_day_basket > 0 {
+                                env.close_day(PoolType::Flexible, p.current_day)
+                                    .await
+                                    .unwrap();
+                            }
+                            let lp = live.remove(i);
+                            env.unstake_early(&lp.owner, lp.anl, lp.pda, lp.pool)
+                                .await
+                                .unwrap();
+                            ops[6] += 1;
+                        }
+                    } else {
+                        let total = env.pool(env.genesis_pool).await.xnt_protocol_revenue
+                            + env.pool(env.flexible_pool).await.xnt_protocol_revenue;
+                        if total > 0 {
+                            let amt = 1 + rng.below(total);
+                            env.sweep_revenue(&auth_kp, auth_xnt, amt).await.unwrap();
+                            swept += amt;
+                            ops[7] += 1;
+                        }
+                    }
+                }
+            }
+            // ---- INWARIANT po kazdym kroku ----
+            let g = env.pool(env.genesis_pool).await;
+            let f = env.pool(env.flexible_pool).await;
+            let vault = env.token_balance(env.xnt_vault).await;
+            let mut claims = g.xnt_undistributed
+                + g.xnt_protocol_revenue
+                + g.current_day_basket
+                + f.xnt_undistributed
+                + f.xnt_protocol_revenue
+                + f.current_day_basket;
+            for lp in &live {
+                let pos = env.position(lp.pda).await;
+                let pool = if lp.pool == PoolType::Genesis { &g } else { &f };
+                claims += if pos.settled {
+                    pos.xnt_accrued.saturating_sub(pos.xnt_window_claimed)
+                } else {
+                    anl_math::pending_xnt(pos.shares, pool.xnt_reward_index, pos.xnt_debt_index)
+                        .unwrap()
+                };
+            }
+            assert!(
+                vault >= claims,
+                "seed {seed} krok {step} op {op}: skarbiec {vault} < roszczenia {claims} (WYCIEK)"
+            );
+            assert_eq!(
+                vault + paid + swept,
+                funded,
+                "seed {seed} krok {step} op {op}: tozsamosc skarbca"
+            );
+            assert_eq!(env.global_total_xnt_funded().await, funded);
+            assert_eq!(env.token_balance(auth_xnt).await, swept);
+        }
+        println!("seed {seed}: stake/fund/czas/close/settle/claim/unstake/sweep = {ops:?}");
+        for (t, o) in totals.iter_mut().zip(ops.iter()) {
+            *t += o;
+        }
+    }
+    println!("razem: {totals:?}");
+    assert!(
+        totals.iter().all(|&n| n > 0),
+        "kazdy typ operacji musi wystapic (w tym claim i sweep): {totals:?}"
     );
 }
