@@ -23,6 +23,9 @@ use crate::state::*;
 #[derive(Accounts)]
 pub struct SettleExpired<'info> {
     /// Permissionless — settle może wykonać każdy (bot operacyjny, sam user).
+    /// v1.3 (droga B+): `mut`, bo jest płatnikiem czynszu checkpointu bieżącej
+    /// doby tworzonego na żądanie (tylko gdy settle redystrybuuje orphan > 0).
+    #[account(mut)]
     pub cranker: Signer<'info>,
 
     /// AUDYT R4 (H-01/M-01): potrzebny genesis_start_ts — cap liczony od
@@ -57,12 +60,24 @@ pub struct SettleExpired<'info> {
     /// gdy pula nie miała fundingu ≤ end_epoch.
     pub xnt_checkpoint: Option<UncheckedAccount<'info>>,
 
-    /// CHECK: AUDYT R4 — checkpoint doby domykanej przez roll_day (wymagany
-    /// TYLKO gdy settle faktycznie domyka dobę: current_day != epoka zegara
-    /// i koszyk > 0). PDA + dane weryfikowane w helperze. Może być tym samym
-    /// kontem co xnt_checkpoint (zapis przed odczytem, borrowy sekwencyjne).
+    /// CHECK: AUDYT R4 — checkpoint doby domykanej przez roll_day (current_day
+    /// != epoka zegara i koszyk > 0). v1.3 (droga B+): to zawsze ogon łańcucha
+    /// `ckpt(last_funded_epoch)`, potrzebny TAKŻE do dowiązania nowego węzła,
+    /// gdy settle redystrybuuje orphan — klient podaje go ZAWSZE, gdy pula miała
+    /// funding (None tylko przy last_funded_epoch == NO_EPOCH). PDA + dane
+    /// weryfikowane w helperach. Może być tym samym kontem co xnt_checkpoint.
     #[account(mut)]
     pub prev_day_ckpt: Option<UncheckedAccount<'info>>,
+
+    /// CHECK: v1.3 (droga B+) — checkpoint BIEŻĄCEJ doby, PDA
+    /// [XNT_CKPT_SEED, pool_type, epoka zegara]; klient liczy PDA off-chain.
+    /// Tworzony na żądanie (payer = cranker) i dowiązywany do łańcucha, gdy
+    /// settle redystrybuuje orphan > 0 przy shares > 0; jeśli węzeł już istnieje
+    /// (funding / wcześniejsza redystrybucja tej doby) — tylko aktualizacja
+    /// `index`. PDA + stan weryfikowane w `write_current_day_checkpoint`.
+    #[account(mut)]
+    pub cur_day_ckpt: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 /// Indeks-granica dla settlementu pozycji: snapshot ostatniej epoki
@@ -165,13 +180,29 @@ pub fn settle_expired(ctx: Context<SettleExpired>) -> Result<()> {
         ctx.accounts.xnt_checkpoint.as_ref(),
         ctx.program_id,
     )?;
-    let pos = &mut ctx.accounts.user_position;
-
+    let (shares, debt) = (
+        ctx.accounts.user_position.shares,
+        ctx.accounts.user_position.xnt_debt_index,
+    );
+    // v1.3 (droga B+): po rollu current_day == cur_epoch; orphan (jeśli > 0 i
+    // shares > 0) domyka bieżącą dobę — wtedy zapisujemy jej checkpoint.
+    let idx_before = ctx.accounts.pool_config.xnt_reward_index;
     let frozen = ctx
         .accounts
         .pool_config
-        .settle_position_at(pos.shares, pos.xnt_debt_index, cap)
+        .settle_position_at(shares, debt, cap)
         .map_err(AnlError::from)?;
+    if ctx.accounts.pool_config.xnt_reward_index != idx_before {
+        write_current_day_checkpoint(
+            &mut ctx.accounts.pool_config,
+            &ctx.accounts.cur_day_ckpt,
+            ctx.accounts.prev_day_ckpt.as_ref(),
+            &ctx.accounts.cranker.to_account_info(),
+            &ctx.accounts.system_program.to_account_info(),
+            &program_id,
+        )?;
+    }
+    let pos = &mut ctx.accounts.user_position;
     pos.xnt_accrued = frozen;
     pos.settled = true;
 
@@ -277,10 +308,19 @@ pub struct Claim<'info> {
     /// CHECK: jak w SettleExpired — checkpoint końca end_epoch pozycji.
     pub xnt_checkpoint: Option<UncheckedAccount<'info>>,
 
-    /// CHECK: AUDYT R4 — checkpoint doby domykanej przez roll_day (wymagany
-    /// TYLKO gdy claim faktycznie domyka dobę). PDA + dane w helperze.
+    /// CHECK: AUDYT R4 — checkpoint doby domykanej przez roll_day. v1.3 (droga
+    /// B+): zawsze `ckpt(last_funded_epoch)` (ogon łańcucha), potrzebny także do
+    /// dowiązania węzła bieżącej doby przy redystrybucji orphana — klient podaje
+    /// ZAWSZE, gdy pula miała funding. PDA + dane w helperach.
     #[account(mut)]
     pub prev_day_ckpt: Option<UncheckedAccount<'info>>,
+
+    /// CHECK: v1.3 (droga B+) — checkpoint BIEŻĄCEJ doby (PDA z epoką zegara),
+    /// tworzony na żądanie (payer = owner) przy redystrybucji orphana > 0;
+    /// jak w SettleExpired.
+    #[account(mut)]
+    pub cur_day_ckpt: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 pub fn claim(ctx: Context<Claim>) -> Result<()> {
@@ -318,11 +358,24 @@ pub fn claim(ctx: Context<Claim>) -> Result<()> {
             ctx.accounts.user_position.shares,
             ctx.accounts.user_position.xnt_debt_index,
         );
+        // v1.3 (droga B+): orphan > 0 przy shares > 0 domyka bieżącą dobę —
+        // zapis checkpointu bieżącej doby (tworzony na żądanie, payer = owner).
+        let idx_before = ctx.accounts.pool_config.xnt_reward_index;
         let frozen = ctx
             .accounts
             .pool_config
             .settle_position_at(shares, debt, cap)
             .map_err(AnlError::from)?;
+        if ctx.accounts.pool_config.xnt_reward_index != idx_before {
+            write_current_day_checkpoint(
+                &mut ctx.accounts.pool_config,
+                &ctx.accounts.cur_day_ckpt,
+                ctx.accounts.prev_day_ckpt.as_ref(),
+                &ctx.accounts.owner.to_account_info(),
+                &ctx.accounts.system_program.to_account_info(),
+                &program_id,
+            )?;
+        }
         let pos = &mut ctx.accounts.user_position;
         pos.xnt_accrued = frozen;
         pos.settled = true;
@@ -713,6 +766,21 @@ pub struct UnstakeEarly<'info> {
     pub owner_anl: Box<InterfaceAccount<'info, TokenAccount>>,
 
     pub anl_token_program: Program<'info, Token2022>,
+
+    /// CHECK: v1.3 (droga B+) — ogon łańcucha `ckpt(last_funded_epoch)` puli;
+    /// wymagany do dowiązania węzła bieżącej doby, gdy przepadek > 0 przy
+    /// shares > 0 i dzisiejszy węzeł jeszcze nie istnieje. Klient podaje
+    /// ZAWSZE, gdy pula miała funding (None = placeholder program ID).
+    #[account(mut)]
+    pub prev_ckpt: Option<UncheckedAccount<'info>>,
+
+    /// CHECK: v1.3 (droga B+) — checkpoint BIEŻĄCEJ doby (PDA
+    /// [XNT_CKPT_SEED, pool_type, epoka zegara]), tworzony na żądanie
+    /// (payer = owner) przy przepadku > 0 z shares > 0; PDA + stan
+    /// weryfikowane w `write_current_day_checkpoint`.
+    #[account(mut)]
+    pub cur_day_ckpt: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 pub fn unstake_early(ctx: Context<UnstakeEarly>) -> Result<()> {
@@ -746,15 +814,26 @@ pub fn unstake_early(ctx: Context<UnstakeEarly>) -> Result<()> {
     // historyczny checkpoint (wypłata dojrzałych zależna od kolejności).
     // Fail-closed bez zmiany układu kont: klient pakuje `close_day` +
     // `unstake_early` w jednej transakcji, gdy warunek zachodzi.
+    // v1.3 (droga B+): redystrybucja domyka BIEŻĄCĄ dobę z jej checkpointem,
+    // więc strażnik jest redundantny (koszyk poprzedniej doby i tak nie mógłby
+    // zostać domknięty bez jej checkpointu) — ZOSTAJE jako obrona w głąb.
+    let cur_epoch = epoch_of(now, ctx.accounts.global_config.genesis_start_ts)
+        .ok_or(AnlError::BeforeGenesis)?;
     {
-        let cur_epoch = epoch_of(now, ctx.accounts.global_config.genesis_start_ts)
-            .ok_or(AnlError::BeforeGenesis)?;
         let pool = &ctx.accounts.pool_config;
         require!(
             !(pool.current_day != cur_epoch && pool.current_day_basket > 0),
             AnlError::DayNotClosed
         );
     }
+    // Roll wg zegara (koszyk pusty ⇒ tylko current_day = cur_epoch): przepadek
+    // domknie właściwą, bieżącą dobę — nigdy wstecz.
+    let closed = ctx
+        .accounts
+        .pool_config
+        .roll_day_if_needed(cur_epoch)
+        .map_err(AnlError::from)?;
+    require!(closed.is_none(), AnlError::DayNotClosed);
 
     let (shares, debt, amount, anl_reward) = (
         ctx.accounts.user_position.shares,
@@ -763,11 +842,23 @@ pub fn unstake_early(ctx: Context<UnstakeEarly>) -> Result<()> {
         ctx.accounts.user_position.anl_reward,
     );
 
+    let idx_before = ctx.accounts.pool_config.xnt_reward_index;
     let forfeited_xnt = ctx
         .accounts
         .pool_config
         .forfeit_position(shares, debt)
         .map_err(AnlError::from)?;
+    if ctx.accounts.pool_config.xnt_reward_index != idx_before {
+        let program_id = *ctx.program_id;
+        write_current_day_checkpoint(
+            &mut ctx.accounts.pool_config,
+            &ctx.accounts.cur_day_ckpt,
+            ctx.accounts.prev_ckpt.as_ref(),
+            &ctx.accounts.owner.to_account_info(),
+            &ctx.accounts.system_program.to_account_info(),
+            &program_id,
+        )?;
+    }
 
     let bump = ctx.accounts.global_config.vault_authority_bump;
     let seeds: &[&[u8]] = &[VAULT_AUTHORITY_SEED, &[bump]];
