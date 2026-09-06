@@ -8,3 +8,6 @@ features: network-testnet,test-periods
 sha256: 2ae64bdba891da92a3fbbb54f85eb3169dae96227f71bf4fbf9416caed43fe98
 rustc_host: rustc 1.97.1 (8bab26f4f 2026-07-14)
 build_sbf: solana-cargo-build-sbf 1.18.17 platform-tools v1.41 rustc 1.75.0 
+deployed_slot: 186156990
+deploy_date_utc: 2026-09-06T15:50:00Z
+deploy_note: deploy przez Dawida (v1.3.1: horyzont test-periods 100 lat, XNT-02 droga B+ z checkpointem biezacej doby, fix R10 pyt.4); dump on-chain == binarka sha 2ae64bdb (714872 B, reszta zera), Last Deployed In Slot 186156990, authority Dx2vEpVdMh2qScz4vEHAXquTm6QYocKbmPRdcXHLzvEm; src_tree e82b34b3 == R10.1 (45ee285)
