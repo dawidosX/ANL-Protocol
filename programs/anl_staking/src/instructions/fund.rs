@@ -328,6 +328,17 @@ pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
     let cur_epoch = epoch_of(now, ctx.accounts.global_config.genesis_start_ts)
         .ok_or(AnlError::BeforeGenesis)?;
     require!(epoch == cur_epoch, AnlError::EpochMismatch);
+    // v1.2: horyzont fundingu XNT — po 3 latach od genesis funding jest
+    // odrzucany (twardo). Pozycje dłuższe rozliczają się z ostatniego
+    // checkpointu (cap = ostatni funding ≤ end_epoch) bez rewertu.
+    require!(
+        now <= ctx
+            .accounts
+            .global_config
+            .genesis_start_ts
+            .saturating_add(XNT_FUNDING_HORIZON_SECS),
+        AnlError::XntFundingEnded
+    );
     let before = ctx.accounts.xnt_vault.amount;
     token_interface::transfer_checked(
         CpiContext::new(
@@ -448,6 +459,112 @@ pub struct XntFunded {
     pub flexible_part: u64,
     pub genesis_index: u128,
     pub flexible_index: u128,
+    pub timestamp: i64,
+}
+
+/// v1.2 (EDGE opcja 2 / K = 0; M-5 Kimi): wypłata przychodu protokołu — XNT
+/// z dób bez shares (koszyk pustej puli, orphan / przepadek przy pustej puli),
+/// zaksięgowanego per pula w `PoolConfig.xnt_protocol_revenue`. Tylko
+/// `authority`; kwota ≤ suma liczników; zdejmowane najpierw z Genesis.
+#[derive(Accounts)]
+pub struct SweepRevenue<'info> {
+    #[account(mut, constraint = authority.key() == global_config.authority @ AnlError::InvalidAuthority)]
+    pub authority: Signer<'info>,
+
+    #[account(seeds = [GLOBAL_CONFIG_SEED], bump = global_config.bump,
+        constraint = global_config.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
+    pub global_config: Box<Account<'info, GlobalConfig>>,
+
+    /// CHECK: PDA-authority skarbcow (seeds + bump).
+    #[account(seeds = [VAULT_AUTHORITY_SEED], bump = global_config.vault_authority_bump)]
+    pub vault_authority: UncheckedAccount<'info>,
+
+    #[account(address = global_config.xnt_mint @ AnlError::InvalidMint)]
+    pub xnt_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(mut, seeds = [XNT_VAULT_SEED], bump,
+        token::mint = xnt_mint, token::authority = vault_authority,
+        token::token_program = xnt_token_program)]
+    pub xnt_vault: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        seeds = [POOL_SEED, &[PoolType::Genesis as u8]],
+        bump = genesis_pool.bump,
+        constraint = genesis_pool.pool_type == PoolType::Genesis @ AnlError::InvalidVault,
+        constraint = genesis_pool.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
+    )]
+    pub genesis_pool: Box<Account<'info, PoolConfig>>,
+
+    #[account(
+        mut,
+        seeds = [POOL_SEED, &[PoolType::Flexible as u8]],
+        bump = flexible_pool.bump,
+        constraint = flexible_pool.pool_type == PoolType::Flexible @ AnlError::InvalidVault,
+        constraint = flexible_pool.version == ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
+    )]
+    pub flexible_pool: Box<Account<'info, PoolConfig>>,
+
+    #[account(
+        mut,
+        token::mint = xnt_mint,
+        token::authority = authority,
+        token::token_program = xnt_token_program
+    )]
+    pub authority_xnt: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    pub xnt_token_program: Program<'info, Token>,
+}
+
+pub fn sweep_revenue(ctx: Context<SweepRevenue>, amount: u64) -> Result<()> {
+    require!(amount > 0, AnlError::ZeroAmount);
+    let total = ctx
+        .accounts
+        .genesis_pool
+        .xnt_protocol_revenue
+        .checked_add(ctx.accounts.flexible_pool.xnt_protocol_revenue)
+        .ok_or(AnlError::MathOverflow)?;
+    require!(amount <= total, AnlError::SweepExceedsRevenue);
+    require!(
+        ctx.accounts.xnt_vault.amount >= amount,
+        AnlError::InsufficientXntVault
+    );
+    let from_g = core::cmp::min(amount, ctx.accounts.genesis_pool.xnt_protocol_revenue);
+    let from_f = amount - from_g;
+    ctx.accounts.genesis_pool.xnt_protocol_revenue -= from_g;
+    ctx.accounts.flexible_pool.xnt_protocol_revenue -= from_f;
+
+    let bump = ctx.accounts.global_config.vault_authority_bump;
+    let seeds: &[&[u8]] = &[VAULT_AUTHORITY_SEED, &[bump]];
+    let signer: &[&[&[u8]]] = &[seeds];
+    token_interface::transfer_checked(
+        CpiContext::new_with_signer(
+            ctx.accounts.xnt_token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.xnt_vault.to_account_info(),
+                mint: ctx.accounts.xnt_mint.to_account_info(),
+                to: ctx.accounts.authority_xnt.to_account_info(),
+                authority: ctx.accounts.vault_authority.to_account_info(),
+            },
+            signer,
+        ),
+        amount,
+        ctx.accounts.xnt_mint.decimals,
+    )?;
+    emit!(RevenueSwept {
+        authority: ctx.accounts.authority.key(),
+        amount,
+        remaining: total - amount,
+        timestamp: Clock::get()?.unix_timestamp,
+    });
+    Ok(())
+}
+
+#[event]
+pub struct RevenueSwept {
+    pub authority: Pubkey,
+    pub amount: u64,
+    pub remaining: u64,
     pub timestamp: i64,
 }
 

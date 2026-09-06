@@ -741,6 +741,20 @@ pub fn unstake_early(ctx: Context<UnstakeEarly>) -> Result<()> {
             .saturating_add(EARLY_EXIT_COOLDOWN_SECS),
         AnlError::EarlyExitCooldown
     );
+    // v1.2 (XNT-01, strażnik): przepadek NIE może być liczony przy
+    // NIEDOMKNIĘTEJ dobie — redystrybucja przed domknięciem zanieczyszczałaby
+    // historyczny checkpoint (wypłata dojrzałych zależna od kolejności).
+    // Fail-closed bez zmiany układu kont: klient pakuje `close_day` +
+    // `unstake_early` w jednej transakcji, gdy warunek zachodzi.
+    {
+        let cur_epoch = epoch_of(now, ctx.accounts.global_config.genesis_start_ts)
+            .ok_or(AnlError::BeforeGenesis)?;
+        let pool = &ctx.accounts.pool_config;
+        require!(
+            !(pool.current_day != cur_epoch && pool.current_day_basket > 0),
+            AnlError::DayNotClosed
+        );
+    }
 
     let (shares, debt, amount, anl_reward) = (
         ctx.accounts.user_position.shares,

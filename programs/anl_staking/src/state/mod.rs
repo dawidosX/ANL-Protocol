@@ -91,11 +91,16 @@ pub struct PoolConfig {
     pub current_day_basket: u64,
     /// Doba (epoka), do której należy current_day_basket.
     pub current_day: u64,
-    pub reserved: [u8; 32],
+    /// v1.2 (EDGE, opcja 2 / K = 0): XNT z dób BEZ shares (koszyk pustej puli,
+    /// orphan / przepadek przy pustej puli) nie ma właściciela ⇒ przychód
+    /// protokołu, wypłacany wyłącznie `sweep_revenue` (authority). Wycięte
+    /// z `reserved` (32 → 24 B) — rozmiar konta bez zmian.
+    pub xnt_protocol_revenue: u64,
+    pub reserved: [u8; 24],
 }
 
 impl PoolConfig {
-    pub const LEN: usize = 8 + 1 + 1 + 1 + 2 + 8 + 8 + 16 + 8 + 8 + 8 + 8 + 1 + 8 + 8 + 32;
+    pub const LEN: usize = 8 + 1 + 1 + 1 + 2 + 8 + 8 + 16 + 8 + 8 + 8 + 8 + 1 + 8 + 8 + 8 + 24;
 
     /// Dzienny funding części tej puli (WP v1.0 §8). Przy `total_shares == 0`
     /// środki czekają w `xnt_undistributed` — zasada pustego koszyka.
@@ -108,8 +113,12 @@ impl PoolConfig {
         }
         let basket = self.current_day_basket;
         if self.total_shares == 0 {
-            self.xnt_undistributed = self
-                .xnt_undistributed
+            // v1.2 (EDGE): doba bez shares nie ma beneficjenta — koszyk to
+            // przychód protokołu, NIE bufor dla pierwszego wchodzącego.
+            // `xnt_undistributed` zostaje polem legacy (testnet: stary bufor
+            // uwalnia się naturalnie przy najbliższym domknięciu z shares > 0).
+            self.xnt_protocol_revenue = self
+                .xnt_protocol_revenue
                 .checked_add(basket)
                 .ok_or(anl_math::MathError::Overflow)?;
             self.current_day_basket = 0;
@@ -253,8 +262,9 @@ impl PoolConfig {
             return Ok(());
         }
         if self.total_shares == 0 {
-            self.xnt_undistributed = self
-                .xnt_undistributed
+            // v1.2 (EDGE): orphan / przepadek przy pustej puli → przychód protokołu.
+            self.xnt_protocol_revenue = self
+                .xnt_protocol_revenue
                 .checked_add(amount)
                 .ok_or(anl_math::MathError::Overflow)?;
             return Ok(());
@@ -460,7 +470,8 @@ mod wariant_a_tests {
             bump: 0,
             current_day_basket: 0,
             current_day: 0,
-            reserved: [0; 32],
+            xnt_protocol_revenue: 0,
+            reserved: [0; 24],
         }
     }
 
@@ -503,9 +514,11 @@ mod wariant_a_tests {
         pool.current_day = 0;
         pool.add_to_basket(10_000_000_000, 0).unwrap();
         pool.roll_day_if_needed(1).unwrap();
+        // v1.2 (EDGE): doba bez shares -> przychod protokolu, NIE bufor
+        assert_eq!(pool.xnt_undistributed, 0, "bufor legacy pozostaje 0");
         assert_eq!(
-            pool.xnt_undistributed, 10_000_000_000,
-            "pusta pula -> bufor"
+            pool.xnt_protocol_revenue, 10_000_000_000,
+            "pusta pula -> revenue"
         );
         assert_eq!(
             pool.xnt_reward_index, 0,
@@ -517,8 +530,12 @@ mod wariant_a_tests {
         pool.roll_day_if_needed(2).unwrap();
         let xnt = pending(&pool, 1_000_000, debt);
         assert_eq!(
-            xnt, 15_000_000_000,
-            "staker dostaje bufor 10 + koszyk 5 = 15 XNT"
+            xnt, 5_000_000_000,
+            "staker dostaje TYLKO swoj koszyk 5 XNT (nie 10 z dob bez shares)"
+        );
+        assert_eq!(
+            pool.xnt_protocol_revenue, 10_000_000_000,
+            "revenue nietkniete"
         );
     }
 
@@ -675,9 +692,11 @@ mod wariant_a_tests {
         let paid = pool.settle_position_at(M, debt, debt).unwrap();
         assert_eq!(paid, 0);
         assert_eq!(pool.total_shares, 0);
+        // v1.2 (EDGE): orphan przy pustej puli -> przychod, nie bufor
+        assert_eq!(pool.xnt_undistributed, 0);
         assert_eq!(
-            pool.xnt_undistributed, DAY_XNT,
-            "pusta pula: orphan czeka na pierwszego"
+            pool.xnt_protocol_revenue, DAY_XNT,
+            "pusta pula: orphan to przychod protokolu"
         );
     }
 
@@ -724,10 +743,11 @@ mod wariant_a_tests {
         let paid2 = p2.settle_position_at(M, 100 * p, 250 * p).unwrap();
         assert_eq!(paid2, 150 * M, "(250-100) x shares");
         assert_eq!(p2.total_shares, 0);
+        assert_eq!(p2.xnt_undistributed, 0);
         assert_eq!(
-            p2.xnt_undistributed,
+            p2.xnt_protocol_revenue,
             50 * M,
-            "orphan (300-250) x shares do bufora (pusta pula)"
+            "v1.2: orphan (300-250) x shares przy pustej puli -> przychod protokolu"
         );
     }
 
@@ -822,7 +842,11 @@ mod wariant_a_tests {
                     .iter()
                     .map(|(sh, debt, _)| pending(&pool, *sh, *debt))
                     .sum();
-                let claims = paid + pending_live + pool.xnt_undistributed + pool.current_day_basket;
+                let claims = paid
+                    + pending_live
+                    + pool.xnt_undistributed
+                    + pool.xnt_protocol_revenue
+                    + pool.current_day_basket;
                 assert!(
                     claims <= funded,
                     "seed {seed}: roszczenia {claims} > wplaty {funded} (WYCIEK)"

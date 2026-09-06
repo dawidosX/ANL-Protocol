@@ -103,6 +103,11 @@ pub mod anl_staking {
         instructions::fund::close_day(ctx, epoch)
     }
 
+    /// v1.2: wypłata przychodu protokołu (XNT z dób bez shares) — tylko authority.
+    pub fn sweep_revenue(ctx: Context<SweepRevenue>, amount: u64) -> Result<()> {
+        instructions::fund::sweep_revenue(ctx, amount)
+    }
+
     /// Gorący klucz bota dziennego — tylko funding, ustawiany przez authority.
     pub fn set_operator(ctx: Context<SetOperator>, new_operator: Pubkey) -> Result<()> {
         instructions::fund::set_operator(ctx, new_operator)
