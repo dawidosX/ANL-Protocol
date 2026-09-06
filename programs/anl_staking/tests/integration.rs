@@ -3878,51 +3878,49 @@ async fn regresja_v12_xnt01_wyplata_niezalezna_od_kolejnosci_unstake_vs_settle()
     assert_eq!(exit_first, settle_first, "XNT-01: 400 != 200 przed fixem");
 }
 
-/// Horyzont XNT: pozycja dluzsza niz horyzont rozlicza sie bez rewertu (klasa
-/// R6-01) — principal + ANL + XNT do ostatniego fundingu; fund_xnt po horyzoncie
-/// odbija XntFundingEnded.
+/// v1.2/v1.3: pozycja OBEJMUJACA horyzont rozlicza sie bez rewertu (klasa R6-01).
+/// Czas WSTRZYKNIETY (`Env::set_time`): pozycja otwarta 4 doby przed T0+H na 10 dni,
+/// fundingi w dobach H-4..H-1, po horyzoncie odrzucone; claim = principal + ANL +
+/// 4 fundingi. Niezalezny od dlugosci horyzontu (prod 3 lata / testnet 100 lat)
+/// i od realnego genesis (hazard @Olxbug).
 #[tokio::test]
 async fn regresja_v12_horyzont_xnt_pozycja_dluzsza_rozlicza_sie_bez_rewertu() {
     let mut env = Env::new().await;
     env.fund_rewards(10_000_000 * ONE_ANL).await;
-    let h_days = anl_math::XNT_FUNDING_HORIZON_SECS / DAY;
+    let h = anl_math::XNT_FUNDING_HORIZON_SECS;
+    let t0 = env.genesis_start_ts;
+    let code_ended = u32::from(anl_staking::errors::AnlError::XntFundingEnded);
+    env.set_time(t0 + h - 4 * DAY).await; // doba H-4
     let (a, a_anl, a_xnt) = env.user_with_anl(100 * ONE_ANL).await;
     let pos = env
-        .stake(
-            &a,
-            a_anl,
-            PoolType::Genesis,
-            100 * ONE_ANL,
-            (h_days + 10) as u32,
-            0,
-        )
+        .stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, 10, 0)
         .await
         .unwrap();
     let p0 = env.position(pos).await;
-    // fundingi w dobach 0, 1, 2 oraz H-1 (ostatnia doba w horyzoncie); A sama => 100% do Genesis
-    env.fund_xnt(10_000).await.unwrap();
-    env.advance(DAY).await;
-    env.fund_xnt(10_000).await.unwrap();
-    env.advance(DAY).await;
-    env.fund_xnt(10_000).await.unwrap();
-    env.advance((h_days - 3) * DAY).await; // doba H-1
-    env.fund_xnt(10_000).await.unwrap();
-    let last_epoch = env.current_epoch().await;
-    assert_eq!(last_epoch as i64, h_days - 1);
-    // po horyzoncie: twardo odrzucone
-    env.advance(2 * DAY).await; // doba H+1
+    // fundingi w dobach H-4, H-3, H-2, H-1 (A sama => 100% do Genesis)
+    for _ in 0..4 {
+        env.fund_xnt(10_000).await.unwrap();
+        env.advance(DAY).await;
+    }
+    let last_epoch = (h / DAY - 1) as u64;
+    assert_eq!(env.current_epoch().await, last_epoch + 1, "doba H");
     let r = env.fund_xnt(10_000).await;
-    assert!(
-        r.is_err(),
-        "fund_xnt po horyzoncie MUSI odbic (XntFundingEnded)"
+    assert_eq!(
+        custom_code(&r.unwrap_err()),
+        Some(code_ended),
+        "doba H: fund_xnt po horyzoncie MUSI odbic (XntFundingEnded)"
     );
+    env.advance(DAY).await; // doba H+1
+    let r = env.fund_xnt(10_000).await;
+    assert_eq!(custom_code(&r.unwrap_err()), Some(code_ended));
     // dojrzenie i claim: cap = ckpt(H-1), bez rewertu
-    env.advance(9 * DAY + 60).await;
+    let now = env.now().await;
+    env.advance(p0.end_ts - now + 60).await;
     let anl_before = env.token_balance(a_anl).await;
     let xnt_before = env.token_balance(a_xnt).await;
     env.claim(&a, a_anl, a_xnt, pos, PoolType::Genesis, Some(last_epoch))
         .await
-        .expect("pozycja dluzsza niz horyzont MUSI sie rozliczyc (klasa R6-01)");
+        .expect("pozycja obejmujaca horyzont MUSI sie rozliczyc (klasa R6-01)");
     assert_eq!(
         env.token_balance(a_anl).await - anl_before,
         100 * ONE_ANL + p0.anl_reward,
@@ -3933,6 +3931,7 @@ async fn regresja_v12_horyzont_xnt_pozycja_dluzsza_rozlicza_sie_bez_rewertu() {
         4 * 10_000,
         "XNT dokladnie do ostatniego fundingu w horyzoncie"
     );
+    assert_eq!(env.global_total_xnt_funded().await, 4 * 10_000);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -3956,6 +3955,8 @@ fn custom_code(e: &BanksClientError) -> Option<u32> {
 /// R9.1 (C, Low): granica horyzontu co do sekundy. Okno polotwarte [T0, T0+H):
 /// T0+H-1 PASS, T0+H FAIL (XntFundingEnded, NIE EpochMismatch), T0+H+1 FAIL.
 /// Przed fixem (`<=`) T0+H przechodzil — pierwsza sekunda doby H poza horyzontem.
+/// v1.3: czas wstrzykniety (`set_time` od genesis HARNESSU) — test nie zalezy od
+/// dlugosci H (prod 3 lata / testnet 100 lat) ani od realnego genesis testnetu.
 #[tokio::test]
 async fn regresja_r9_horyzont_granica_t0_plus_h() {
     let mut env = Env::new().await;
