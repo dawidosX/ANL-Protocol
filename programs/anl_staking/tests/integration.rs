@@ -4295,3 +4295,83 @@ async fn property_r9_skarbiec_xnt_pokrywa_roszczenia_losowe_sekwencje() {
         "kazdy typ operacji musi wystapic (w tym claim i sweep): {totals:?}"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// XNT-02 (zgloszenie Pawla, 2026-09-06) — PoC odtworzony 1:1 z sekwencji
+// w ZGLOSZENIE-BOUNTY-XNT.md (zalacznik poc/xnt-02-poc.rs nie dotarl).
+// Przepadek A (unstake_early) miedzy fundingami podnosi indeks BEZ checkpointu;
+// B rozlicza sie z ckpt(0) i traci swoja czesc przepadku; orphan trafia do
+// poznego C, ktory permissionless wola settle_expired(B).
+// ═══════════════════════════════════════════════════════════════════
+#[tokio::test]
+async fn audit_forfeit_before_expiry_is_lost_and_paid_to_late_staker() {
+    const XNT: u64 = 1_000_000_000;
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    // 1. A: Flexible 100 ANL / 14 dni; B: Flexible 100 ANL / okres minimalny (prod 7 d)
+    let (a, a_anl, _a_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let (b, b_anl, b_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pa = env
+        .stake(&a, a_anl, PoolType::Flexible, 100 * ONE_ANL, 14, 0)
+        .await
+        .unwrap();
+    let pb = env
+        .stake(&b, b_anl, PoolType::Flexible, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+    // 2. funding 10 XNT (doba 0), nastepna doba, close_day(0): A i B po 5 XNT
+    env.fund_xnt(10 * XNT).await.unwrap();
+    env.advance(DAY).await;
+    env.close_day(PoolType::Flexible, 0).await.unwrap();
+    let pool = env.pool(env.flexible_pool).await;
+    let posb = env.position(pb).await;
+    let live_b_before_forfeit =
+        anl_math::pending_xnt(posb.shares, pool.xnt_reward_index, posb.xnt_debt_index).unwrap();
+    assert_eq!(live_b_before_forfeit, 5 * XNT, "po close_day(0): B ma 5 XNT");
+    // 3. po 3 kolejnych dobach A robi unstake_early (po cooldownie); B jedynym zywym
+    env.advance(3 * DAY).await;
+    env.unstake_early(&a, a_anl, pa, PoolType::Flexible)
+        .await
+        .expect("unstake_early A (doba zamknieta, cooldown minal)");
+    let pool = env.pool(env.flexible_pool).await;
+    let live_b = anl_math::pending_xnt(posb.shares, pool.xnt_reward_index, posb.xnt_debt_index)
+        .unwrap();
+    // 4. po koncu B, przed settle_expired(B): C otwiera Flexible 100 ANL / okres minimalny
+    let now = env.now().await;
+    if now < posb.end_ts {
+        env.advance(posb.end_ts - now + 60).await;
+    }
+    let (c, c_anl, c_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pc = env
+        .stake(&c, c_anl, PoolType::Flexible, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+    // 5. permissionless settle_expired(B) z ckpt(0), potem claim B z tym samym checkpointem
+    env.settle(pb, PoolType::Flexible, Some(0)).await.unwrap();
+    let b_before = env.token_balance(b_xnt).await;
+    env.claim(&b, b_anl, b_xnt, pb, PoolType::Flexible, Some(0))
+        .await
+        .unwrap();
+    let paid_b = env.token_balance(b_xnt).await - b_before;
+    // 6. dodatkowy funding 1 XNT, koniec C, claim C z checkpointem tego fundingu
+    env.advance(1).await;
+    env.fund_xnt(XNT).await.unwrap();
+    let e_fund = env.current_epoch().await;
+    let posc = env.position(pc).await;
+    let now = env.now().await;
+    env.advance(posc.end_ts - now + 60).await;
+    let c_before = env.token_balance(c_xnt).await;
+    env.claim(&c, c_anl, c_xnt, pc, PoolType::Flexible, Some(e_fund))
+        .await
+        .unwrap();
+    let paid_c = env.token_balance(c_xnt).await - c_before;
+    let total_funded = env.global_total_xnt_funded().await;
+    println!(
+        "AUDIT_FORFEIT: live_B={live_b}\n                paid_B={paid_b}\n                paid_late_C={paid_c}\n                total_funded={total_funded}"
+    );
+    assert_eq!(live_b, 10 * XNT, "B za zycia: 5 (doba 0) + 5 (przepadek A) = 10 XNT");
+    assert_eq!(paid_b, 5 * XNT, "XNT-02: B dostaje tylko 5 XNT (cap = ckpt(0), bez przepadku)");
+    assert_eq!(paid_c, 6 * XNT, "XNT-02: pozny C dostaje 1 XNT fundingu + 5 XNT utracone przez B");
+    assert_eq!(total_funded, 11 * XNT);
+}
