@@ -524,7 +524,7 @@ pub fn sweep_revenue(ctx: Context<SweepRevenue>, amount: u64) -> Result<()> {
         .xnt_protocol_revenue
         .checked_add(ctx.accounts.flexible_pool.xnt_protocol_revenue)
         .ok_or(AnlError::MathOverflow)?;
-    require!(amount <= total, AnlError::InsufficientXntVault);
+    require!(amount <= total, AnlError::SweepExceedsRevenue);
     require!(
         ctx.accounts.xnt_vault.amount >= amount,
         AnlError::InsufficientXntVault

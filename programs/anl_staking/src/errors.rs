@@ -98,6 +98,8 @@ pub enum AnlError {
     InvalidCapySupply,
     #[msg("XNT funding horizon (3 years from genesis) has ended")]
     XntFundingEnded,
+    #[msg("Requested sweep amount exceeds accumulated protocol revenue")]
+    SweepExceedsRevenue,
 }
 
 impl From<anl_math::MathError> for AnlError {
