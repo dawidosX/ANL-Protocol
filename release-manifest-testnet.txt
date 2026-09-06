@@ -1,10 +1,10 @@
 release: testnet
-date: 2026-09-06T12:22:46Z
-head: a9d74511a9145558943a5247c7146f5ebefd8d44
-code_tree: f4e09267013e5d1a8fb0d5f1c9315c1480cd5177
-math_tree: 5c40b1007b1a78a62014debd4bf1d895ff7cd35e
-src_tree: 63892154adc8b50362957e43f040d3ec0a2241ae
+date: 2026-09-06T15:40:59Z
+head: 0af0871af7f9bedf52cff99f2085dc7705de09f5
+code_tree: 552583c928478e3aa1c712018daf46b5e4d11f84
+math_tree: 7adf5f9a74c9f3cd3f03381b8cb013b30fa1b7c5
+src_tree: e82b34b36e7a78a60398cc375aa3a30ecf298995
 features: network-testnet,test-periods
-sha256: 741ec137bde845b4404e01ca9c4694db2e86e7ff96ba7fe78f30d3089882dca3
+sha256: 2ae64bdba891da92a3fbbb54f85eb3169dae96227f71bf4fbf9416caed43fe98
 rustc_host: rustc 1.97.1 (8bab26f4f 2026-07-14)
 build_sbf: solana-cargo-build-sbf 1.18.17 platform-tools v1.41 rustc 1.75.0 
