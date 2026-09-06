@@ -1387,6 +1387,11 @@ const TOKEN_2022 = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 const ATA_PROG   = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 const DISC_STAKE = new Uint8Array([206,176,202,18,200,209,179,108]);
 const DISC_UNSTAKE = new Uint8Array([246,212,81,180,65,2,126,125]);
+// v1.3: PDA checkpointu doby (NO_EPOCH = u64::MAX zdefiniowane nizej, przy dekoderze puli)
+function ckptPda(poolType, epoch){
+  const eb = new Uint8Array(8); new DataView(eb.buffer).setBigUint64(0, BigInt(epoch), true);
+  return pda([enc("xnt_ckpt"), new Uint8Array([poolType]), eb]);
+}
 const DISC_CLOSEDAY = new Uint8Array([156,214,132,15,27,77,42,79]); // close_day (v1.2: pakowane przed unstake_early)
 const DEC = 1_000_000_000n;
 
@@ -2106,22 +2111,28 @@ async function unstakeEarly(i, poolType){
     const tx = new Transaction();
     // v1.2 (XNT-01): program odbija unstake_early przy otwartym koszyku poprzedniej doby
     // (DayNotClosed) — pakujemy close_day(current_day) + unstake_early w JEDNEJ transakcji.
-    try{
-      const [pI, cI] = await conn.getMultipleAccountsInfo([poolConfig, globalConfig]);
-      if(pI && cI){
-        const pdv = new DataView(pI.data.buffer, pI.data.byteOffset);
-        const basket = pdv.getBigUint64(78, true), curDay = pdv.getBigUint64(86, true);
-        const gts = new DataView(cI.data.buffer, cI.data.byteOffset).getBigInt64(106, true);
-        const clockEpoch = (BigInt(Math.floor(Date.now()/1000)) - gts) / 86400n;
-        if(basket > 0n && curDay !== clockEpoch){
-          const eb = new Uint8Array(8); new DataView(eb.buffer).setBigUint64(0, curDay, true);
-          const dayCkpt = pda([enc("xnt_ckpt"), new Uint8Array([poolType]), eb]);
-          const cd = new Uint8Array(16); cd.set(DISC_CLOSEDAY, 0); cd.set(eb, 8);
-          tx.add(new TransactionInstruction({programId:PROGRAM_ID,
-            keys:[AW(pubkey,true,false), AW(globalConfig), AW(poolConfig,false,true), AW(dayCkpt,false,true)], data:cd}));
-        }
-      }
-    }catch(e){ console.log("[ANL] close_day przed unstake:", e.message); }
+    // v1.3 (droga B+, XNT-02): przepadek domyka BIEZACA dobe z jej checkpointem —
+    // konta 9-11: prev_ckpt (ogon lancucha = ckpt(last_funded_epoch), placeholder gdy brak),
+    // cur_day_ckpt (PDA epoki zegara, tworzony przez program na zadanie, platnik = owner),
+    // system_program.
+    const [pI, cI] = await conn.getMultipleAccountsInfo([poolConfig, globalConfig]);
+    if(!pI || !cI) throw new Error("brak PoolConfig/GlobalConfig");
+    const pdv = new DataView(pI.data.buffer, pI.data.byteOffset);
+    const basket = pdv.getBigUint64(78, true), curDay = pdv.getBigUint64(86, true);
+    const lastCkptEpoch = pdv.getBigUint64(61, true); // last_funded_epoch = ostatnia doba z checkpointem
+    const gts = new DataView(cI.data.buffer, cI.data.byteOffset).getBigInt64(106, true);
+    const clockEpoch = (BigInt(Math.floor(Date.now()/1000)) - gts) / 86400n;
+    const prevCkpt = lastCkptEpoch === NO_EPOCH ? null : ckptPda(poolType, lastCkptEpoch);
+    keys.push(AW(prevCkpt || PROGRAM_ID, false, !!prevCkpt));   // 9  prev_ckpt (Option)
+    keys.push(AW(ckptPda(poolType, clockEpoch), false, true));  // 10 cur_day_ckpt
+    keys.push(AW(SystemProgram.programId));                     // 11 system_program
+    if(basket > 0n && curDay !== clockEpoch){
+      const eb = new Uint8Array(8); new DataView(eb.buffer).setBigUint64(0, curDay, true);
+      const dayCkpt = ckptPda(poolType, curDay);
+      const cd = new Uint8Array(16); cd.set(DISC_CLOSEDAY, 0); cd.set(eb, 8);
+      tx.add(new TransactionInstruction({programId:PROGRAM_ID,
+        keys:[AW(pubkey,true,false), AW(globalConfig), AW(poolConfig,false,true), AW(dayCkpt,false,true)], data:cd}));
+    }
     tx.add(new TransactionInstruction({programId:PROGRAM_ID, keys, data}));
     tx.feePayer = pubkey;
     const bh = await conn.getLatestBlockhash("finalized");
@@ -2183,26 +2194,24 @@ async function claimPosition(i, poolType){
     // cap liczony do OSTATNIEJ DOMKNIETEJ doby (jak kontrakt): jesli koszyk biezacej
     // doby wisi, target = current_day-1 (biezaca doba pominieta, odbior od razu).
     let capTarget = endEpoch;
+    // v1.3 (droga B+): prev_day_ckpt = ZAWSZE ogon lancucha ckpt(last_funded_epoch)
+    // (roll doby + dowiazanie wezla biezacej doby przy orphanie); cur_day_ckpt = PDA
+    // epoki zegara (program tworzy na zadanie, platnik = owner); system_program.
     let prevDayCkpt = null;
-    try {
-      const pI = await conn.getAccountInfo(poolConfig);
-      const cI = await conn.getAccountInfo(globalConfig);
-      if(pI && cI){
-        const pdv = new DataView(pI.data.buffer, pI.data.byteOffset);
-        const basket = pdv.getBigUint64(78, true);
-        const curDay = pdv.getBigUint64(86, true);
-        const gts = new DataView(cI.data.buffer, cI.data.byteOffset).getBigInt64(106, true);
-        const clockEpoch = (BigInt(Math.floor(Date.now()/1000)) - gts) / 86400n;
-        const rollNeeded = basket > 0n && curDay !== clockEpoch;
-        if(rollNeeded){
-          const eb = new Uint8Array(8); new DataView(eb.buffer).setBigUint64(0, curDay, true);
-          prevDayCkpt = pda([enc("xnt_ckpt"), new Uint8Array([poolType]), eb]);
-        }
-        const lastClosed = rollNeeded ? clockEpoch
-                         : (basket > 0n ? (curDay > 0n ? curDay - 1n : 0n) : curDay);
-        if(lastClosed < endEpoch) capTarget = lastClosed;
-      }
-    } catch(_) {}
+    const [pI, cI] = await conn.getMultipleAccountsInfo([poolConfig, globalConfig]);
+    if(!pI || !cI) throw new Error("brak PoolConfig/GlobalConfig");
+    const pdv = new DataView(pI.data.buffer, pI.data.byteOffset);
+    const basket = pdv.getBigUint64(78, true);
+    const curDay = pdv.getBigUint64(86, true);
+    const lastCkptEpoch = pdv.getBigUint64(61, true);
+    const gts = new DataView(cI.data.buffer, cI.data.byteOffset).getBigInt64(106, true);
+    const clockEpoch = (BigInt(Math.floor(Date.now()/1000)) - gts) / 86400n;
+    if(lastCkptEpoch !== NO_EPOCH) prevDayCkpt = ckptPda(poolType, lastCkptEpoch);
+    const rollNeeded = basket > 0n && curDay !== clockEpoch;
+    const lastClosed = rollNeeded ? clockEpoch
+                     : (basket > 0n ? (curDay > 0n ? curDay - 1n : 0n) : curDay);
+    if(lastClosed < endEpoch) capTarget = lastClosed;
+    const curDayCkpt = ckptPda(poolType, clockEpoch);
     const ckpt = await findCheckpoint(poolType, capTarget);
     const data = new Uint8Array(8); data.set(DISC_CLAIM, 0);
     const AW=(pk,s=false,w=false)=>({pubkey:pk,isSigner:s,isWritable:w});
@@ -2217,7 +2226,9 @@ async function claimPosition(i, poolType){
     ];
     // Anchor: konta opcjonalne ZAWSZE obecne — None = placeholder PROGRAM_ID
     keys.push(AW(ckpt || PROGRAM_ID));                               // 17 xnt_checkpoint
-    keys.push(AW(prevDayCkpt || PROGRAM_ID, false, !!prevDayCkpt));  // 18 prev_day_ckpt
+    keys.push(AW(prevDayCkpt || PROGRAM_ID, false, !!prevDayCkpt));  // 18 prev_day_ckpt (v1.3: ogon lancucha, zawsze gdy byl funding)
+    keys.push(AW(curDayCkpt, false, true));                          // 19 cur_day_ckpt (v1.3)
+    keys.push(AW(SystemProgram.programId));                          // 20 system_program (v1.3)
     const tx = new Transaction();
     // (auto close_day usuniete: program R4 domyka dobe wewnatrz claim)
     // ATA XNT/ANL musza istniec przed claim (constraint token::authority=owner).
