@@ -413,7 +413,11 @@ pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
     // do niego redystrybucje (orphan / przepadek) wykonane PO domknięciu i
     // uzależniało wypłatę dojrzałych pozycji od kolejności fund_xnt vs settle.
     // Domknięta doba == last_funded_epoch (koszyk > 0 ⇒ current_day ==
-    // epoka ostatniego fundingu), więc konto prev_ckpt bota pozostaje to samo.
+    // epoka ostatniego węzła łańcucha), więc konto prev_ckpt bota pozostaje to samo.
+    // v1.3 (droga B+): last_funded_epoch = ostatnia doba z checkpointem (funding
+    // LUB redystrybucja); bot podaje prev = ckpt(pool.last_funded_epoch) per pula.
+    // Doba domknięta przez redystrybucję ma koszyk 0 ⇒ add_to_basket zwraca None
+    // i jej checkpoint (zapisany przy redystrybucji) NIE jest nadpisywany.
     if let Some(closed_epoch) = g_closed {
         write_final_index(
             ctx.accounts.genesis_prev_ckpt.as_ref(),

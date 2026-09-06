@@ -64,14 +64,25 @@ pub const XNT_SHARE_GENESIS_BPS: u128 = 6_500;
 /// v1.2: horyzont fundingu XNT — walidator zasila protokół przez 3 lata od
 /// `genesis_start_ts`; po tym `fund_xnt` jest odrzucany (`XntFundingEnded`).
 /// Pozycje dłuższe niż horyzont rozliczają się z ostatniego checkpointu
-/// (cap = ostatni funding ≤ end_epoch), bez rewertu. test-periods: 9 dni
-/// (3 × okno 3-dniowe), spójnie z pozostałymi skróconymi stałymi.
+/// (cap = ostatni funding ≤ end_epoch), bez rewertu.
 /// Semantyka (R9.1): funding dozwolony dla `now < genesis_start_ts + H`,
 /// tj. dokładnie H pełnych dób 0..H−1; `now == genesis_start_ts + H` odbija.
+///
+/// v1.3 (hazard wdrożeniowy, @Olxbug): horyzont to feature EKONOMICZNY
+/// MAINNETU. W buildzie `test-periods` (testnet) jest praktycznie wyłączony:
+/// 100 lat. Poprzednie 9 dni zabiłoby `fund_xnt` na stałe zaraz po upgrade,
+/// bo `genesis_start_ts` testnetu (2026-08-18) jest starszy niż 9 dni, a
+/// horyzont liczy się od genesis, nie od deployu. Testy granicy używają
+/// WSTRZYKNIĘTEGO czasu (`Env::set_time`), więc nie zależą od tej wartości.
 #[cfg(not(feature = "test-periods"))]
 pub const XNT_FUNDING_HORIZON_SECS: i64 = 3 * 365 * SECONDS_PER_DAY;
 #[cfg(feature = "test-periods")]
-pub const XNT_FUNDING_HORIZON_SECS: i64 = 9 * SECONDS_PER_DAY;
+pub const XNT_FUNDING_HORIZON_SECS: i64 = 100 * 365 * SECONDS_PER_DAY;
+/// Strażnik kompilacji (hazard @Olxbug): horyzont skróconego reżimu NIGDY nie
+/// może być krótszy niż produkcyjny — inaczej upgrade testnetu ze starym
+/// genesis zabija `fund_xnt` na stałe.
+#[cfg(feature = "test-periods")]
+const _: () = assert!(XNT_FUNDING_HORIZON_SECS >= 3 * 365 * SECONDS_PER_DAY);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MathError {
@@ -219,7 +230,8 @@ mod tests {
         assert_eq!(WINDOW_1_END, 3 * SECONDS_PER_DAY);
         assert_eq!(WINDOW_2_END, 9 * SECONDS_PER_DAY);
         assert_eq!(MIN_PERIOD_DAYS, 1);
-        assert_eq!(XNT_FUNDING_HORIZON_SECS, 9 * SECONDS_PER_DAY);
+        // v1.3: horyzont na testnecie praktycznie wylaczony (feature mainnetu)
+        assert_eq!(XNT_FUNDING_HORIZON_SECS, 100 * 365 * SECONDS_PER_DAY);
         assert_eq!(genesis_apy_bps(2 * SECONDS_PER_DAY).unwrap(), 2_000);
         assert_eq!(genesis_apy_bps(3 * SECONDS_PER_DAY).unwrap(), 1_500);
         assert_eq!(genesis_apy_bps(9 * SECONDS_PER_DAY).unwrap(), 800);
