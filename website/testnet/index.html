@@ -2375,9 +2375,36 @@ function anlPoolLang(l){ var D=POOLTXT[l==="en"?"en":"pl"];
   document.querySelectorAll(".dappscope [data-pp]").forEach(function(el){ var v=D[el.dataset.pp]; if(v!==undefined) el.textContent=v; }); }
 window.anlPoolLang = anlPoolLang;
 
+// Kody bledow programu (AnlError = 6000 + indeks wariantu). Mapowane na czytelne
+// komunikaty PL/EN; nieznany kod -> errGeneric + "(kod programu N)".
+const ANL_ERR_KEYS = {
+  6009: "errPeriodEnded",      // PeriodAlreadyEnded
+  6011: "errPeriodNotEnded",   // PeriodNotEnded
+  6038: "errCkpt",             // CheckpointRequired
+  6039: "errCkpt",             // CheckpointMismatch
+  6043: "errDayNotClosed",     // DayNotClosed (v1.2, XNT-01)
+  6045: "errCooldown",         // EarlyExitCooldown (R6 F-01)
+  6046: "errCapySupply",       // InvalidCapySupply (R7.2)
+  6047: "errHorizon",          // XntFundingEnded (v1.2)
+  6048: "errSweep",            // SweepExceedsRevenue (v1.2)
+};
+const ANL_ERR_NAMES = { PeriodNotEnded:6011, PeriodAlreadyEnded:6009, CheckpointRequired:6038, CheckpointMismatch:6039,
+  DayNotClosed:6043, EarlyExitCooldown:6045, InvalidCapySupply:6046, XntFundingEnded:6047, SweepExceedsRevenue:6048 };
+function anlErrCode(m){
+  var h = /custom program error: 0x([0-9a-f]+)/i.exec(m); if(h) return parseInt(h[1], 16);
+  var d = /Error Number: (\d+)/.exec(m); if(d) return parseInt(d[1], 10);
+  var n = /Error Code: ([A-Za-z]+)/.exec(m); if(n && ANL_ERR_NAMES[n[1]]) return ANL_ERR_NAMES[n[1]];
+  return null;
+}
 function friendlyErr(e){
   var m = (e && (e.message||String(e))) || "";
+  if(e && e.logs && Array.isArray(e.logs)) m += "\n" + e.logs.join("\n");
   console.error("[ANL] tx error:", e);
+  var code = anlErrCode(m);
+  if(code !== null && code >= 6000){
+    var key = ANL_ERR_KEYS[code];
+    return key ? T(key) : (T("errGeneric") + " (" + T("errCode") + " " + code + ")");
+  }
   if(/insufficient|prior credit|debit an account|0x1\b/i.test(m)) return T("errGas");
   if(/User rejected|rejected the request|declined|denied/i.test(m)) return T("errRejected");
   if(/blockhash|expired|timeout|not confirmed/i.test(m)) return T("errNetwork");
@@ -2503,7 +2530,7 @@ const DPT = {
      discHint:"Kliknij, aby odłączyć portfel", connectFirstT:"Połącz portfel, aby zobaczyć pozycje.",
      xntPending:"do rozdzielenia", xntDaily:"XNT/dzień (szac.)", avail:"dostępne: ",
      lockedG:"do końca okresu", lockedGT:"Pozycje Genesis są zablokowane do końca zadeklarowanego okresu — bez opcji zerwania (WP v1.1).",
-     errGas:"Nie udało się wysłać transakcji. Sprawdź, czy masz XNT na opłaty sieciowe w portfelu.", errRejected:"Transakcja odrzucona w portfelu.", errNetwork:"Problem z siecią — spróbuj ponownie za chwilę.", errGeneric:"Nie udało się zrealizować operacji. Spróbuj ponownie.", unstakeConfirm:"Zerwać pozycję przed czasem? Kapitał wróci od razu w całości, ale WSZYSTKIE nagrody (ANL, XNT i CAPY) bezpowrotnie przepadną.",
+     errGas:"Nie udało się wysłać transakcji. Sprawdź, czy masz XNT na opłaty sieciowe w portfelu.", errRejected:"Transakcja odrzucona w portfelu.", errNetwork:"Problem z siecią — spróbuj ponownie za chwilę.", errGeneric:"Nie udało się zrealizować operacji. Spróbuj ponownie.", errCode:"kod programu", errCooldown:"Wyjście z Flexible możliwe po cooldownie (testnet: 1 h, mainnet: 3 dni) od otwarcia pozycji.", errDayNotClosed:"Trwa zamykanie doby, spróbuj ponownie za chwilę.", errHorizon:"Horyzont fundingu XNT (3 lata od genesis) minął — zasilanie XNT jest zakończone.", errSweep:"Kwota przekracza zgromadzony przychód protokołu.", errCapySupply:"Podaż CAPY musi wynosić dokładnie 20 000 000 (tokenomics).", errPeriodNotEnded:"Okres stakingu jeszcze trwa — odbiór możliwy po jego zakończeniu.", errPeriodEnded:"Okres już się zakończył — użyj Odbierz zamiast zerwania.", errCkpt:"Brak lub niezgodny checkpoint doby — odśwież stronę i spróbuj ponownie.", unstakeConfirm:"Zerwać pozycję przed czasem? Kapitał wróci od razu w całości, ale WSZYSTKIE nagrody (ANL, XNT i CAPY) bezpowrotnie przepadną.",
      dayW:"dzień", winW:"okna 31/91 dni",
      refreshing:"Odświeżam…", rpcBusy:"RPC przeciążone (429) — pokazuję dane częściowe, spróbuj za chwilę.", rpcPartial:"historia częściowa — limit RPC", histNoteRpc:"Historia z RPC X1 (dostępne od {d}) + lokalny cache przeglądarki — po wyczyszczeniu danych strony starsze wpisy mogą zniknąć. Docelowo: indekser.", histIndexing:"Indeksowanie historii:", histClaim:"Odbiór", histWindow:"XNT Claim", histCapy:"Odbiór CAPY", histUnstake:"Zerwanie", histStake:"Stake", histForfeit:"przepadło:", histForfeitShort:"przepadło", histShowStake:"pokaż stake", histTotal:"Suma nagród", histCapyReserved:"CAPY zarezerwowane przy odbiorze — wypłata osobno (Odbiór CAPY); nie wliczane do sumy"},
  en:{noWallet:"No wallet detected. Install Phantom, Backpack or X1 Wallet and refresh the page.",
@@ -2519,7 +2546,7 @@ const DPT = {
      discHint:"Click to disconnect the wallet", connectFirstT:"Connect a wallet to see your positions.",
      xntPending:"pending split", xntDaily:"XNT/day (est.)", avail:"available: ",
      lockedG:"until period end", lockedGT:"Genesis positions are locked until the end of the declared period — no early exit (WP v1.1).",
-     errGas:"Could not send the transaction. Check that you have XNT for network fees in your wallet.", errRejected:"Transaction rejected in the wallet.", errNetwork:"Network issue — please try again in a moment.", errGeneric:"Could not complete the operation. Please try again.", unstakeConfirm:"Break this position early? Principal returns immediately in full, but ALL rewards (ANL and XNT) are forfeited forever.",
+     errGas:"Could not send the transaction. Check that you have XNT for network fees in your wallet.", errRejected:"Transaction rejected in the wallet.", errNetwork:"Network issue — please try again in a moment.", errGeneric:"Could not complete the operation. Please try again.", errCode:"program code", errCooldown:"Leaving Flexible is possible after the cooldown (testnet: 1 h, mainnet: 3 days) from opening the position.", errDayNotClosed:"The day is being closed, please try again in a moment.", errHorizon:"The XNT funding horizon (3 years from genesis) has passed — XNT funding is over.", errSweep:"Amount exceeds the accumulated protocol revenue.", errCapySupply:"CAPY supply must equal exactly 20,000,000 (tokenomics).", errPeriodNotEnded:"The staking period is still running — claim is possible after it ends.", errPeriodEnded:"The period has already ended — use Claim instead of early exit.", errCkpt:"Missing or mismatched day checkpoint — refresh the page and try again.", unstakeConfirm:"Break this position early? Principal returns immediately in full, but ALL rewards (ANL and XNT) are forfeited forever.",
      dayW:"day", winW:"windows 31/91 days",
      refreshing:"Refreshing…", rpcBusy:"RPC rate-limited (429) — showing partial data, try again shortly.", rpcPartial:"partial history — RPC limit", histNoteRpc:"History from X1 RPC (available from {d}) + local browser cache — older entries may disappear after clearing site data. Indexer planned.", histIndexing:"Indexing history:", histClaim:"Claim", histWindow:"XNT Claim", histCapy:"CAPY Claim", histUnstake:"Unstake", histStake:"Stake", histForfeit:"forfeited:", histForfeitShort:"forfeited", histShowStake:"show stakes", histTotal:"Total rewards", histCapyReserved:"CAPY reserved at claim — paid separately (CAPY Claim); not counted in the total"}
 };
