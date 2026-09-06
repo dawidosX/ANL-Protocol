@@ -66,6 +66,8 @@ pub const XNT_SHARE_GENESIS_BPS: u128 = 6_500;
 /// Pozycje dłuższe niż horyzont rozliczają się z ostatniego checkpointu
 /// (cap = ostatni funding ≤ end_epoch), bez rewertu. test-periods: 9 dni
 /// (3 × okno 3-dniowe), spójnie z pozostałymi skróconymi stałymi.
+/// Semantyka (R9.1): funding dozwolony dla `now < genesis_start_ts + H`,
+/// tj. dokładnie H pełnych dób 0..H−1; `now == genesis_start_ts + H` odbija.
 #[cfg(not(feature = "test-periods"))]
 pub const XNT_FUNDING_HORIZON_SECS: i64 = 3 * 365 * SECONDS_PER_DAY;
 #[cfg(feature = "test-periods")]

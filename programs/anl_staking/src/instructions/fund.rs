@@ -331,8 +331,11 @@ pub fn fund_xnt(ctx: Context<FundXnt>, amount: u64, epoch: u64) -> Result<()> {
     // v1.2: horyzont fundingu XNT — po 3 latach od genesis funding jest
     // odrzucany (twardo). Pozycje dłuższe rozliczają się z ostatniego
     // checkpointu (cap = ostatni funding ≤ end_epoch) bez rewertu.
+    // R9.1 (C, off-by-one): okno półotwarte [T0, T0 + H) — ostatnia dozwolona
+    // sekunda to T0 + H − 1 (doba H − 1); T0 + H (pierwsza sekunda doby H)
+    // jest już poza horyzontem. Spójne z epoch_of (doby 0..H−1 = H dób).
     require!(
-        now <= ctx
+        now < ctx
             .accounts
             .global_config
             .genesis_start_ts

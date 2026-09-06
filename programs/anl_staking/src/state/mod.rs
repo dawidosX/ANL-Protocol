@@ -75,7 +75,12 @@ pub struct PoolConfig {
     pub total_shares: u64,
     /// Skumulowany indeks XNT × PRECISION.
     pub xnt_reward_index: u128,
-    /// XNT przydzielone puli, gdy total_shares == 0 (D-5).
+    /// LEGACY (do v1.1): XNT przydzielone puli, gdy total_shares == 0 (D-5).
+    /// Od v1.2 doby bez shares idą do `xnt_protocol_revenue`; to pole nie ma
+    /// już żadnego zapisu zwiększającego — może tylko zmaleć do 0 (uwolnienie
+    /// przy pierwszym domknięciu doby z shares > 0, dokładnie raz). R9.1:
+    /// odczyt on-chain 2026-09-06 (slot 186117962) = 0 na obu pulach ⇒ bez
+    /// migracji; layout niezmienny (offset 45).
     pub xnt_undistributed: u64,
     pub position_count: u64,
     /// Epoka OSTATNIEGO fundingu tej puli (NO_EPOCH = nigdy). Audyt #2:
@@ -860,6 +865,187 @@ mod wariant_a_tests {
                 assert!(
                     dust <= bound + 200,
                     "seed {seed}: dust {dust} > ograniczenie {bound} (zaginione XNT)"
+                );
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- R9.1
+
+    /// R9.1 (B, legacy bufor): `xnt_undistributed` > 0 (stan sprzed v1.2)
+    /// przy shares > 0 uwalnia się przy NAJBLIŻSZYM domknięciu doby dokładnie
+    /// raz (razem z koszykiem tej doby), nie podwaja się i nie trafia do
+    /// revenue. Przy shares == 0 legacy pozostaje zaparkowane (koszyk → revenue),
+    /// czeka na pierwsze domknięcie z shares > 0. On-chain (2026-09-06, slot
+    /// 186117962) oba bufory = 0 ⇒ migracja zbędna; test broni ścieżki, gdyby
+    /// kiedyś jednak było > 0.
+    #[test]
+    fn test_r9_legacy_bufor_przy_shares_uwalnia_sie_raz_bez_podwojenia() {
+        let mut pool = empty_pool(PoolType::Genesis);
+        pool.current_day = 0;
+        pool.xnt_undistributed = 7_000_000_000; // legacy (przed v1.2)
+                                                // doba 0 bez shares: koszyk -> revenue, legacy nietkniete
+        pool.add_to_basket(2_000_000_000, 0).unwrap();
+        pool.roll_day_if_needed(1).unwrap();
+        assert_eq!(
+            pool.xnt_undistributed, 7_000_000_000,
+            "legacy czeka na shares"
+        );
+        assert_eq!(
+            pool.xnt_protocol_revenue, 2_000_000_000,
+            "koszyk pustej doby -> revenue"
+        );
+        assert_eq!(pool.xnt_reward_index, 0);
+        // doba 1 z shares: legacy + koszyk w JEDNYM podziale
+        pool.total_shares = 1_000_000;
+        let debt = pool.xnt_reward_index;
+        pool.add_to_basket(5_000_000_000, 1).unwrap();
+        pool.roll_day_if_needed(2).unwrap();
+        assert_eq!(pool.xnt_undistributed, 0, "legacy uwolnione");
+        assert_eq!(
+            pending(&pool, 1_000_000, debt),
+            12_000_000_000,
+            "staker: legacy 7 + koszyk 5 = 12 XNT"
+        );
+        assert_eq!(
+            pool.xnt_protocol_revenue, 2_000_000_000,
+            "revenue nietkniete"
+        );
+        // doba 2: tylko wlasny koszyk — legacy NIE liczy sie drugi raz
+        pool.add_to_basket(3_000_000_000, 2).unwrap();
+        pool.roll_day_if_needed(3).unwrap();
+        assert_eq!(
+            pending(&pool, 1_000_000, debt),
+            15_000_000_000,
+            "12 + 3, bez podwojenia"
+        );
+        assert_eq!(pool.xnt_undistributed, 0);
+        // orphan/przepadek przy shares > 0 nie dotyka pol legacy ani revenue
+        pool.redistribute_to_live(1_000_000_000).unwrap();
+        assert_eq!(pool.xnt_undistributed, 0);
+        assert_eq!(pool.xnt_protocol_revenue, 2_000_000_000);
+    }
+
+    /// R9.1 (I-02 C): property — losowe sekwencje stake / fund / close / settle
+    /// (claim) / forfeit / claim okna Genesis / SWEEP z modelem skarbca
+    /// (vault = wplaty − wyplaty − sweep). Inwariant po KAZDYM kroku:
+    /// vault >= pending zywych (netto okien) + legacy + revenue + koszyk
+    /// oraz vault == funded − paid − swept (tozsamosc ksiegowa). Co drugi seed
+    /// startuje z legacy > 0 pokrytym skarbcem (stan sprzed v1.2).
+    #[test]
+    fn test_r9_property_skarbiec_pokrywa_roszczenia_ze_sweep_i_legacy() {
+        for seed in 1u64..=40 {
+            let mut rng = Lcg(seed);
+            let mut pool = empty_pool(PoolType::Genesis);
+            let legacy = if seed % 2 == 0 {
+                1 + rng.below(20_000_000_000)
+            } else {
+                0
+            };
+            pool.xnt_undistributed = legacy;
+            pool.current_day = 0;
+            let mut vault: u64 = legacy;
+            let mut funded: u64 = legacy;
+            let mut paid: u64 = 0;
+            let mut swept: u64 = 0;
+            let mut epoch: u64 = 0;
+            // (shares, debt, cap_epoch, window_claimed)
+            let mut live: Vec<(u64, u128, u64, u64)> = Vec::new();
+            let mut ckpt_final: Vec<u128> = Vec::new();
+            for _step in 0..150 {
+                match rng.below(7) {
+                    0 => {
+                        let sh = 1_000_000_000 + rng.below(5_000_000_000_000);
+                        pool.total_shares += sh;
+                        let cap_e = epoch + 1 + rng.below(6);
+                        live.push((sh, pool.xnt_reward_index, cap_e, 0));
+                    }
+                    1 => {
+                        let amt = 1 + rng.below(50_000_000_000);
+                        pool.add_to_basket(amt, epoch).unwrap();
+                        funded += amt;
+                        vault += amt;
+                    }
+                    2 => {
+                        epoch += 1;
+                        let _ = pool.roll_day_if_needed(epoch).unwrap();
+                        while ckpt_final.len() < epoch as usize {
+                            ckpt_final.push(pool.xnt_reward_index);
+                        }
+                    }
+                    3 => {
+                        // settle + claim pozycji po cap_epoch (R8: minus okna, saturating)
+                        if let Some(i) = live.iter().position(|p| p.2 < epoch) {
+                            let (sh, debt, cap_e, wc) = live.remove(i);
+                            let cap = ckpt_final[cap_e as usize].max(debt);
+                            let total = pool.settle_position_at(sh, debt, cap).unwrap();
+                            let out = total.saturating_sub(wc);
+                            assert!(vault >= out, "seed {seed}: claim {out} > vault {vault}");
+                            paid += out;
+                            vault -= out;
+                        }
+                    }
+                    4 => {
+                        // forfeit (early exit): przepadek do zywych / revenue, nic nie opuszcza
+                        // skarbca. Tylko pozycje BEZ okien: unstake_early = Flexible,
+                        // okna = Genesis — w programie nigdy ta sama pozycja.
+                        let cands: Vec<usize> =
+                            (0..live.len()).filter(|&i| live[i].3 == 0).collect();
+                        if !cands.is_empty() {
+                            let i = cands[rng.below(cands.len() as u64) as usize];
+                            let (sh, debt, _, _) = live.remove(i);
+                            let _ = pool.forfeit_position(sh, debt).unwrap();
+                        }
+                    }
+                    5 => {
+                        // claim okna Genesis: cap = indeks domknietej doby <= cap_epoch
+                        if !live.is_empty() && !ckpt_final.is_empty() {
+                            let i = rng.below(live.len() as u64) as usize;
+                            let (sh, debt, cap_e, wc) = live[i];
+                            let last_ok = (ckpt_final.len() as u64 - 1).min(cap_e);
+                            let e = rng.below(last_ok + 1) as usize;
+                            let cap = ckpt_final[e].max(debt);
+                            let acc = pool.accrued_to_cap(sh, debt, cap).unwrap();
+                            let out = acc.saturating_sub(wc);
+                            if out > 0 {
+                                assert!(vault >= out, "seed {seed}: okno {out} > vault {vault}");
+                                paid += out;
+                                vault -= out;
+                                live[i].3 = wc + out;
+                            }
+                        }
+                    }
+                    _ => {
+                        // sweep_revenue: amount <= revenue (SweepExceedsRevenue), <= vault
+                        if pool.xnt_protocol_revenue > 0 {
+                            let amt = 1 + rng.below(pool.xnt_protocol_revenue);
+                            assert!(
+                                vault >= amt,
+                                "seed {seed}: sweep {amt} > vault {vault} (revenue niepokryte)"
+                            );
+                            pool.xnt_protocol_revenue -= amt;
+                            vault -= amt;
+                            swept += amt;
+                        }
+                    }
+                }
+                // ---- INWARIANT po kazdym kroku ----
+                assert_eq!(
+                    vault,
+                    funded - paid - swept,
+                    "seed {seed}: tozsamosc skarbca"
+                );
+                let pending_live: u64 = live
+                    .iter()
+                    .map(|(sh, debt, _, wc)| pending(&pool, *sh, *debt).saturating_sub(*wc))
+                    .sum();
+                let claims = pending_live
+                    + pool.xnt_undistributed
+                    + pool.xnt_protocol_revenue
+                    + pool.current_day_basket;
+                assert!(
+                    vault >= claims,
+                    "seed {seed}: skarbiec {vault} < roszczenia {claims} (WYCIEK)"
                 );
             }
         }
