@@ -386,6 +386,32 @@ impl Env {
         self.send(&[ix], &[]).await
     }
 
+    /// v1.2: sweep_revenue jako dowolny signer (test negatywny) lub authority.
+    async fn sweep_revenue(
+        &mut self,
+        signer: &Keypair,
+        to_xnt: Pubkey,
+        amount: u64,
+    ) -> Result<(), BanksClientError> {
+        let ix = Instruction {
+            program_id: self.program_id,
+            accounts: anl_staking::accounts::SweepRevenue {
+                authority: signer.pubkey(),
+                global_config: self.global_config,
+                vault_authority: self.vault_authority,
+                xnt_mint: self.xnt_mint,
+                xnt_vault: self.xnt_vault,
+                genesis_pool: self.genesis_pool,
+                flexible_pool: self.flexible_pool,
+                authority_xnt: to_xnt,
+                xnt_token_program: spl_token::id(),
+            }
+            .to_account_metas(None),
+            data: anl_staking::instruction::SweepRevenue { amount }.data(),
+        };
+        self.send_as(signer, &[ix], &[]).await
+    }
+
     /// Zasila konto XNT: test-periods ⇒ mint; build produkcyjny ⇒ wrap
     /// natywny (transfer + sync_native) — mint natywny nie pozwala mint_to.
     async fn xnt_credit(&mut self, to: Pubkey, amount: u64) {
@@ -1171,6 +1197,14 @@ async fn ts_early_exit_forfeits_and_redistributes() {
     assert!(err.is_err(), "PeriodNotEnded");
 
     // TS-09: zerwanie — principal w całości, XNT do puli dystrybucji
+    // v1.2 (XNT-01): koszyk doby 0 jest otwarty, a zegar w kolejnej dobie —
+    // unstake_early odbija (DayNotClosed); klient najpierw domyka dobę.
+    let r = env
+        .unstake_early(&alice, alice_anl, pos_a, PoolType::Flexible)
+        .await;
+    assert!(r.is_err(), "v1.2: unstake_early przy otwartej dobie odbija");
+    env.close_day(PoolType::Flexible, 0).await.unwrap();
+    env.advance(1).await; // I-05: identyczna tx bez nowego slotu
     let anl_before = env.token_balance(alice_anl).await;
     let xnt_before = env.token_balance(alice_xnt).await;
     env.unstake_early(&alice, alice_anl, pos_a, PoolType::Flexible)
@@ -1187,13 +1221,11 @@ async fn ts_early_exit_forfeits_and_redistributes() {
         "zero XNT przy zerwaniu"
     );
     let flex = env.pool(env.flexible_pool).await;
-    // Wariant A: dzień 0 jeszcze niedomknięty ⇒ pending A = 0 ⇒ przepadek 0;
-    // udział A ZOSTAJE w koszyku doby i rozdzieli się żywym przy domknięciu.
+    // v1.2: doba 0 domknięta PRZED zerwaniem (A i B po 500k); przepadek A
+    // (500k) natychmiast do żywej B — nic nie paruje w buforze ani w revenue.
     assert_eq!(flex.xnt_undistributed, 0, "nic nie paruje w undistributed");
-    assert_eq!(
-        flex.current_day_basket, 1_000_000,
-        "koszyk doby 0 nietknięty po zerwaniu (konserwacja)"
-    );
+    assert_eq!(flex.xnt_protocol_revenue, 0, "pula niepusta: brak revenue");
+    assert_eq!(flex.current_day_basket, 0, "koszyk doby 0 domknięty");
     assert!(
         env.ctx
             .banks_client
@@ -3639,5 +3671,233 @@ async fn regresja_r8_window_claimed_ponad_accrued_nie_blokuje_principalu() {
             .unwrap()
             .is_none(),
         "R8: konto pozycji zamkniete"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// v1.2 — regresje: EDGE (bufor pustej puli -> przychod), XNT-01 (straznik
+// DayNotClosed w unstake_early), horyzont fundingu XNT (3 lata), sweep_revenue.
+// ═══════════════════════════════════════════════════════════════════
+
+/// EDGE odwrocone: dni bez shares ida do przychodu protokolu; pierwszy staker po
+/// przerwie dostaje TYLKO swoj koszyk (6 500), nie 32 500. Potem sweep_revenue:
+/// obcy odbity, authority wyplaca dokladnie sume licznikow, nadwyzka odbita.
+#[tokio::test]
+async fn regresja_v12_edge_pusta_pula_nie_placi_pierwszemu_wchodzacemu() {
+    let mut env = Env::new().await;
+    env.fund_rewards(1_000_000 * ONE_ANL).await;
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let (v, v_anl, v_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos_v = env
+        .stake(&v, v_anl, PoolType::Genesis, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+    env.advance(min_d as i64 * DAY + 60).await;
+    env.claim(&v, v_anl, v_xnt, pos_v, PoolType::Genesis, None)
+        .await
+        .unwrap();
+    assert_eq!(env.pool(env.genesis_pool).await.total_shares, 0);
+    let mut e_idle_last = 0u64;
+    for _ in 0..5 {
+        env.advance(DAY).await;
+        env.fund_xnt(10_000).await.unwrap();
+        e_idle_last = env.current_epoch().await;
+    }
+    let g = env.pool(env.genesis_pool).await;
+    let f = env.pool(env.flexible_pool).await;
+    assert_eq!(g.xnt_undistributed, 0, "v1.2: bufor legacy nie rosnie");
+    assert_eq!(f.xnt_undistributed, 0);
+    assert_eq!(
+        g.xnt_protocol_revenue,
+        4 * 6_500,
+        "4 domkniete doby bez shares -> revenue Genesis"
+    );
+    assert_eq!(f.xnt_protocol_revenue, 4 * 3_500, "-> revenue Flexible");
+    let (atk, atk_anl, atk_xnt) = env.user_with_anl(10 * ONE_ANL).await;
+    let pos_atk = env
+        .stake(&atk, atk_anl, PoolType::Genesis, ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+    env.advance(DAY).await;
+    env.fund_xnt(10_000).await.unwrap();
+    let e_after = env.current_epoch().await; // doba fundingu po wejsciu atakujacego
+    env.advance(min_d as i64 * DAY + 60).await;
+    let end_epoch = env.position(pos_atk).await.end_epoch;
+    // cap = ostatni funding <= end_epoch: test-periods (MIN=1) -> doba wejscia; prod (MIN=7) -> doba po wejsciu
+    let counts_after = e_after <= end_epoch;
+    let ck = Some(if counts_after { e_after } else { e_idle_last });
+    let before = env.token_balance(atk_xnt).await;
+    env.claim(&atk, atk_anl, atk_xnt, pos_atk, PoolType::Genesis, ck)
+        .await
+        .unwrap();
+    let paid = env.token_balance(atk_xnt).await - before;
+    // doba wejscia (6 500, Flexible pusty -> 65%) + ew. doba po wejsciu (10 000, 100% do Genesis)
+    let expected = 6_500 + if counts_after { 10_000 } else { 0 };
+    assert_eq!(
+        paid, expected,
+        "EDGE: tylko wlasne doby (bylo 32 500 = backlog + 6 500)"
+    );
+    assert!(
+        paid < 26_000,
+        "EDGE: backlog dob bez shares NIE trafia do atakujacego"
+    );
+    let g = env.pool(env.genesis_pool).await;
+    let f = env.pool(env.flexible_pool).await;
+    assert_eq!(g.xnt_undistributed, 0, "bufor legacy 0 takze po orphanie");
+    // 4 doby bez shares (26 000) + (gdy doba po wejsciu jest PO end_epoch) jej koszyk 10 000 jako orphan przy pustej puli
+    assert_eq!(
+        g.xnt_protocol_revenue,
+        26_000 + if counts_after { 0 } else { 10_000 }
+    );
+    // Flexible: 4 doby (14 000) + doba wejscia atakujacego (3 500, Flexible pusty); doba po wejsciu: 100% do Genesis
+    assert_eq!(f.xnt_protocol_revenue, 14_000 + 3_500);
+    let total_rev = g.xnt_protocol_revenue + f.xnt_protocol_revenue;
+    // sweep_revenue: obcy odbity
+    let r = env.sweep_revenue(&atk, atk_xnt, total_rev).await;
+    assert!(r.is_err(), "sweep_revenue: tylko authority");
+    // authority: nadwyzka odbita, dokladna suma wyplacona, liczniki 0
+    let auth_kp = Keypair::from_bytes(&env.authority.to_bytes()).unwrap();
+    let auth_xnt = create_token_account(
+        &mut env.ctx,
+        &env.authority.pubkey(),
+        &env.xnt_mint,
+        spl_token::id(),
+    )
+    .await;
+    let r = env.sweep_revenue(&auth_kp, auth_xnt, total_rev + 1).await;
+    assert!(r.is_err(), "sweep_revenue: kwota > revenue odbita");
+    let vault_before = env.token_balance(env.xnt_vault).await;
+    env.sweep_revenue(&auth_kp, auth_xnt, total_rev)
+        .await
+        .unwrap();
+    assert_eq!(env.token_balance(auth_xnt).await, total_rev);
+    assert_eq!(
+        env.token_balance(env.xnt_vault).await,
+        vault_before - total_rev
+    );
+    assert_eq!(env.pool(env.genesis_pool).await.xnt_protocol_revenue, 0);
+    assert_eq!(env.pool(env.flexible_pool).await.xnt_protocol_revenue, 0);
+}
+
+/// XNT-01 odwrocone: unstake_early przy otwartym koszyku poprzedniej doby odbija
+/// (DayNotClosed); po close_day wynik A jest identyczny w obu kolejnosciach (200).
+async fn v12_xnt01_scenario(exit_first: bool) -> u64 {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let (a, a_anl, _) = env.user_with_anl(100 * ONE_ANL).await;
+    let (z, z_anl, _) = env.user_with_anl(100 * ONE_ANL).await;
+    // A konczy sie w epoce `target` (end_epoch = target-1 >= 1 => cap = ckpt(1)),
+    // Z zyje o dobe dluzej; prod: 7/8 dni, test-periods: 2/3 dni (jak w PoC reportera).
+    let target = anl_math::MIN_PERIOD_DAYS.max(2);
+    let pa = env
+        .stake(
+            &a,
+            a_anl,
+            PoolType::Flexible,
+            100 * ONE_ANL,
+            target as u32,
+            0,
+        )
+        .await
+        .unwrap();
+    let pz = env
+        .stake(
+            &z,
+            z_anl,
+            PoolType::Flexible,
+            100 * ONE_ANL,
+            target as u32 + 1,
+            0,
+        )
+        .await
+        .unwrap();
+    env.fund_xnt(200).await.unwrap(); // epoch 0
+    env.advance(DAY).await;
+    env.fund_xnt(200).await.unwrap(); // epoch 1; koszyk 1 otwarty
+    env.advance((target - 1) * DAY + 60).await; // epoka target: A dojrzala, Z zyje, koszyk 1 otwarty
+    if exit_first {
+        let r = env.unstake_early(&z, z_anl, pz, PoolType::Flexible).await;
+        assert!(
+            r.is_err(),
+            "XNT-01: unstake_early przy otwartej dobie MUSI odbic (DayNotClosed)"
+        );
+        env.close_day(PoolType::Flexible, 1).await.unwrap(); // klient: close_day + unstake w jednej tx
+        env.advance(1).await; // I-05: identyczna tx bez nowego slotu zwrocilaby zapamietany wynik
+        env.unstake_early(&z, z_anl, pz, PoolType::Flexible)
+            .await
+            .unwrap();
+        env.fund_xnt(200).await.unwrap();
+        env.settle(pa, PoolType::Flexible, Some(1)).await.unwrap();
+    } else {
+        env.settle(pa, PoolType::Flexible, Some(1)).await.unwrap();
+        env.unstake_early(&z, z_anl, pz, PoolType::Flexible)
+            .await
+            .unwrap();
+    }
+    env.position(pa).await.xnt_accrued
+}
+
+#[tokio::test]
+async fn regresja_v12_xnt01_wyplata_niezalezna_od_kolejnosci_unstake_vs_settle() {
+    let exit_first = v12_xnt01_scenario(true).await;
+    let settle_first = v12_xnt01_scenario(false).await;
+    assert_eq!(settle_first, 200);
+    assert_eq!(exit_first, settle_first, "XNT-01: 400 != 200 przed fixem");
+}
+
+/// Horyzont XNT: pozycja dluzsza niz horyzont rozlicza sie bez rewertu (klasa
+/// R6-01) — principal + ANL + XNT do ostatniego fundingu; fund_xnt po horyzoncie
+/// odbija XntFundingEnded.
+#[tokio::test]
+async fn regresja_v12_horyzont_xnt_pozycja_dluzsza_rozlicza_sie_bez_rewertu() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let h_days = anl_math::XNT_FUNDING_HORIZON_SECS / DAY;
+    let (a, a_anl, a_xnt) = env.user_with_anl(100 * ONE_ANL).await;
+    let pos = env
+        .stake(
+            &a,
+            a_anl,
+            PoolType::Genesis,
+            100 * ONE_ANL,
+            (h_days + 10) as u32,
+            0,
+        )
+        .await
+        .unwrap();
+    let p0 = env.position(pos).await;
+    // fundingi w dobach 0, 1, 2 oraz H-1 (ostatnia doba w horyzoncie); A sama => 100% do Genesis
+    env.fund_xnt(10_000).await.unwrap();
+    env.advance(DAY).await;
+    env.fund_xnt(10_000).await.unwrap();
+    env.advance(DAY).await;
+    env.fund_xnt(10_000).await.unwrap();
+    env.advance((h_days - 3) * DAY).await; // doba H-1
+    env.fund_xnt(10_000).await.unwrap();
+    let last_epoch = env.current_epoch().await;
+    assert_eq!(last_epoch as i64, h_days - 1);
+    // po horyzoncie: twardo odrzucone
+    env.advance(2 * DAY).await; // doba H+1
+    let r = env.fund_xnt(10_000).await;
+    assert!(
+        r.is_err(),
+        "fund_xnt po horyzoncie MUSI odbic (XntFundingEnded)"
+    );
+    // dojrzenie i claim: cap = ckpt(H-1), bez rewertu
+    env.advance(9 * DAY + 60).await;
+    let anl_before = env.token_balance(a_anl).await;
+    let xnt_before = env.token_balance(a_xnt).await;
+    env.claim(&a, a_anl, a_xnt, pos, PoolType::Genesis, Some(last_epoch))
+        .await
+        .expect("pozycja dluzsza niz horyzont MUSI sie rozliczyc (klasa R6-01)");
+    assert_eq!(
+        env.token_balance(a_anl).await - anl_before,
+        100 * ONE_ANL + p0.anl_reward,
+        "principal + ANL w calosci"
+    );
+    assert_eq!(
+        env.token_balance(a_xnt).await - xnt_before,
+        4 * 10_000,
+        "XNT dokladnie do ostatniego fundingu w horyzoncie"
     );
 }

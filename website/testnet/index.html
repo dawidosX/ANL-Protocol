@@ -1387,6 +1387,7 @@ const TOKEN_2022 = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 const ATA_PROG   = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 const DISC_STAKE = new Uint8Array([206,176,202,18,200,209,179,108]);
 const DISC_UNSTAKE = new Uint8Array([246,212,81,180,65,2,126,125]);
+const DISC_CLOSEDAY = new Uint8Array([156,214,132,15,27,77,42,79]); // close_day (v1.2: pakowane przed unstake_early)
 const DEC = 1_000_000_000n;
 
 // disableRetryOnRateLimit: web3.js domyslnie powtarza 429 co 500 ms w petli — to
@@ -2102,7 +2103,26 @@ async function unstakeEarly(i, poolType){
       AW(principalVault,false,true), AW(ownerAta(pubkey),false,true),
       AW(TOKEN_2022),
     ];
-    const tx = new Transaction().add(new TransactionInstruction({programId:PROGRAM_ID, keys, data}));
+    const tx = new Transaction();
+    // v1.2 (XNT-01): program odbija unstake_early przy otwartym koszyku poprzedniej doby
+    // (DayNotClosed) — pakujemy close_day(current_day) + unstake_early w JEDNEJ transakcji.
+    try{
+      const [pI, cI] = await conn.getMultipleAccountsInfo([poolConfig, globalConfig]);
+      if(pI && cI){
+        const pdv = new DataView(pI.data.buffer, pI.data.byteOffset);
+        const basket = pdv.getBigUint64(78, true), curDay = pdv.getBigUint64(86, true);
+        const gts = new DataView(cI.data.buffer, cI.data.byteOffset).getBigInt64(106, true);
+        const clockEpoch = (BigInt(Math.floor(Date.now()/1000)) - gts) / 86400n;
+        if(basket > 0n && curDay !== clockEpoch){
+          const eb = new Uint8Array(8); new DataView(eb.buffer).setBigUint64(0, curDay, true);
+          const dayCkpt = pda([enc("xnt_ckpt"), new Uint8Array([poolType]), eb]);
+          const cd = new Uint8Array(16); cd.set(DISC_CLOSEDAY, 0); cd.set(eb, 8);
+          tx.add(new TransactionInstruction({programId:PROGRAM_ID,
+            keys:[AW(pubkey,true,false), AW(globalConfig), AW(poolConfig,false,true), AW(dayCkpt,false,true)], data:cd}));
+        }
+      }
+    }catch(e){ console.log("[ANL] close_day przed unstake:", e.message); }
+    tx.add(new TransactionInstruction({programId:PROGRAM_ID, keys, data}));
     tx.feePayer = pubkey;
     const bh = await conn.getLatestBlockhash("finalized");
     tx.recentBlockhash = bh.blockhash;

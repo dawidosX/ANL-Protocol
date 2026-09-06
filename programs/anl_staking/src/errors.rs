@@ -96,6 +96,8 @@ pub enum AnlError {
     EarlyExitCooldown,
     #[msg("CAPY mint supply must equal the 20,000,000 tokenomics cap")]
     InvalidCapySupply,
+    #[msg("XNT funding horizon (3 years from genesis) has ended")]
+    XntFundingEnded,
 }
 
 impl From<anl_math::MathError> for AnlError {
