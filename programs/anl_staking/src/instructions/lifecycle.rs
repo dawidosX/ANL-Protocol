@@ -185,7 +185,7 @@ pub fn settle_expired(ctx: Context<SettleExpired>) -> Result<()> {
         ctx.accounts.user_position.xnt_debt_index,
     );
     // v1.3 (droga B+): po rollu current_day == cur_epoch; orphan (jeśli > 0 i
-    // shares > 0) domyka bieżącą dobę — wtedy zapisujemy jej checkpoint.
+    // shares > 0) podnosi indeks — wtedy zapisujemy checkpoint bieżącej doby.
     let idx_before = ctx.accounts.pool_config.xnt_reward_index;
     let frozen = ctx
         .accounts
@@ -358,7 +358,7 @@ pub fn claim(ctx: Context<Claim>) -> Result<()> {
             ctx.accounts.user_position.shares,
             ctx.accounts.user_position.xnt_debt_index,
         );
-        // v1.3 (droga B+): orphan > 0 przy shares > 0 domyka bieżącą dobę —
+        // v1.3 (droga B+): orphan > 0 przy shares > 0 podnosi indeks —
         // zapis checkpointu bieżącej doby (tworzony na żądanie, payer = owner).
         let idx_before = ctx.accounts.pool_config.xnt_reward_index;
         let frozen = ctx
@@ -814,9 +814,9 @@ pub fn unstake_early(ctx: Context<UnstakeEarly>) -> Result<()> {
     // historyczny checkpoint (wypłata dojrzałych zależna od kolejności).
     // Fail-closed bez zmiany układu kont: klient pakuje `close_day` +
     // `unstake_early` w jednej transakcji, gdy warunek zachodzi.
-    // v1.3 (droga B+): redystrybucja domyka BIEŻĄCĄ dobę z jej checkpointem,
-    // więc strażnik jest redundantny (koszyk poprzedniej doby i tak nie mógłby
-    // zostać domknięty bez jej checkpointu) — ZOSTAJE jako obrona w głąb.
+    // v1.3 (droga B+): redystrybucja ma checkpoint BIEŻĄCEJ doby, a koszyk
+    // fundingu doby zostaje nietknięty do końca doby (R10 pyt. 4) — strażnik
+    // (tylko koszyk POPRZEDNIEJ doby) ZOSTAJE jako obrona w głąb.
     let cur_epoch = epoch_of(now, ctx.accounts.global_config.genesis_start_ts)
         .ok_or(AnlError::BeforeGenesis)?;
     {
@@ -826,8 +826,8 @@ pub fn unstake_early(ctx: Context<UnstakeEarly>) -> Result<()> {
             AnlError::DayNotClosed
         );
     }
-    // Roll wg zegara (koszyk pusty ⇒ tylko current_day = cur_epoch): przepadek
-    // domknie właściwą, bieżącą dobę — nigdy wstecz.
+    // Roll wg zegara (koszyk poprzedniej doby pusty ⇒ tylko current_day =
+    // cur_epoch): checkpoint przepadku dotyczy bieżącej doby — nigdy wstecz.
     let closed = ctx
         .accounts
         .pool_config

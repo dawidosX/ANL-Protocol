@@ -2111,7 +2111,7 @@ async function unstakeEarly(i, poolType){
     const tx = new Transaction();
     // v1.2 (XNT-01): program odbija unstake_early przy otwartym koszyku poprzedniej doby
     // (DayNotClosed) — pakujemy close_day(current_day) + unstake_early w JEDNEJ transakcji.
-    // v1.3 (droga B+, XNT-02): przepadek domyka BIEZACA dobe z jej checkpointem —
+    // v1.3 (droga B+, XNT-02): przepadek podnosi indeks z checkpointem BIEZACEJ doby —
     // konta 9-11: prev_ckpt (ogon lancucha = ckpt(last_funded_epoch), placeholder gdy brak),
     // cur_day_ckpt (PDA epoki zegara, tworzony przez program na zadanie, platnik = owner),
     // system_program.

@@ -4638,3 +4638,97 @@ async fn regresja_v13_idempotencja_checkpointu_redystrybucja_i_funding_tej_samej
         assert_eq!(pool.current_day_basket + pool.xnt_protocol_revenue, 0);
     }
 }
+
+/// R10 pyt. 4 (GPT Medium vs Kimi/C Uwaga): czy B moze srod-doby D odciac pozniejszych
+/// od fundingu doby D przez unstake_early? PRZED fixem (redystrybucja domykala caly
+/// koszyk): unstake B w dobie D z koszykiem 1000 przechodzil (straznik DayNotClosed
+/// odbija tylko koszyk POPRZEDNIEJ doby), koszyk -> 0 na obecnych, C z tej samej doby
+/// dostawal 0 z doby D. PO fixie: unstake przechodzi, ale koszyk fundingu doby zostaje
+/// (1000), przepadek B idzie do obecnych z checkpointem doby D, a koszyk domyka
+/// koniec doby wg FINALNYCH shares (A 500, C 500). Koszyk poprzedniej doby -> DayNotClosed.
+#[tokio::test]
+async fn regresja_v13_intraday_nie_odcina_pozniejszych() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let (a, a_anl, _) = env.user_with_anl(100 * ONE_ANL).await;
+    let (b, b_anl, _) = env.user_with_anl(10 * ONE_ANL).await;
+    let (c, c_anl, _) = env.user_with_anl(100 * ONE_ANL).await;
+    let pa = env
+        .stake(&a, a_anl, PoolType::Flexible, 100 * ONE_ANL, 14, 0)
+        .await
+        .unwrap();
+    let pb = env
+        .stake(&b, b_anl, PoolType::Flexible, 10 * ONE_ANL, 14, 0)
+        .await
+        .unwrap();
+    env.fund_xnt(1_100).await.unwrap(); // doba 0: A 1000, B 100 (po domknieciu)
+    let d = (anl_math::EARLY_EXIT_COOLDOWN_SECS / DAY + 1) as u64; // doba D (po cooldownie)
+    env.advance(d as i64 * DAY + 3_600).await;
+    // (i) koszyk POPRZEDNIEJ doby otwarty -> DayNotClosed (straznik XNT-01)
+    let r = env.unstake_early(&b, b_anl, pb, PoolType::Flexible).await;
+    assert_eq!(
+        r.err().and_then(|e| custom_code(&e)),
+        Some(u32::from(anl_staking::errors::AnlError::DayNotClosed)),
+        "koszyk poprzedniej doby otwarty => DayNotClosed"
+    );
+    env.close_day(PoolType::Flexible, 0).await.unwrap();
+    env.advance(1).await;
+    env.fund_xnt(1_000).await.unwrap(); // doba D: koszyk 1000 OTWARTY (current_day == D)
+    let pool = env.pool(env.flexible_pool).await;
+    assert_eq!((pool.current_day, pool.current_day_basket), (d, 1_000));
+    let idx_before = pool.xnt_reward_index;
+    // (ii) B unstake_early srod-doby D przy otwartym koszyku fundingu TEJ doby
+    env.unstake_early(&b, b_anl, pb, PoolType::Flexible)
+        .await
+        .expect("unstake w biezacej dobie jest dozwolony");
+    let pool = env.pool(env.flexible_pool).await;
+    println!(
+        "INTRADAY: po unstake B w dobie D: koszyk={} (bylo 1000), indeks wzrosl={}",
+        pool.current_day_basket,
+        pool.xnt_reward_index > idx_before
+    );
+    assert_eq!(
+        pool.current_day_basket, 1_000,
+        "R10 pyt.4: przepadek NIE domyka koszyka fundingu doby D"
+    );
+    assert!(
+        pool.xnt_reward_index > idx_before,
+        "przepadek B (100) do obecnych (A)"
+    );
+    let c_d = env.ckpt(PoolType::Flexible, d).await.unwrap();
+    assert_eq!(
+        c_d.index, pool.xnt_reward_index,
+        "ckpt(D) = indeks po przepadku"
+    );
+    // (iii) C wchodzi jeszcze w dobie D (po unstake B); D+1: close_day(D) permissionless
+    let pc = env
+        .stake(&c, c_anl, PoolType::Flexible, 100 * ONE_ANL, 14, 0)
+        .await
+        .unwrap();
+    env.advance(DAY).await;
+    env.close_day(PoolType::Flexible, d).await.unwrap();
+    let pool = env.pool(env.flexible_pool).await;
+    let claim = |p: &UserPosition| {
+        anl_math::pending_xnt(p.shares, pool.xnt_reward_index, p.xnt_debt_index).unwrap()
+    };
+    let (qa, qc) = (
+        claim(&env.position(pa).await),
+        claim(&env.position(pc).await),
+    );
+    println!("INTRADAY: po close_day(D): A={qa} C={qc}");
+    assert_eq!(
+        qc, 500,
+        "C obecny przy domknieciu doby D dostaje polowe koszyka D (bylo 0)"
+    );
+    assert_eq!(
+        qa,
+        1_000 + 100 + 500,
+        "A: doba 0 + przepadek B + polowa koszyka D"
+    );
+    assert_eq!(
+        env.ckpt(PoolType::Flexible, d).await.unwrap().index,
+        pool.xnt_reward_index,
+        "ckpt(D) finalny po domknieciu doby"
+    );
+    assert_eq!(env.global_total_xnt_funded().await, 2_100);
+}

@@ -14,10 +14,10 @@
 
 Do v1.2 `redistribute_to_live` podnosil `xnt_reward_index` bez checkpointu. Pozycja B zywa w chwili przepadku A, rozliczana z checkpointu OSTATNIEGO FUNDINGU ≤ end_epoch, nie widziala wzrostu; nadwyzka stawala sie orphanem i trafiala do poznego C (PoC: B 5 zamiast 10, C 6 zamiast 1).
 
-**Zasada v1.3 (droga B+):** `xnt_reward_index` zmienia sie TYLKO przy domknieciu doby z checkpointem tej doby. Redystrybucja domyka BIEZACA dobe (epoka zegara), nigdy wstecz:
+**Zasada v1.3 (droga B+):** `xnt_reward_index` zmienia sie TYLKO z checkpointem BIEZACEJ doby (domkniecie doby albo redystrybucja z checkpointem epoki zegara), nigdy wstecz:
 
 1. `roll_day_if_needed(cur)` ustawia `current_day = cur` takze przy pustym koszyku (po rollu zawsze `current_day == epoka zegara`).
-2. `redistribute_close_today(amount)`: `total_shares > 0` ⇒ `current_day_basket += amount; close_day()` (razem z fundingiem tej doby i legacy `xnt_undistributed`); `total_shares == 0` ⇒ `xnt_protocol_revenue` (bez checkpointu, v1.2).
+2. `redistribute_with_checkpoint(amount)`: `total_shares > 0` ⇒ `xnt_reward_index += amount / total_shares` (koszyk fundingu doby i legacy NIETKNIETE — domyka je koniec doby wg finalnych shares); `total_shares == 0` ⇒ `xnt_protocol_revenue` (bez checkpointu, v1.2).
 3. Handler (settle_expired / claim / unstake_early): jesli indeks wzrosl ⇒ `write_current_day_checkpoint`: PDA `[xnt_ckpt, pool_type, cur_epoch]` tworzony NA ZADANIE (create_account / allocate+assign z podpisem PDA, platnik = signer), `index = nowy`, `next = NO_EPOCH`, `ckpt(last_funded_epoch).next = cur`, `last_funded_epoch = cur`. Jesli wezel dzisiejszy istnieje (funding lub wczesniejsza redystrybucja tej doby) — tylko `index` (idempotencja).
 4. `last_funded_epoch` = **ostatnia doba z checkpointem** (funding LUB redystrybucja) = ogon lancucha `next_funded_epoch`.
 
@@ -50,7 +50,7 @@ Layout kont (`PoolConfig`, `XntCheckpoint`, `UserPosition`) bez zmian. Kody bled
 
 ## 5. Konsekwencje semantyczne do swiadomej akceptacji
 
-- **Domkniecie sródoby:** redystrybucja domyka caly biezacy koszyk (takze dzisiejszy funding). Staker wchodzacy tego samego dnia PO redystrybucji nie ma udzialu we wczesniejszym fundingu tej doby (dotad: podzial wg finalnych shares na koniec doby). Checkpoint doby moze byc nadpisany kilka razy w ciagu doby (zawsze ogon lancucha, zawsze rosnaco); doby minione nigdy.
+- **Redystrybucja srod-doby (R10 pyt. 4, po korekcie):** przepadek/orphan podnosi indeks TYLKO o swoja kwote (dla shares obecnych teraz) i zapisuje checkpoint biezacej doby; koszyk fundingu doby zostaje NIETKNIETY i domyka go koniec doby wg FINALNYCH shares. Pierwotna wersja B+ domykala caly koszyk — `unstake_early` malej pozycji srod-doby (dozwolony, bo straznik `DayNotClosed` odbija tylko koszyk POPRZEDNIEJ doby) zamykal funding doby na obecnych i odcinal pozniejszych stakerow tej doby (test: C dostawal 0 zamiast 500). Checkpoint doby moze byc nadpisany kilka razy w ciagu doby (zawsze ogon lancucha, zawsze rosnaco); doby minione nigdy.
 - **Cel DoS `create_account`:** zasilenie PDA lamportami obslugiwane sciezka transfer + allocate + assign (jak Anchor init).
 - **Czynsz:** platnik = signer instrukcji (cranker/owner), ok. 0,0013 SOL za wezel, tylko przy faktycznej redystrybucji > 0 z shares > 0.
 - **Straznik `DayNotClosed`** w `unstake_early` zostaje jako obrona w glab (redundantny po B+).
@@ -71,3 +71,11 @@ Layout kont (`PoolConfig`, `XntCheckpoint`, `UserPosition`) bez zmian. Kody bled
 | `test_v13_xnt02_przepadek_domyka_biezaca_dobe_z_checkpointem` (model, w tym analog XNT-01), `test_v13_konserwacja_przepadek_ostatniego_do_revenue_i_wspolne_domkniecie` | PASS |
 
 Bramki: lib 17 / 19 / 18; integracja **62/62** test-periods i **62/62** prod; core 34+2 / 30+2; anl-math 24 / 24; clippy `-D warnings` ×3; fmt; `cargo audit` 0; `Cargo.lock` nietkniety.
+
+## 7. R10 (trojka) i korekta pyt. 4
+
+Werdykty R10 na `27eac40`: DRAINABLE: NO ×3; rdzen B+ (tworzenie konta / lancuch / idempotencja) CZYSTE ×3. Spor o pyt. 4 (domkniecie srod-doby): Kimi/C = Uwaga, GPT = Medium.
+
+Weryfikacja testem `regresja_v13_intraday_nie_odcina_pozniejszych` (oba rezimy) na `27eac40`: `unstake_early` B w dobie D z otwartym koszykiem fundingu 1000 PRZECHODZI (straznik `DayNotClosed` odbija tylko koszyk poprzedniej doby), koszyk → 0 na obecnych, C wchodzacy pozniej w dobie D dostalby 0 z doby D ⇒ scenariusz GPT potwierdzony ⇒ **Medium**, fix: redystrybucja nie domyka koszyka fundingu (`redistribute_with_checkpoint`). Po fixie: koszyk zostaje 1000, przepadek B (100) do A z `ckpt(D)`, po `close_day(D)` A = 1600, C = 500; koszyk poprzedniej doby nadal ⇒ `DayNotClosed`. Wszystkie pozostale testy (XNT-02 odwrocony, XNT-01, R6-02, lancuch, idempotencja, property) bez zmian wynikow.
+
+Bramki po korekcie: lib 17/19/18; integracja **63/63** ×2; core 34+2 / 30+2; anl-math 24/24; clippy ×3; fmt; cargo audit (0 podatnosci; przejsciowy timeout rejestru przy sprawdzaniu yanked); `Cargo.lock` nietkniety.

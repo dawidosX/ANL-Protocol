@@ -176,8 +176,8 @@ impl PoolConfig {
     /// koszyk. Wolajacy MUSI wtedy zapisac finalny index do checkpointu tej doby.
     /// v1.3 (droga B+): `current_day` jest przestawiany na `epoch` TAKŻE przy
     /// pustym koszyku — po rollu zawsze `current_day == epoka zegara`, więc
-    /// redystrybucja (`redistribute_close_today`) domyka właściwą, bieżącą dobę
-    /// (nigdy wstecz). Some(domknięta) nadal tylko, gdy faktycznie rozdzielono
+    /// checkpoint redystrybucji (`write_current_day_checkpoint`) dotyczy
+    /// właściwej, bieżącej doby (nigdy wstecz). Some(domknięta) nadal tylko, gdy faktycznie rozdzielono
     /// niepusty koszyk (wołający zapisuje wtedy checkpoint domkniętej doby).
     pub fn roll_day_if_needed(
         &mut self,
@@ -223,10 +223,9 @@ impl PoolConfig {
     /// Zamyka pozycję na `cap_index` (ograniczony do jej end_epoch). Zwraca
     /// `pending` (XNT należny pozycji). Osierocony udział — to, co pula naliczyła
     /// tej pozycji ZA EPOKI PO jej end_epoch (bo index puli urósł wyżej niż cap
-    /// po domknięciach dób, których pozycja nie dożyła) — trafia do koszyka
-    /// BIEŻĄCEJ doby i natychmiast ją domyka (v1.3 droga B+,
-    /// `redistribute_close_today`): dostają go shares obecne w tej chwili (jak
-    /// R5 M-01), ale z checkpointem bieżącej doby — pozycje z end_epoch < dziś
+    /// po domknięciach dób, których pozycja nie dożyła) — idzie do indeksu dla
+    /// shares obecnych w tej chwili (jak R5 M-01) Z CHECKPOINTEM bieżącej doby
+    /// (v1.3 droga B+, `redistribute_with_checkpoint`) — pozycje z end_epoch < dziś
     /// (np. dojrzałe, nierozliczone) rozliczają się z wcześniejszego węzła i NIE
     /// widzą tego wzrostu (XNT-01), a pozycje żywe przez tę dobę widzą go w
     /// swoim capie (XNT-02). PRECONDITION: wołający zrolował dobę wg zegara
@@ -264,35 +263,34 @@ impl PoolConfig {
             .total_shares
             .checked_sub(shares)
             .ok_or(anl_math::MathError::Overflow)?;
-        // v1.3 (droga B+): orphan do koszyka biezacej doby + natychmiastowe
-        // domkniecie z checkpointem tej doby (po zdjeciu wychodzacego). Nie
-        // znika (koszyk -> indeks -> checkpoint) i nie dubluje (shares
-        // wychodzacego juz zdjete; orphan liczony raz jako index - cap).
-        self.redistribute_close_today(orphan)?;
+        // v1.3 (droga B+): orphan do indeksu dla shares obecnych teraz, z
+        // checkpointem biezacej doby (po zdjeciu wychodzacego). Nie znika
+        // i nie dubluje (shares wychodzacego juz zdjete; orphan liczony raz
+        // jako index - cap). Koszyk fundingu doby nietkniety.
+        self.redistribute_with_checkpoint(orphan)?;
         Ok(pending)
     }
 
     /// v1.3 (XNT-02, droga B+) — redystrybucja `amount` XNT (orphan po settle /
     /// przepadek po unstake_early). ZASADA: `xnt_reward_index` zmienia się
-    /// wyłącznie przy domknięciu doby z checkpointem TEJ doby; redystrybucja
-    /// domyka BIEŻĄCĄ dobę (nigdy wstecz):
-    /// - `total_shares > 0`: koszyk bieżącej doby += amount, natychmiastowe
-    ///   `close_day()` (razem z ewentualnym fundingiem tej doby i legacy
-    ///   `xnt_undistributed`) — indeks rośnie dla shares obecnych TERAZ (jak R5
-    ///   M-01), a wołający zapisuje checkpoint `current_day` (tworzony na
-    ///   żądanie, dowiązany do łańcucha). Pozycje z end_epoch < dziś rozliczają
-    ///   się z wcześniejszego węzła (nie widzą wzrostu — XNT-01), pozycje żywe
-    ///   przez tę dobę widzą go w swoim capie (XNT-02).
+    /// wyłącznie Z CHECKPOINTEM BIEŻĄCEJ doby (domknięcie doby albo ta
+    /// redystrybucja), nigdy wstecz:
+    /// - `total_shares > 0`: indeks rośnie o `amount / total_shares` dla shares
+    ///   obecnych TERAZ (jak R5 M-01), a wołający zapisuje checkpoint
+    ///   `current_day` (tworzony na żądanie, dowiązany do łańcucha). Koszyk
+    ///   fundingu bieżącej doby NIE jest ruszany — domyka go koniec doby
+    ///   podziałem wg FINALNYCH shares (R10 pyt. 4: redystrybucja śród-doby nie
+    ///   może odciąć późniejszych stakerów od fundingu tej doby). Pozycje z
+    ///   end_epoch < dziś rozliczają się z wcześniejszego węzła (nie widzą
+    ///   wzrostu — XNT-01), pozycje żywe przez tę dobę widzą go w capie (XNT-02).
     /// - `total_shares == 0`: przychód protokołu, bez checkpointu (v1.2 EDGE).
     ///
     /// PRECONDITION (gwarantują handlery): `current_day == epoka zegara` —
     /// settle/claim rolują dobę wg zegara przed rozliczeniem, unstake_early
     /// ma strażnik `DayNotClosed` + roll; ta funkcja NIE sprawdza zegara
-    /// (model nie ma dostępu do Clock). Domknięcie wstecz bez checkpointu
-    /// tamtej doby łamałoby zasadę, dlatego wołający musi zrolować najpierw.
-    /// Kolejne redystrybucje / fundingi tej samej doby tylko podnoszą indeks i
-    /// nadpisują `index` tego samego checkpointu (idempotencja węzła).
-    pub fn redistribute_close_today(
+    /// (model nie ma dostępu do Clock). Kolejne redystrybucje / fundingi tej
+    /// samej doby nadpisują `index` tego samego checkpointu (idempotencja).
+    pub fn redistribute_with_checkpoint(
         &mut self,
         amount: u64,
     ) -> std::result::Result<(), anl_math::MathError> {
@@ -307,11 +305,9 @@ impl PoolConfig {
                 .ok_or(anl_math::MathError::Overflow)?;
             return Ok(());
         }
-        self.current_day_basket = self
-            .current_day_basket
-            .checked_add(amount)
-            .ok_or(anl_math::MathError::Overflow)?;
-        self.close_day()
+        self.xnt_reward_index =
+            anl_math::update_xnt_index(self.xnt_reward_index, amount, self.total_shares)?;
+        Ok(())
     }
 
     /// Genesis okna (WP okna 30-dniowe): policz XNT naliczony do `cap_index`
@@ -337,8 +333,8 @@ impl PoolConfig {
     }
 
     /// Wcześniejsze zerwanie (WP §7): naliczone XNT przepadają na rzecz
-    /// pozostałych — v1.3 (droga B+): koszyk bieżącej doby + natychmiastowe
-    /// domknięcie z checkpointem tej doby (`settle_position` już zdjął shares
+    /// pozostałych — v1.3 (droga B+): do indeksu dla shares obecnych teraz z
+    /// checkpointem bieżącej doby (`settle_position` już zdjął shares
     /// wychodzącego); revenue przy pustej puli. PRECONDITION jak wyżej.
     pub fn forfeit_position(
         &mut self,
@@ -346,7 +342,7 @@ impl PoolConfig {
         debt_index: u128,
     ) -> std::result::Result<u64, anl_math::MathError> {
         let pending = self.settle_position(shares, debt_index)?;
-        self.redistribute_close_today(pending)?;
+        self.redistribute_with_checkpoint(pending)?;
         Ok(pending)
     }
 }
@@ -452,8 +448,8 @@ pub fn epoch_of(ts: i64, genesis_start_ts: i64) -> Option<u64> {
 /// zostać podany i zostaje nadpisany finalnym indeksem (checkpoint istnieje,
 /// bo koszyk > 0 ⇒ fund_xnt tej doby go utworzył). Walidacja: owner, PDA,
 /// wersja/epoka/pool_type — fail-closed jak w fund::write_final_index.
-/// v1.3 (droga B+): po redystrybucji, która podniosła indeks (domknęła bieżącą
-/// dobę), zapisuje checkpoint `pool.current_day` — tworzony NA ŻĄDANIE (bez
+/// v1.3 (droga B+): po redystrybucji, która podniosła indeks, zapisuje
+/// checkpoint `pool.current_day` (bieżąca doba) — tworzony NA ŻĄDANIE (bez
 /// Anchor `init_if_needed`, bo seeds z epoką zegara wymagałyby argumentu
 /// instrukcji, a konto powstaje tylko, gdy redystrybucja faktycznie zaszła) i
 /// dowiązany do łańcucha: `ckpt(last_funded_epoch).next = dziś`,
@@ -1018,16 +1014,14 @@ mod wariant_a_tests {
                         if let Some(i) = live.iter().position(|p| p.2 < epoch) {
                             let (sh, debt, cap_e) = live.remove(i);
                             let cap = ckpt_final[cap_e as usize].max(debt);
-                            let idx = pool.xnt_reward_index;
+                            let basket_before = pool.current_day_basket;
                             let out = pool.settle_position_at(sh, debt, cap).unwrap();
                             paid += out;
-                            // v1.3 droga B+: orphan > 0 domyka BIEZACA dobe (koszyk 0, indeks = ckpt(epoch))
-                            if pool.xnt_reward_index != idx {
-                                assert_eq!(
-                                    pool.current_day_basket, 0,
-                                    "seed {seed}: orphan zostal w koszyku"
-                                );
-                            }
+                            // v1.3 droga B+: orphan do indeksu z ckpt(epoch); koszyk fundingu NIETKNIETY
+                            assert_eq!(
+                                pool.current_day_basket, basket_before,
+                                "seed {seed}: redystrybucja ruszyla koszyk fundingu"
+                            );
                             assert_eq!(
                                 pool.current_day, epoch,
                                 "seed {seed}: redystrybucja wstecz"
@@ -1042,14 +1036,12 @@ mod wariant_a_tests {
                         if !live.is_empty() {
                             let i = rng.below(live.len() as u64) as usize;
                             let (sh, debt, _) = live.remove(i);
-                            let idx = pool.xnt_reward_index;
+                            let basket_before = pool.current_day_basket;
                             let _ = pool.forfeit_position(sh, debt).unwrap();
-                            if pool.xnt_reward_index != idx {
-                                assert_eq!(
-                                    pool.current_day_basket, 0,
-                                    "seed {seed}: przepadek zostal w koszyku"
-                                );
-                            }
+                            assert_eq!(
+                                pool.current_day_basket, basket_before,
+                                "seed {seed}: przepadek ruszyl koszyk fundingu"
+                            );
                             assert_eq!(
                                 pool.current_day, epoch,
                                 "seed {seed}: redystrybucja wstecz"
@@ -1139,7 +1131,7 @@ mod wariant_a_tests {
         );
         assert_eq!(pool.xnt_undistributed, 0);
         // orphan/przepadek przy shares > 0 nie dotyka pol legacy ani revenue
-        pool.redistribute_close_today(1_000_000_000).unwrap();
+        pool.redistribute_with_checkpoint(1_000_000_000).unwrap();
         assert_eq!(pool.xnt_undistributed, 0);
         assert_eq!(pool.xnt_protocol_revenue, 2_000_000_000);
     }
@@ -1271,13 +1263,13 @@ mod wariant_a_tests {
 
     // ---------------------------------------------------------------- v1.3 droga B+ (XNT-02)
 
-    /// v1.3 (XNT-02, droga B+): przepadek domyka BIEZACA dobe (koszyk -> indeks ->
-    /// checkpoint tej doby), nigdy wstecz. Model PoC Pawla: B zywa w chwili
+    /// v1.3 (XNT-02, droga B+): przepadek podnosi indeks z checkpointem BIEZACEJ
+    /// doby, nigdy wstecz. Model PoC Pawla: B zywa w chwili
     /// przepadku (doba 4) dostaje 10 (cap = ckpt(4)), pozny C tylko nowy funding 1.
     /// Analog XNT-01: pozycja z end_epoch < doba przepadku rozlicza sie z ckpt
     /// sprzed przepadku i NIE widzi wzrostu.
     #[test]
-    fn test_v13_xnt02_przepadek_domyka_biezaca_dobe_z_checkpointem() {
+    fn test_v13_xnt02_przepadek_z_checkpointem_biezacej_doby() {
         let xnt = 1_000_000_000u64;
         let mut pool = empty_pool(PoolType::Flexible);
         pool.total_shares = 2 * M; // A + B
@@ -1296,9 +1288,12 @@ mod wariant_a_tests {
         let f = pool.forfeit_position(M, debt_ab).unwrap();
         assert_eq!(f, 5 * xnt);
         let ckpt4 = pool.xnt_reward_index; // handler zapisuje ckpt(4) = ten indeks
-        assert!(ckpt4 > ckpt0, "przepadek domknal dobe 4 (indeks wzrosl)");
-        assert_eq!(pool.current_day_basket, 0, "koszyk domkniety natychmiast");
-        assert_eq!(pool.current_day, 4, "domknieta BIEZACA doba, nie 0");
+        assert!(
+            ckpt4 > ckpt0,
+            "przepadek podniosl indeks z checkpointem doby 4"
+        );
+        assert_eq!(pool.current_day_basket, 0, "koszyk (pusty) nietkniety");
+        assert_eq!(pool.current_day, 4, "checkpoint BIEZACEJ doby, nie 0");
         assert_eq!(pending(&pool, M, debt_ab), 10 * xnt, "B: 5 + przepadek A 5");
         // doba 7: C wchodzi (roll pusty), settle B z cap = ckpt(4) = 10, orphan 0
         pool.roll_day_if_needed(7).unwrap();
@@ -1349,10 +1344,10 @@ mod wariant_a_tests {
     }
 
     /// v1.3 konserwacja (3a): przepadek OSTATNIEJ pozycji -> revenue od razu, nic
-    /// nie wisi w koszyku; redystrybucja z shares > 0 domyka dobe razem z
-    /// fundingiem tej doby i legacy (jeden podzial, jeden checkpoint).
+    /// nie wisi; przepadek przy otwartym koszyku fundingu tej doby NIE domyka
+    /// koszyka (R10 pyt. 4) — koszyk i legacy czekaja na koniec doby.
     #[test]
-    fn test_v13_konserwacja_przepadek_ostatniego_do_revenue_i_wspolne_domkniecie() {
+    fn test_v13_konserwacja_przepadek_ostatniego_do_revenue_koszyk_nietkniety() {
         let mut pool = empty_pool(PoolType::Flexible);
         pool.total_shares = M;
         let debt = pool.xnt_reward_index;
@@ -1368,7 +1363,7 @@ mod wariant_a_tests {
             pool.xnt_protocol_revenue, DAY_XNT,
             "przepadek ostatniego -> revenue"
         );
-        // wspolne domkniecie: funding dnia 1 (koszyk otwarty) + legacy + przepadek A
+        // A + B; doba 1 zafundowana (koszyk otwarty) + legacy; A przepada srod-doby
         let mut pool = empty_pool(PoolType::Flexible);
         pool.total_shares = 2 * M; // A + B
         let debt = pool.xnt_reward_index;
@@ -1382,17 +1377,28 @@ mod wariant_a_tests {
         let f = pool.forfeit_position(M, debt).unwrap();
         assert_eq!(f, DAY_XNT / 2, "A traci 50");
         assert_eq!(
-            pool.current_day_basket, 0,
-            "koszyk doby 1 domkniety razem z przepadkiem"
+            pool.current_day_basket, DAY_XNT,
+            "koszyk fundingu doby 1 NIETKNIETY"
         );
+        assert_eq!(pool.xnt_undistributed, 10, "legacy czeka na domkniecie");
         assert_eq!(
-            pool.xnt_undistributed, 0,
-            "legacy uwolnione w tym samym podziale"
+            pending(&pool, M, debt),
+            DAY_XNT,
+            "B: 50 (doba 0) + przepadek A 50"
+        );
+        // C wchodzi jeszcze w dobie 1 -> dostaje udzial w koszyku doby 1 przy domknieciu
+        let debt_c = pool.xnt_reward_index;
+        pool.total_shares += M;
+        pool.roll_day_if_needed(2).unwrap();
+        assert_eq!(
+            pending(&pool, M, debt_c),
+            (DAY_XNT + 10) / 2,
+            "C: polowa koszyka doby 1 (+ legacy)"
         );
         assert_eq!(
             pending(&pool, M, debt),
-            DAY_XNT / 2 + DAY_XNT + DAY_XNT / 2 + 10,
-            "B: 50 (doba 0) + 100 (funding doby 1) + 50 (przepadek A) + 10 (legacy)"
+            DAY_XNT + (DAY_XNT + 10) / 2,
+            "B: 100 + polowa koszyka doby 1"
         );
         assert_eq!(pool.xnt_protocol_revenue, 0);
     }
