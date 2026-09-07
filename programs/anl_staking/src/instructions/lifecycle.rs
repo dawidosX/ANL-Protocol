@@ -306,7 +306,8 @@ pub struct Claim<'info> {
     pub capy_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut, seeds = [USER_PROFILE_SEED, owner.key().as_ref()],
-        bump = user_profile.bump)]
+        bump = user_profile.bump,
+        constraint = user_profile.version <= ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
     pub user_profile: Box<Account<'info, UserProfile>>,
 
     /// CHECK: jak w SettleExpired — checkpoint końca end_epoch pozycji.
@@ -940,7 +941,8 @@ pub struct ClaimCapy<'info> {
 
     #[account(mut, seeds = [USER_PROFILE_SEED, owner.key().as_ref()],
         bump = user_profile.bump,
-        constraint = user_profile.owner == owner.key() @ AnlError::PositionOwnerMismatch)]
+        constraint = user_profile.owner == owner.key() @ AnlError::PositionOwnerMismatch,
+        constraint = user_profile.version <= ACCOUNT_VERSION @ AnlError::InvalidAccountVersion)]
     pub user_profile: Box<Account<'info, UserProfile>>,
 
     #[account(address = global_config.capy_mint @ AnlError::InvalidMint)]

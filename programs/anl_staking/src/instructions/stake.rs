@@ -62,7 +62,8 @@ pub struct Stake<'info> {
         payer = owner,
         space = UserProfile::LEN,
         seeds = [USER_PROFILE_SEED, owner.key().as_ref()],
-        bump
+        bump,
+        constraint = user_profile.version <= ACCOUNT_VERSION @ AnlError::InvalidAccountVersion
     )]
     pub user_profile: Box<Account<'info, UserProfile>>,
 
@@ -207,7 +208,8 @@ pub fn stake_handler(ctx: Context<Stake>, amount: u64, declared_days: u32) -> Re
     if profile.owner == Pubkey::default() {
         profile.owner = ctx.accounts.owner.key();
         profile.bump = ctx.bumps.user_profile;
-        profile.reserved = [0; 7];
+        profile.version = ACCOUNT_VERSION; // v1.3.2: nowe profile z bieżącą wersją layoutu
+        profile.reserved = [0; 6];
     }
     let position_index = profile.next_position_index;
     profile.next_position_index = position_index

@@ -399,11 +399,52 @@ pub struct UserProfile {
     pub bump: u8,
     /// CAPY (v3): naliczone, nieodebrane CAPY. Przezywa close pozycji.
     pub pending_capy: u64,
-    pub reserved: [u8; 7],
+    /// v1.3.2: wersja layoutu profilu (offset 57), wycięta z `reserved`
+    /// (7 → 6 B, LEN 64 bez zmian). Konta sprzed v1.3.2 mają 0. Bramka
+    /// `version <= ACCOUNT_VERSION` (forward-compatible) zamyka hazard
+    /// migracyjny na mainnecie: przyszłe pole w profilu podnosi wersję zamiast
+    /// zbrickować użytkowników ze starym kontem.
+    pub version: u8,
+    pub reserved: [u8; 6],
 }
 
 impl UserProfile {
-    pub const LEN: usize = 8 + 32 + 8 + 1 + 8 + 7;
+    pub const LEN: usize = 8 + 32 + 8 + 1 + 8 + 1 + 6;
+}
+
+#[cfg(test)]
+mod user_profile_layout_tests {
+    use super::*;
+
+    /// v1.3.2: LEN 64 bez zmian; `version` dokładnie pod offsetem 57 (49 bez
+    /// dyskryminatora), czyli w dawnym `reserved[0]` — stare konta czytają 0.
+    #[test]
+    fn test_user_profile_len_64_i_version_na_offsecie_57() {
+        assert_eq!(UserProfile::LEN, 64);
+        let p = UserProfile {
+            owner: Pubkey::new_unique(),
+            next_position_index: 3,
+            bump: 254,
+            pending_capy: 5,
+            version: 7,
+            reserved: [0; 6],
+        };
+        let mut buf = Vec::new();
+        p.try_serialize(&mut buf).unwrap();
+        assert_eq!(buf.len(), 64);
+        assert_eq!(buf[57], 7, "version @57");
+        assert_eq!(&buf[58..64], &[0u8; 6], "reserved @58..64");
+        assert_eq!(
+            &buf[49..57],
+            &5u64.to_le_bytes(),
+            "pending_capy @49 bez zmian"
+        );
+        // legacy: zera w dawnym reserved => version 0 <= ACCOUNT_VERSION
+        buf[57] = 0;
+        let legacy = UserProfile::try_deserialize(&mut buf.as_slice()).unwrap();
+        assert_eq!(legacy.version, 0);
+        assert!(legacy.version <= ACCOUNT_VERSION);
+    }
 }
 
 /// Snapshot indeksu puli po epoce, w której wystąpił funding.

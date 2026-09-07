@@ -4738,3 +4738,85 @@ async fn regresja_v13_intraday_nie_odcina_pozniejszych() {
     );
     assert_eq!(env.global_total_xnt_funded().await, 2_100);
 }
+
+/// v1.3.2: bramka wersji UserProfile (offset 57, wyciete z reserved, LEN 64).
+/// Nowy profil = ACCOUNT_VERSION; legacy 0 przechodzi (forward-compatible);
+/// wersja > ACCOUNT_VERSION odbija stake / claim / claim_capy (InvalidAccountVersion).
+async fn profile_version(env: &mut Env, pda: Pubkey) -> u8 {
+    let acc = env
+        .ctx
+        .banks_client
+        .get_account(pda)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(acc.data.len(), 64, "LEN 64 bez zmian");
+    acc.data[57]
+}
+async fn set_profile_version(env: &mut Env, pda: Pubkey, v: u8) {
+    let mut acc = env
+        .ctx
+        .banks_client
+        .get_account(pda)
+        .await
+        .unwrap()
+        .unwrap();
+    acc.data[57] = v;
+    env.ctx
+        .set_account(&pda, &solana_sdk::account::AccountSharedData::from(acc));
+}
+
+#[tokio::test]
+async fn regresja_v132_user_profile_version_gate() {
+    let mut env = Env::new().await;
+    env.fund_rewards(10_000_000 * ONE_ANL).await;
+    let min_d = anl_math::MIN_PERIOD_DAYS as u32;
+    let ver = anl_staking::state::ACCOUNT_VERSION;
+    let (a, a_anl, a_xnt) = env.user_with_anl(200 * ONE_ANL).await;
+    let pos = env
+        .stake(&a, a_anl, PoolType::Genesis, 100 * ONE_ANL, min_d, 0)
+        .await
+        .unwrap();
+    let prof = env.profile_pda(&a.pubkey());
+    assert_eq!(
+        profile_version(&mut env, prof).await,
+        ver,
+        "nowy profil: version = ACCOUNT_VERSION"
+    );
+    // wstrzyknij version = ACCOUNT_VERSION + 1 (offset 57) -> stake i claim odbijaja
+    set_profile_version(&mut env, prof, ver + 1).await;
+    env.advance(1).await;
+    let code_ver = u32::from(anl_staking::errors::AnlError::InvalidAccountVersion);
+    let r = env
+        .stake(&a, a_anl, PoolType::Flexible, 10 * ONE_ANL, min_d, 1)
+        .await;
+    assert_eq!(
+        r.err().and_then(|e| custom_code(&e)),
+        Some(code_ver),
+        "stake z profilem nowszej wersji MUSI odbic"
+    );
+    env.advance(min_d as i64 * DAY + 60).await;
+    let r = env
+        .claim(&a, a_anl, a_xnt, pos, PoolType::Genesis, None)
+        .await;
+    assert_eq!(
+        r.err().and_then(|e| custom_code(&e)),
+        Some(code_ver),
+        "claim z profilem nowszej wersji MUSI odbic"
+    );
+    // legacy 0 (konto sprzed v1.3.2) -> przechodzi
+    set_profile_version(&mut env, prof, 0).await;
+    env.advance(1).await;
+    env.claim(&a, a_anl, a_xnt, pos, PoolType::Genesis, None)
+        .await
+        .expect("legacy profil (version 0) MUSI przechodzic");
+    assert_eq!(
+        profile_version(&mut env, prof).await,
+        0,
+        "claim nie podnosi wersji legacy"
+    );
+    env.advance(1).await;
+    env.stake(&a, a_anl, PoolType::Flexible, 10 * ONE_ANL, min_d, 1)
+        .await
+        .expect("stake na legacy profilu MUSI przechodzic");
+}
