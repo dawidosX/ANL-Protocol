@@ -33,6 +33,8 @@ test -s "$BIN" || { echo "BLAD: brak binarki po buildzie." >&2; exit 1; }
   echo "src_tree: $(git rev-parse HEAD:programs/anl_staking/src)"
   echo "features: $FEATURES"
   echo "sha256: $(sha256sum "$BIN" | cut -d' ' -f1)"
+  # rozmiar binarki: zglaszajacy przycina 'solana program dump' (konto dopelnione zerami) do so_size przed sha256
+  echo "so_size: $(wc -c < "$BIN" | tr -d ' ')"
   echo "rustc_host: $(rustc --version)"
   # R6 I-04: binarke SBF kompiluje rustc z platform-tools, nie rustc hosta
   echo "build_sbf: $(cargo build-sbf --version 2>&1 | tr '\n' ' ' | sed 's/  */ /g')"
