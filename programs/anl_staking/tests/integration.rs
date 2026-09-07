@@ -839,6 +839,8 @@ impl Env {
                 prev_day_ckpt,
                 cur_day_ckpt,
                 system_program: solana_sdk::system_program::id(),
+                capy_mint: self.capy_mint.pubkey(),
+                capy_token_program: spl_token_2022::id(),
             }
             .to_account_metas(None),
             data: anl_staking::instruction::Claim {}.data(),
@@ -1702,6 +1704,8 @@ async fn atak_a1_podstawienie_skarbca_w_claim() {
             prev_day_ckpt: None,
             cur_day_ckpt: cur_ckpt,
             system_program: solana_sdk::system_program::id(),
+            capy_mint: env.capy_mint.pubkey(),
+            capy_token_program: spl_token_2022::id(),
         }
         .to_account_metas(None),
         data: anl_staking::instruction::Claim {}.data(),
@@ -1761,6 +1765,8 @@ async fn atak_a2_claim_cudzej_pozycji() {
             prev_day_ckpt: None,
             cur_day_ckpt: cur_ckpt,
             system_program: solana_sdk::system_program::id(),
+            capy_mint: env.capy_mint.pubkey(),
+            capy_token_program: spl_token_2022::id(),
         }
         .to_account_metas(None),
         data: anl_staking::instruction::Claim {}.data(),

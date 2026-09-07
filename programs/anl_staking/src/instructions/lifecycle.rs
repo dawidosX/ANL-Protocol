@@ -298,7 +298,11 @@ pub struct Claim<'info> {
     pub anl_token_program: Program<'info, Token2022>,
     pub xnt_token_program: Program<'info, Token>,
 
-    #[account(mut, seeds = [CAPY_VAULT_SEED], bump = global_config.capy_vault_bump)]
+    /// v1.3.2 (obrona w głąb): pełne constrainty tokenowe jak w ClaimCapy i
+    /// pozostałych skarbcach (mint / authority / token program), nie tylko PDA.
+    #[account(mut, seeds = [CAPY_VAULT_SEED], bump = global_config.capy_vault_bump,
+        token::mint = capy_mint, token::authority = vault_authority,
+        token::token_program = capy_token_program)]
     pub capy_vault: Box<InterfaceAccount<'info, TokenAccount>>,
 
     #[account(mut, seeds = [USER_PROFILE_SEED, owner.key().as_ref()],
@@ -321,6 +325,12 @@ pub struct Claim<'info> {
     #[account(mut)]
     pub cur_day_ckpt: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
+
+    /// v1.3.2 (obrona w głąb): mint CAPY i program tokenowy dla constraintów
+    /// `capy_vault` (konta 21–22, na końcu — indeksy istniejących kont bez zmian).
+    #[account(address = global_config.capy_mint @ AnlError::InvalidMint)]
+    pub capy_mint: Box<InterfaceAccount<'info, Mint>>,
+    pub capy_token_program: Program<'info, Token2022>,
 }
 
 pub fn claim(ctx: Context<Claim>) -> Result<()> {

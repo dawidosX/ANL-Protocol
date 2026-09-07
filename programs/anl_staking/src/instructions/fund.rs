@@ -538,8 +538,21 @@ pub fn sweep_revenue(ctx: Context<SweepRevenue>, amount: u64) -> Result<()> {
     );
     let from_g = core::cmp::min(amount, ctx.accounts.genesis_pool.xnt_protocol_revenue);
     let from_f = amount - from_g;
-    ctx.accounts.genesis_pool.xnt_protocol_revenue -= from_g;
-    ctx.accounts.flexible_pool.xnt_protocol_revenue -= from_f;
+    // v1.3.2 (obrona w głąb): underflow niemożliwy (require amount <= total,
+    // from_g = min(amount, genesis.revenue), from_f = amount - from_g <=
+    // flexible.revenue), ale odejmowanie jawnie sprawdzane — bez `-=`.
+    ctx.accounts.genesis_pool.xnt_protocol_revenue = ctx
+        .accounts
+        .genesis_pool
+        .xnt_protocol_revenue
+        .checked_sub(from_g)
+        .ok_or(AnlError::MathOverflow)?;
+    ctx.accounts.flexible_pool.xnt_protocol_revenue = ctx
+        .accounts
+        .flexible_pool
+        .xnt_protocol_revenue
+        .checked_sub(from_f)
+        .ok_or(AnlError::MathOverflow)?;
 
     let bump = ctx.accounts.global_config.vault_authority_bump;
     let seeds: &[&[u8]] = &[VAULT_AUTHORITY_SEED, &[bump]];
