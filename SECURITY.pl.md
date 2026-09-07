@@ -3,7 +3,7 @@
 **PL** | [EN](SECURITY.md)
 
 **Status kodu (aktualny cel bounty):** `v1.3.1-testnet-freeze` — `src_tree e82b34b36e7a78a60398cc375aa3a30ecf298995`, program `4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM`, binarka sha256 `2ae64bdba891da92a3fbbb54f85eb3169dae96227f71bf4fbf9416caed43fe98` (przycięta do `so_size` 714 872 B), slot 186156990, tag `v1.3.1-testnet-freeze`. Poprzednie freeze: `v1.0-testnet-freeze` (`4c225639…`, slot 185899744), `v1.1-testnet-freeze` (`7ab2a745…`, slot 185933070) — naprawione findingi w `docs/BOUNTY-LEDGER.md`.
-**Audyty:** 7 rund (2026-08/09), czterech niezależnych audytorów — raporty w `docs/audits/`. Trzy potwierdzenia freeze (9 / 9 / 9,3 z 10).
+**Audyty:** 10 rund (2026-07/09), niezależni audytorzy — raporty w `docs/audits/`. Potwierdzenia v1.3.1 (R10 / R10.1): 9,5 / 9,3 / 9,0 z 10, DRAINABLE: NO ×3.
 
 Nagradzamy znalezienie błędów w **zamrożonym kodzie**, który stanie się bazą mainnetu. Kto znajdzie coś teraz — pomaga naprawić, zanim będzie na to za późno.
 **Rejestr zgłoszeń (publiczny, bez danych osobowych):** [`docs/BOUNTY-LEDGER.md`](docs/BOUNTY-LEDGER.md).
@@ -71,7 +71,7 @@ Zgłoszenie musi zawierać **odtwarzalny PoC**: test w harnessie `Env` (preferow
 
 ## 6. Ogłoszenie (do strony / X: https://x.com/ANLProtocol / Discord X1)
 
-> **ANL Staking Protocol — bug bounty do 1 000 000 ANL.** Kod stakingu na X1 testnet przeszedł 7 rund audytu i został zamrożony (`src_tree 4c225639…`). Zanim trafi na mainnet, płacimy za znalezienie w nim błędów: Critical 1 000 000 ANL · High 250 000 · Medium 50 000 · Low 10 000. Zakres, wykluczenia i zasady: `SECURITY.pl.md` (EN: `SECURITY.md`) w repo `github.com/dawidosX/ANL-Protocol`. Zgłoszenia **tylko w wiadomości prywatnej (DM) do admina grupy Telegram https://t.me/ANLprotocol** — post na grupie lub publicznie przed naprawą = ujawnienie, bez nagrody. PoC jako test w naszym harnessie mile widziany.
+> **ANL Staking Protocol — bug bounty do 1 000 000 ANL.** Kod stakingu na X1 testnet przeszedł 10 rund audytu i został zamrożony (`src_tree e82b34b3…`, tag `v1.3.1-testnet-freeze`). Zanim trafi na mainnet, płacimy za znalezienie w nim błędów: Critical 1 000 000 ANL · High 250 000 · Medium 50 000 · Low 10 000. Zakres, wykluczenia i zasady: `SECURITY.pl.md` (EN: `SECURITY.md`) w repo `github.com/dawidosX/ANL-Protocol`. Zgłoszenia **tylko w wiadomości prywatnej (DM) do admina grupy Telegram https://t.me/ANLprotocol** — post na grupie lub publicznie przed naprawą = ujawnienie, bez nagrody. PoC jako test w naszym harnessie mile widziany.
 
 ---
 *Wersja 1.2 — 2026-09-05 (kontakt: DM Telegram, link grupy; wersja EN w `SECURITY.md`). Zmiany zakresu/nagród ogłaszane w tym pliku z datą.*
