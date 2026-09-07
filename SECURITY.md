@@ -26,6 +26,17 @@ Severity is set by the team together with one of the protocol's independent audi
 
 **In scope:** the `anl_staking` program on X1 testnet (`programs/anl_staking/`, `crates/anl-math/`) at `src_tree 4c225639…`. Source code, tests and harness: this repository (`programs/anl_staking/tests/integration.rs`, `Env`).
 
+**Freeze vs the LIVE build.** The frozen `src_tree` is the bounty target, but fixes ship as new versions (v1.1 → v1.2 → v1.3.1) and are deployed to testnet after re-audit. **Check what is actually deployed on-chain before you report** — a finding reproduced on the old tree but already fixed in the live version does not qualify (see `docs/BOUNTY-LEDGER.md`). The live version is identified by three things: the deploy slot, the binary sha256 and the `src_tree` in `release-manifest-testnet.txt` on `main` (plus the `v*-testnet-freeze` tags):
+
+```bash
+solana program show 4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM -u https://rpc.testnet.x1.xyz   # Last Deployed In Slot
+solana program dump 4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM anl.so -u https://rpc.testnet.x1.xyz
+head -c <binary_size> anl.so | shasum -a 256          # == the sha256 field in release-manifest-testnet.txt
+git rev-parse <tag>:programs/anl_staking/src           # == the src_tree field in the manifest
+```
+
+**Note on the binary sha256:** `solana program dump` returns the WHOLE program-data account (zero-padded to the size allocated at the first deploy, e.g. 813,608 B), so the sha256 of the full dump does NOT match the manifest. Compute the hash over the dump **truncated to the size of the deployed binary** (`head -c <size>`); the size is the length of `target/deploy/anl_staking.so` from a reproducible build of the tag (`scripts/build-testnet.sh`, platform-tools v1.41) or the value given in the manifest's `deploy_note` (v1.3.1: 714,872 B, sha `2ae64bdb…`, slot 186156990). Everything in the dump past that size must be zeros.
+
 **Out of scope:** the `website/` frontend, the public X1 RPC (limits, availability), hosting infrastructure, keys and operational procedures (the single hot key on testnet is known — F-02), the ANL/XNT/CAPY tokens themselves, social engineering.
 
 ## 3. Known and consciously accepted (do NOT qualify)

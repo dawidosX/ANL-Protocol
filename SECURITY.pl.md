@@ -26,6 +26,17 @@ Wagę ustala zespół wspólnie z jednym z niezależnych audytorów protokołu. 
 
 **W zakresie:** program `anl_staking` na X1 testnet (`programs/anl_staking/`, `crates/anl-math/`) na `src_tree 4c225639…`. Kod źródłowy, testy i harness: to repozytorium (`programs/anl_staking/tests/integration.rs`, `Env`).
 
+**Freeze a wersja LIVE.** Zamrożony `src_tree` wyznacza cel bounty, ale poprawki wychodzą jako kolejne wersje (v1.1 → v1.2 → v1.3.1) i są wdrażane na testnet po re-audycie. **Zanim zgłosisz, sprawdź, co jest wdrożone na łańcuchu** — finding odtworzony na starym drzewie, a już naprawiony w wersji live, nie kwalifikuje się (patrz `docs/BOUNTY-LEDGER.md`). Wersję live identyfikują trzy rzeczy: slot deployu, sha256 binarki i `src_tree` z `release-manifest-testnet.txt` na `main` (oraz tagi `v*-testnet-freeze`):
+
+```bash
+solana program show 4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM -u https://rpc.testnet.x1.xyz   # Last Deployed In Slot
+solana program dump 4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM anl.so -u https://rpc.testnet.x1.xyz
+head -c <rozmiar_binarki> anl.so | shasum -a 256      # == pole sha256 w release-manifest-testnet.txt
+git rev-parse <tag>:programs/anl_staking/src           # == pole src_tree w manifeście
+```
+
+**Uwaga do sha256 binarki:** `solana program dump` zwraca CAŁE konto danych programu (dopełnione zerami do rozmiaru zaalokowanego przy pierwszym deployu, np. 813 608 B), więc sha256 pełnego dumpu NIE zgadza się z manifestem. Sumę liczymy z dumpu **przyciętego do rozmiaru wdrożonej binarki** (`head -c <rozmiar>`); rozmiar to długość `target/deploy/anl_staking.so` z reprodukowalnego buildu tagu (`scripts/build-testnet.sh`, platform-tools v1.41) albo wartość podana w `deploy_note` manifestu (v1.3.1: 714 872 B, sha `2ae64bdb…`, slot 186156990). Reszta dumpu za tym rozmiarem musi być samymi zerami.
+
 **Poza zakresem:** frontend `website/`, publiczny RPC X1 (limity, dostępność), infrastruktura hostingu, klucze i procedury operacyjne (jeden hot key na testnecie jest znany — F-02), tokeny ANL/XNT/CAPY same w sobie, inżynieria społeczna.
 
 ## 3. Znane i świadomie zaakceptowane (NIE kwalifikują się)
