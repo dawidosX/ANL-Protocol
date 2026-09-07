@@ -3,7 +3,7 @@
 [PL](SECURITY.pl.md) | **EN**
 
 **Code status (current bounty target):** `v1.3.1-testnet-freeze` — `src_tree e82b34b36e7a78a60398cc375aa3a30ecf298995`, program `4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM`, binary sha256 `2ae64bdba891da92a3fbbb54f85eb3169dae96227f71bf4fbf9416caed43fe98` (truncated to `so_size` 714,872 B), slot 186156990, tag `v1.3.1-testnet-freeze`. Previous freezes: `v1.0-testnet-freeze` (`4c225639…`, slot 185899744), `v1.1-testnet-freeze` (`7ab2a745…`, slot 185933070) — fixed findings in `docs/BOUNTY-LEDGER.md`.
-**Audits:** 7 rounds (2026-08/09), four independent auditors — reports in `docs/audits/`. Three freeze confirmations (9 / 9 / 9.3 out of 10).
+**Audits:** 10 rounds (2026-07/09), independent auditors — reports in `docs/audits/`. v1.3.1 confirmations (R10 / R10.1): 9.5 / 9.3 / 9.0 out of 10, DRAINABLE: NO ×3.
 
 We reward bugs found in the **frozen code** that will become the mainnet base. Whoever finds something now helps fix it before it is too late.
 **Public bounty ledger (no personal data):** [`docs/BOUNTY-LEDGER.md`](docs/BOUNTY-LEDGER.md).
