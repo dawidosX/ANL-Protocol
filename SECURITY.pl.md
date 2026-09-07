@@ -71,7 +71,7 @@ Zgłoszenie musi zawierać **odtwarzalny PoC**: test w harnessie `Env` (preferow
 
 ## 6. Ogłoszenie (do strony / X: https://x.com/ANLProtocol / Discord X1)
 
-> **ANL Staking Protocol — bug bounty do 1 000 000 ANL.** Kod stakingu na X1 testnet przeszedł 7 rund audytu i został zamrożony (`src_tree 4c225639…`). Zanim trafi na mainnet, płacimy za znalezienie w nim błędów: Critical 1 000 000 ANL · High 250 000 · Medium 50 000 · Low 10 000. Zakres, wykluczenia i zasady: `SECURITY.pl.md` (EN: `SECURITY.md`) w repo `github.com/dawidosX/ANL-Protocol`. Zgłoszenia **tylko w wiadomości prywatnej (DM) do admina grupy Telegram https://t.me/ANLprotocol** — post na grupie lub publicznie przed naprawą = ujawnienie, bez nagrody. PoC jako test w naszym harnessie mile widziany.
+> **ANL Staking Protocol — bug bounty do 1 000 000 ANL.** Kod stakingu na X1 testnet przeszedł 10 rund audytu i został zamrożony (`src_tree e82b34b3…`, tag `v1.3.1-testnet-freeze`). Zanim trafi na mainnet, płacimy za znalezienie w nim błędów: Critical 1 000 000 ANL · High 250 000 · Medium 50 000 · Low 10 000. Zakres, wykluczenia i zasady: `SECURITY.pl.md` (EN: `SECURITY.md`) w repo `github.com/dawidosX/ANL-Protocol`. Zgłoszenia **tylko w wiadomości prywatnej (DM) do admina grupy Telegram https://t.me/ANLprotocol** — post na grupie lub publicznie przed naprawą = ujawnienie, bez nagrody. PoC jako test w naszym harnessie mile widziany.
 
 ---
 *Wersja 1.2 — 2026-09-05 (kontakt: DM Telegram, link grupy; wersja EN w `SECURITY.md`). Zmiany zakresu/nagród ogłaszane w tym pliku z datą.*
