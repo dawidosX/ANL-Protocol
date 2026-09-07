@@ -6,6 +6,7 @@ math_tree: 7adf5f9a74c9f3cd3f03381b8cb013b30fa1b7c5
 src_tree: e82b34b36e7a78a60398cc375aa3a30ecf298995
 features: network-testnet,test-periods
 sha256: 2ae64bdba891da92a3fbbb54f85eb3169dae96227f71bf4fbf9416caed43fe98
+so_size: 714872
 rustc_host: rustc 1.97.1 (8bab26f4f 2026-07-14)
 build_sbf: solana-cargo-build-sbf 1.18.17 platform-tools v1.41 rustc 1.75.0 
 deployed_slot: 186156990

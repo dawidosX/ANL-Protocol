@@ -2,7 +2,7 @@
 
 [PL](SECURITY.pl.md) | **EN**
 
-**Code status:** audit-freeze `v1.0-testnet-freeze` — `src_tree 4c2256398137bb417a1b769316137852d14ec4d5`, program `4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM`, binary `87b431d4…30a3`, slot 185899744.
+**Code status (current bounty target):** `v1.3.1-testnet-freeze` — `src_tree e82b34b36e7a78a60398cc375aa3a30ecf298995`, program `4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM`, binary sha256 `2ae64bdba891da92a3fbbb54f85eb3169dae96227f71bf4fbf9416caed43fe98` (truncated to `so_size` 714,872 B), slot 186156990, tag `v1.3.1-testnet-freeze`. Previous freezes: `v1.0-testnet-freeze` (`4c225639…`, slot 185899744), `v1.1-testnet-freeze` (`7ab2a745…`, slot 185933070) — fixed findings in `docs/BOUNTY-LEDGER.md`.
 **Audits:** 7 rounds (2026-08/09), four independent auditors — reports in `docs/audits/`. Three freeze confirmations (9 / 9 / 9.3 out of 10).
 
 We reward bugs found in the **frozen code** that will become the mainnet base. Whoever finds something now helps fix it before it is too late.
@@ -24,7 +24,18 @@ Severity is set by the team together with one of the protocol's independent audi
 
 ## 2. Scope
 
-**In scope:** the `anl_staking` program on X1 testnet (`programs/anl_staking/`, `crates/anl-math/`) at `src_tree 4c225639…`. Source code, tests and harness: this repository (`programs/anl_staking/tests/integration.rs`, `Env`).
+**In scope:** the `anl_staking` program on X1 testnet (`programs/anl_staking/`, `crates/anl-math/`) at `src_tree e82b34b3…` (tag `v1.3.1-testnet-freeze`). Source code, tests and harness: this repository (`programs/anl_staking/tests/integration.rs`, `Env`).
+
+**Freeze vs the LIVE build.** The frozen `src_tree` is the bounty target, but fixes ship as new versions (v1.1 → v1.2 → v1.3.1) and are deployed to testnet after re-audit. **Check what is actually deployed on-chain before you report** — a finding reproduced on the old tree but already fixed in the live version does not qualify (see `docs/BOUNTY-LEDGER.md`). The live version is identified by three things: the deploy slot, the binary sha256 and the `src_tree` in `release-manifest-testnet.txt` on `main` (plus the `v*-testnet-freeze` tags):
+
+```bash
+solana program show 4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM -u https://rpc.testnet.x1.xyz   # Last Deployed In Slot
+solana program dump 4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM anl.so -u https://rpc.testnet.x1.xyz
+head -c <binary_size> anl.so | shasum -a 256          # == the sha256 field in release-manifest-testnet.txt
+git rev-parse <tag>:programs/anl_staking/src           # == the src_tree field in the manifest
+```
+
+**Note on the binary sha256:** `solana program dump` returns the WHOLE program-data account (zero-padded to the size allocated at the first deploy, e.g. 813,608 B), so the sha256 of the full dump does NOT match the manifest. Compute the hash over the dump **truncated to the size of the deployed binary** (`head -c <size>`); the size is the `so_size` field in `release-manifest-testnet.txt` (= the length of `target/deploy/anl_staking.so` from a reproducible build of the tag, `scripts/build-testnet.sh`, platform-tools v1.41; v1.3.1: 714,872 B, sha `2ae64bdb…`, slot 186156990). Everything in the dump past that size must be zeros.
 
 **Out of scope:** the `website/` frontend, the public X1 RPC (limits, availability), hosting infrastructure, keys and operational procedures (the single hot key on testnet is known — F-02), the ANL/XNT/CAPY tokens themselves, social engineering.
 
