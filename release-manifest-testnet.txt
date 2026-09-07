@@ -1,14 +1,11 @@
 release: testnet
-date: 2026-09-06T15:40:59Z
-head: 0af0871af7f9bedf52cff99f2085dc7705de09f5
-code_tree: 552583c928478e3aa1c712018daf46b5e4d11f84
+date: 2026-09-07T14:41:56Z
+head: a2315da5b0e0d506c28f410b6cad17dc954114b7
+code_tree: cd8da7a9d26a8286600b617ae537aa69729efc1b
 math_tree: 7adf5f9a74c9f3cd3f03381b8cb013b30fa1b7c5
-src_tree: e82b34b36e7a78a60398cc375aa3a30ecf298995
+src_tree: 32e1e6f1234314aebe785961cfb4d371428c656a
 features: network-testnet,test-periods
-sha256: 2ae64bdba891da92a3fbbb54f85eb3169dae96227f71bf4fbf9416caed43fe98
-so_size: 714872
+sha256: cbc34c1b6ecea53b0bcc746657e8c9ea1ff984bb55ba9c1a826b6bc7b6c278e4
+so_size: 714960
 rustc_host: rustc 1.97.1 (8bab26f4f 2026-07-14)
 build_sbf: solana-cargo-build-sbf 1.18.17 platform-tools v1.41 rustc 1.75.0 
-deployed_slot: 186156990
-deploy_date_utc: 2026-09-06T15:50:00Z
-deploy_note: deploy przez Dawida (v1.3.1: horyzont test-periods 100 lat, XNT-02 droga B+ z checkpointem biezacej doby, fix R10 pyt.4); dump on-chain == binarka sha 2ae64bdb (714872 B, reszta zera), Last Deployed In Slot 186156990, authority Dx2vEpVdMh2qScz4vEHAXquTm6QYocKbmPRdcXHLzvEm; src_tree e82b34b3 == R10.1 (45ee285)
