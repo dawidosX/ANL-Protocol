@@ -2229,6 +2229,8 @@ async function claimPosition(i, poolType){
     keys.push(AW(prevDayCkpt || PROGRAM_ID, false, !!prevDayCkpt));  // 18 prev_day_ckpt (v1.3: ogon lancucha, zawsze gdy byl funding)
     keys.push(AW(curDayCkpt, false, true));                          // 19 cur_day_ckpt (v1.3)
     keys.push(AW(SystemProgram.programId));                          // 20 system_program (v1.3)
+    keys.push(AW(CAPY_MINT));                                        // 21 capy_mint (v1.3.2: constrainty capy_vault)
+    keys.push(AW(TOKEN_2022));                                       // 22 capy_token_program (v1.3.2)
     const tx = new Transaction();
     // (auto close_day usuniete: program R4 domyka dobe wewnatrz claim)
     // ATA XNT/ANL musza istniec przed claim (constraint token::authority=owner).
