@@ -2,8 +2,8 @@
 
 **PL** | [EN](SECURITY.md)
 
-**Status kodu (aktualny cel bounty):** `v1.3.1-testnet-freeze` — `src_tree e82b34b36e7a78a60398cc375aa3a30ecf298995`, program `4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM`, binarka sha256 `2ae64bdba891da92a3fbbb54f85eb3169dae96227f71bf4fbf9416caed43fe98` (przycięta do `so_size` 714 872 B), slot 186156990, tag `v1.3.1-testnet-freeze`. Poprzednie freeze: `v1.0-testnet-freeze` (`4c225639…`, slot 185899744), `v1.1-testnet-freeze` (`7ab2a745…`, slot 185933070) — naprawione findingi w `docs/BOUNTY-LEDGER.md`.
-**Audyty:** 10 rund (2026-07/09), niezależni audytorzy — raporty w `docs/audits/`. Potwierdzenia v1.3.1 (R10 / R10.1): 9,5 / 9,3 / 9,0 z 10, DRAINABLE: NO ×3.
+**Status kodu (aktualny cel bounty):** `v1.3.2-testnet-freeze` — `src_tree 32e1e6f1234314aebe785961cfb4d371428c656a`, program `4Cpxg8U3pQWzjMYmoyQgjep9UcMw4DtK7V5tYhmHTVRM`, binarka sha256 `cbc34c1b6ecea53b0bcc746657e8c9ea1ff984bb55ba9c1a826b6bc7b6c278e4` (przycięta do `so_size` 714 960 B), slot 186827491, tag `v1.3.2-testnet-freeze`. Poprzednie freeze: `v1.0-testnet-freeze` (`4c225639…`, slot 185899744), `v1.1-testnet-freeze` (`7ab2a745…`, slot 185933070), `v1.3.1-testnet-freeze` (`e82b34b3…`, slot 186156990) — naprawione findingi w `docs/BOUNTY-LEDGER.md`.
+**Audyty:** 11 rund (2026-07/09), niezależni audytorzy — raporty w `docs/audits/`. Potwierdzenia v1.3.2 (R11): DRAINABLE: NO ×3, deploy TAK ×3; v1.3.1 (R10 / R10.1): 9,5 / 9,3 / 9,0 z 10.
 
 Nagradzamy znalezienie błędów w **zamrożonym kodzie**, który stanie się bazą mainnetu. Kto znajdzie coś teraz — pomaga naprawić, zanim będzie na to za późno.
 **Rejestr zgłoszeń (publiczny, bez danych osobowych):** [`docs/BOUNTY-LEDGER.md`](docs/BOUNTY-LEDGER.md).
@@ -24,7 +24,7 @@ Wagę ustala zespół wspólnie z jednym z niezależnych audytorów protokołu. 
 
 ## 2. Zakres
 
-**W zakresie:** program `anl_staking` na X1 testnet (`programs/anl_staking/`, `crates/anl-math/`) na `src_tree e82b34b3…` (tag `v1.3.1-testnet-freeze`). Kod źródłowy, testy i harness: to repozytorium (`programs/anl_staking/tests/integration.rs`, `Env`).
+**W zakresie:** program `anl_staking` na X1 testnet (`programs/anl_staking/`, `crates/anl-math/`) na `src_tree 32e1e6f1…` (tag `v1.3.2-testnet-freeze`). Kod źródłowy, testy i harness: to repozytorium (`programs/anl_staking/tests/integration.rs`, `Env`).
 
 **Freeze a wersja LIVE.** Zamrożony `src_tree` wyznacza cel bounty, ale poprawki wychodzą jako kolejne wersje (v1.1 → v1.2 → v1.3.1) i są wdrażane na testnet po re-audycie. **Zanim zgłosisz, sprawdź, co jest wdrożone na łańcuchu** — finding odtworzony na starym drzewie, a już naprawiony w wersji live, nie kwalifikuje się (patrz `docs/BOUNTY-LEDGER.md`). Wersję live identyfikują trzy rzeczy: slot deployu, sha256 binarki i `src_tree` z `release-manifest-testnet.txt` na `main` (oraz tagi `v*-testnet-freeze`):
 
@@ -35,7 +35,7 @@ head -c <rozmiar_binarki> anl.so | shasum -a 256      # == pole sha256 w release
 git rev-parse <tag>:programs/anl_staking/src           # == pole src_tree w manifeście
 ```
 
-**Uwaga do sha256 binarki:** `solana program dump` zwraca CAŁE konto danych programu (dopełnione zerami do rozmiaru zaalokowanego przy pierwszym deployu, np. 813 608 B), więc sha256 pełnego dumpu NIE zgadza się z manifestem. Sumę liczymy z dumpu **przyciętego do rozmiaru wdrożonej binarki** (`head -c <rozmiar>`); rozmiar to pole `so_size` w `release-manifest-testnet.txt` (= długość `target/deploy/anl_staking.so` z reprodukowalnego buildu tagu, `scripts/build-testnet.sh`, platform-tools v1.41; v1.3.1: 714 872 B, sha `2ae64bdb…`, slot 186156990). Reszta dumpu za tym rozmiarem musi być samymi zerami.
+**Uwaga do sha256 binarki:** `solana program dump` zwraca CAŁE konto danych programu (dopełnione zerami do rozmiaru zaalokowanego przy pierwszym deployu, np. 813 608 B), więc sha256 pełnego dumpu NIE zgadza się z manifestem. Sumę liczymy z dumpu **przyciętego do rozmiaru wdrożonej binarki** (`head -c <rozmiar>`); rozmiar to pole `so_size` w `release-manifest-testnet.txt` (= długość `target/deploy/anl_staking.so` z reprodukowalnego buildu tagu, `scripts/build-testnet.sh`, platform-tools v1.41; v1.3.2: 714 960 B, sha `cbc34c1b…`, slot 186827491). Reszta dumpu za tym rozmiarem musi być samymi zerami.
 
 **Poza zakresem:** frontend `website/`, publiczny RPC X1 (limity, dostępność), infrastruktura hostingu, klucze i procedury operacyjne (jeden hot key na testnecie jest znany — F-02), tokeny ANL/XNT/CAPY same w sobie, inżynieria społeczna.
 
@@ -71,7 +71,7 @@ Zgłoszenie musi zawierać **odtwarzalny PoC**: test w harnessie `Env` (preferow
 
 ## 6. Ogłoszenie (do strony / X: https://x.com/ANLProtocol / Discord X1)
 
-> **ANL Staking Protocol — bug bounty do 1 000 000 ANL.** Kod stakingu na X1 testnet przeszedł 10 rund audytu i został zamrożony (`src_tree e82b34b3…`, tag `v1.3.1-testnet-freeze`). Zanim trafi na mainnet, płacimy za znalezienie w nim błędów: Critical 1 000 000 ANL · High 250 000 · Medium 50 000 · Low 10 000. Zakres, wykluczenia i zasady: `SECURITY.pl.md` (EN: `SECURITY.md`) w repo `github.com/dawidosX/ANL-Protocol`. Zgłoszenia **tylko w wiadomości prywatnej (DM) do admina grupy Telegram https://t.me/ANLprotocol** — post na grupie lub publicznie przed naprawą = ujawnienie, bez nagrody. PoC jako test w naszym harnessie mile widziany.
+> **ANL Staking Protocol — bug bounty do 1 000 000 ANL.** Kod stakingu na X1 testnet przeszedł 11 rund audytu i został zamrożony (`src_tree 32e1e6f1…`, tag `v1.3.2-testnet-freeze`). Zanim trafi na mainnet, płacimy za znalezienie w nim błędów: Critical 1 000 000 ANL · High 250 000 · Medium 50 000 · Low 10 000. Zakres, wykluczenia i zasady: `SECURITY.pl.md` (EN: `SECURITY.md`) w repo `github.com/dawidosX/ANL-Protocol`. Zgłoszenia **tylko w wiadomości prywatnej (DM) do admina grupy Telegram https://t.me/ANLprotocol** — post na grupie lub publicznie przed naprawą = ujawnienie, bez nagrody. PoC jako test w naszym harnessie mile widziany.
 
 ---
 *Wersja 1.2 — 2026-09-05 (kontakt: DM Telegram, link grupy; wersja EN w `SECURITY.md`). Zmiany zakresu/nagród ogłaszane w tym pliku z datą.*
