@@ -9,3 +9,7 @@ sha256: cbc34c1b6ecea53b0bcc746657e8c9ea1ff984bb55ba9c1a826b6bc7b6c278e4
 so_size: 714960
 rustc_host: rustc 1.97.1 (8bab26f4f 2026-07-14)
 build_sbf: solana-cargo-build-sbf 1.18.17 platform-tools v1.41 rustc 1.75.0 
+deployed_slot: 186827491
+deploy_date_utc: 2026-09-09T08:42:37Z
+deploy_sig: 5CoEMqtRqEwVDzatENr3wQhD7JVA5s64kuEBMr6cLu75RpQ1cZSJvjcJSP5r4T2aQo1J6AmALfQ9ahQPPnWXAAcs
+deploy_note: deploy przez Dawida (v1.3.2 hardening: sweep checked_sub, Claim capy_vault constraints + konta capy_mint/capy_token_program, UserProfile.version @57 + bramka <= ACCOUNT_VERSION); dump on-chain przyciety do so_size 714960 == sha cbc34c1b (reszta zera), Last Deployed In Slot 186827491, bpf-upgradeable-loader upgrade, authority Dx2vEpVdMh2qScz4vEHAXquTm6QYocKbmPRdcXHLzvEm; src_tree 32e1e6f1 == R11 (3x DRAINABLE NO); tag v1.3.2-testnet-freeze -> eb5ec26
