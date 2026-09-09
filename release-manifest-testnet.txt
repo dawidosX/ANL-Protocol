@@ -1,6 +1,6 @@
 release: testnet
-date: 2026-09-07T14:41:56Z
-head: a2315da5b0e0d506c28f410b6cad17dc954114b7
+date: 2026-09-09T09:56:00Z
+head: 395ef8acbc2a3180076988de739ff15edecc424d
 code_tree: cd8da7a9d26a8286600b617ae537aa69729efc1b
 math_tree: 7adf5f9a74c9f3cd3f03381b8cb013b30fa1b7c5
 src_tree: 32e1e6f1234314aebe785961cfb4d371428c656a
